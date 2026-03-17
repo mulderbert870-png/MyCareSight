@@ -144,7 +144,7 @@ export async function createUserAccount(
   const supabaseCookie = await createClient()
 
   try {
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
     const normalizedEmail = email.toLowerCase().trim()
 
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -330,7 +330,7 @@ export async function createAgencyAdminAccount(
   const supabaseCookie = await createClient()
 
   try {
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
     const normalizedEmail = contactEmail.toLowerCase().trim()
     const fullName = `${firstName.trim()} ${lastName.trim()}`.trim() || normalizedEmail
     // const companyName = buildAgencyAdminCompanyName(workLocation, jobTitle, department)
@@ -467,7 +467,7 @@ export async function createStaffUserAccount(
   }
 
   try {
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
     const normalizedEmail = email.toLowerCase().trim()
 
     // Create user via Admin API (no session change; never touches cookie client auth)

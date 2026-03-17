@@ -1,16 +1,22 @@
--- phast_two: Create patient_incidents table for incident reports per client
-CREATE TABLE IF NOT EXISTS patient_incidents (
+-- phast_two: Replace patient_incidents with new schema (incident_date, reporting_date, primary_contact, description, file)
+DROP TABLE IF EXISTS patient_incidents;
+
+CREATE TABLE patient_incidents (
   id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
   patient_id UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
-  reported_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT TIMEZONE('utc'::text, NOW()),
+  incident_date DATE NOT NULL,
+  reporting_date DATE NOT NULL,
+  primary_contact_person TEXT NOT NULL,
   description TEXT NOT NULL,
-  incident_type TEXT,
+  file_path TEXT,
+  file_name TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_patient_incidents_patient_id ON patient_incidents(patient_id);
-CREATE INDEX IF NOT EXISTS idx_patient_incidents_reported_at ON patient_incidents(reported_at DESC);
+CREATE INDEX idx_patient_incidents_patient_id ON patient_incidents(patient_id);
+CREATE INDEX idx_patient_incidents_incident_date ON patient_incidents(incident_date DESC);
+CREATE INDEX idx_patient_incidents_reporting_date ON patient_incidents(reporting_date DESC);
 
 CREATE TRIGGER update_patient_incidents_updated_at
   BEFORE UPDATE ON patient_incidents
@@ -42,4 +48,4 @@ CREATE POLICY "Owners can delete own patient incidents"
     EXISTS (SELECT 1 FROM patients p WHERE p.id = patient_id AND p.owner_id = auth.uid())
   );
 
-COMMENT ON TABLE patient_incidents IS 'Incident reports for a patient/client';
+COMMENT ON TABLE patient_incidents IS 'Incident reports for a patient (file incident report with optional attachment)';

@@ -56,7 +56,7 @@ export async function signIn(email: string, password: string, rememberMe: boolea
 export async function signUp(email: string, password: string, fullName: string, role: UserRole) {
   const supabase = await createClient()
   
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
   
   const { data, error } = await supabase.auth.signUp({
     email,
@@ -84,7 +84,7 @@ export async function resetPassword(email: string) {
   const supabase = await createClient()
   
   const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'}/pages/auth/reset-password`,
+    redirectTo: `${process.env.NEXT_PUBLIC_SITE_URL }/pages/auth/reset-password`,
   })
 
   return { error }

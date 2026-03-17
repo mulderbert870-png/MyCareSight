@@ -3,14 +3,17 @@ import type { Supabase } from '../types'
 export interface PatientIncident {
   id: string
   patient_id: string
-  reported_at: string
+  incident_date: string
+  reporting_date: string
+  primary_contact_person: string
   description: string
-  incident_type: string | null
+  file_path: string | null
+  file_name: string | null
   created_at: string
   updated_at: string
 }
 
-/** Get incidents for a patient, newest first. */
+/** Get incidents for a patient, ordered by reporting_date descending. */
 export async function getIncidentsByPatientId(
   supabase: Supabase,
   patientId: string
@@ -19,20 +22,32 @@ export async function getIncidentsByPatientId(
     .from('patient_incidents')
     .select('*')
     .eq('patient_id', patientId)
-    .order('reported_at', { ascending: false })
+    .order('reporting_date', { ascending: false })
 }
 
-/** Insert an incident. */
+/** Insert an incident (file_path and file_name can be set later via update). */
 export async function insertIncident(
   supabase: Supabase,
   data: {
     patient_id: string
-    reported_at?: string
+    incident_date: string
+    reporting_date: string
+    primary_contact_person: string
     description: string
-    incident_type?: string | null
+    file_path?: string | null
+    file_name?: string | null
   }
 ) {
   return supabase.from('patient_incidents').insert(data).select().single()
+}
+
+/** Update an incident (e.g. to set file_path and file_name after upload). */
+export async function updateIncident(
+  supabase: Supabase,
+  id: string,
+  data: { file_path?: string | null; file_name?: string | null }
+) {
+  return supabase.from('patient_incidents').update(data).eq('id', id).select().single()
 }
 
 /** Delete an incident by id. */

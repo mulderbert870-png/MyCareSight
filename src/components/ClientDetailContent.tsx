@@ -22,7 +22,9 @@ import {
   Trash2,
   ExternalLink,
   Sparkles,
-  Save
+  Save,
+  Upload,
+  Download
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
@@ -96,12 +98,15 @@ export default function ClientDetailContent({ client, allClients, representative
   const [isSavingMedical, setIsSavingMedical] = useState(false)
   const [medicalEditError, setMedicalEditError] = useState<string | null>(null)
   const [repModalOpen, setRepModalOpen] = useState(false)
-  const [repModalSlot, setRepModalSlot] = useState<1 | 2>(1)
+  const [repModalSlot, setRepModalSlot] = useState<number>(1)
   const [repModalMode, setRepModalMode] = useState<'add' | 'edit'>('add')
   const [repModalEditingId, setRepModalEditingId] = useState<string | null>(null)
   const [repForm, setRepForm] = useState({ name: '', relationship: '', phone_number: '', email_address: '' })
   const [isSavingRep, setIsSavingRep] = useState(false)
   const [repFormError, setRepFormError] = useState<string | null>(null)
+  const [deletingRepId, setDeletingRepId] = useState<string | null>(null)
+  const [repToDelete, setRepToDelete] = useState<PatientRepresentative | null>(null)
+  const [repListError, setRepListError] = useState<string | null>(null)
   const [localRepresentatives, setLocalRepresentatives] = useState<PatientRepresentative[]>(representatives)
   const [documentUploadError, setDocumentUploadError] = useState<string | null>(null)
   const [isUploadingDocument, setIsUploadingDocument] = useState(false)
@@ -115,7 +120,14 @@ export default function ClientDetailContent({ client, allClients, representative
   const [caregiverReqsError, setCaregiverReqsError] = useState<string | null>(null)
   const [localIncidents, setLocalIncidents] = useState<PatientIncident[]>(initialIncidents ?? [])
   const [incidentModalOpen, setIncidentModalOpen] = useState(false)
-  const [incidentForm, setIncidentForm] = useState({ reported_at: '', description: '', incident_type: '' })
+  const [incidentForm, setIncidentForm] = useState({
+    incident_date: '',
+    reporting_date: '',
+    primary_contact_person: '',
+    description: '',
+  })
+  const [incidentFormFile, setIncidentFormFile] = useState<File | null>(null)
+  const incidentFileInputRef = useRef<HTMLInputElement>(null)
   const [isSavingIncident, setIsSavingIncident] = useState(false)
   const [incidentFormError, setIncidentFormError] = useState<string | null>(null)
   const [incidentListError, setIncidentListError] = useState<string | null>(null)
@@ -145,15 +157,10 @@ export default function ClientDetailContent({ client, allClients, representative
     }
   }, [isEditingMedical])
 
-  // Representatives for slots 1 and 2 (from local state or legacy client fields)
-  const repByOrder = localRepresentatives.reduce<Record<number, PatientRepresentative>>((acc, r) => {
-    acc[r.display_order] = r
-    return acc
-  }, {})
-  const rep1 = repByOrder[1] ?? localRepresentatives[0] ?? null
-  const rep2 = repByOrder[2] ?? (localRepresentatives.length >= 2 ? localRepresentatives[1] : null) ?? null
-  const rep1Display = rep1 ?? (localClient.representative_1_name ? { id: '', name: localClient.representative_1_name, relationship: localClient.representative_1_relationship, phone_number: localClient.representative_1_phone, email_address: null } : null)
-  const rep2Display = rep2 ?? (localClient.representative_2_name ? { id: '', name: localClient.representative_2_name, relationship: localClient.representative_2_relationship, phone_number: localClient.representative_2_phone, email_address: null } : null)
+  const sortedRepresentatives = [...localRepresentatives].sort((a, b) => a.display_order - b.display_order)
+  const nextRepDisplayOrder = sortedRepresentatives.length === 0
+    ? 1
+    : Math.max(...sortedRepresentatives.map((r) => r.display_order), 0) + 1
 
   // Sync from server after refresh
   useEffect(() => {
@@ -336,20 +343,20 @@ export default function ClientDetailContent({ client, allClients, representative
     }
   }
 
-  const openAddRep = (slot: 1 | 2) => {
-    setRepModalSlot(slot)
+  const openAddRep = (displayOrder: number) => {
+    setRepModalSlot(displayOrder)
     setRepModalMode('add')
     setRepModalEditingId(null)
     setRepForm({ name: '', relationship: '', phone_number: '', email_address: '' })
     setRepFormError(null)
+    setRepListError(null)
     setRepModalOpen(true)
   }
 
-  const openEditRep = (slot: 1 | 2, rep: { name: string | null; relationship: string | null; phone_number: string | null; email_address: string | null } | null, id: string | null) => {
-    if (!rep) return
-    setRepModalSlot(slot)
+  const openEditRep = (rep: PatientRepresentative) => {
+    setRepModalSlot(rep.display_order)
     setRepModalMode('edit')
-    setRepModalEditingId(id || null)
+    setRepModalEditingId(rep.id)
     setRepForm({
       name: rep.name ?? '',
       relationship: rep.relationship ?? '',
@@ -357,6 +364,7 @@ export default function ClientDetailContent({ client, allClients, representative
       email_address: rep.email_address ?? '',
     })
     setRepFormError(null)
+    setRepListError(null)
     setRepModalOpen(true)
   }
 
@@ -364,6 +372,30 @@ export default function ClientDetailContent({ client, allClients, representative
     if (!isSavingRep) {
       setRepModalOpen(false)
       setRepFormError(null)
+    }
+  }
+
+  const confirmDeleteRep = (rep: PatientRepresentative) => {
+    setRepListError(null)
+    setRepToDelete(rep)
+  }
+
+  const handleDeleteRep = async () => {
+    if (!repToDelete) return
+    const rep = repToDelete
+    setDeletingRepId(rep.id)
+    setRepListError(null)
+    try {
+      const supabase = createClient()
+      const { error } = await q.deleteRepresentative(supabase, rep.id)
+      if (error) throw error
+      setLocalRepresentatives((prev) => prev.filter((r) => r.id !== rep.id))
+      setRepToDelete(null)
+      router.refresh()
+    } catch (err: unknown) {
+      setRepListError(err instanceof Error ? err.message : 'Failed to delete representative.')
+    } finally {
+      setDeletingRepId(null)
     }
   }
 
@@ -557,11 +589,15 @@ export default function ClientDetailContent({ client, allClients, representative
   }
 
   const openReportIncidentModal = () => {
+    const today = new Date().toISOString().slice(0, 10)
     setIncidentForm({
-      reported_at: new Date().toISOString().slice(0, 16),
+      incident_date: today,
+      reporting_date: today,
+      primary_contact_person: '',
       description: '',
-      incident_type: '',
     })
+    setIncidentFormFile(null)
+    if (incidentFileInputRef.current) incidentFileInputRef.current.value = ''
     setIncidentFormError(null)
     setIncidentModalOpen(true)
   }
@@ -573,29 +609,60 @@ export default function ClientDetailContent({ client, allClients, representative
     }
   }
 
+  const ACCEPTED_INCIDENT_FILE_TYPES = '.pdf,.doc,.docx,.png,.jpg'
+
   const handleSaveIncident = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!incidentForm.incident_date.trim()) {
+      setIncidentFormError('Incident date is required.')
+      return
+    }
+    if (!incidentForm.reporting_date.trim()) {
+      setIncidentFormError('Reporting date is required.')
+      return
+    }
+    if (!incidentForm.primary_contact_person.trim()) {
+      setIncidentFormError('Primary contact person is required.')
+      return
+    }
     if (!incidentForm.description.trim()) {
-      setIncidentFormError('Description is required.')
+      setIncidentFormError('Description of incident is required.')
+      return
+    }
+    if (!incidentFormFile) {
+      setIncidentFormError('Please attach the incident report file.')
       return
     }
     setIsSavingIncident(true)
     setIncidentFormError(null)
     try {
       const supabase = createClient()
-      const reportedAt = incidentForm.reported_at
-        ? new Date(incidentForm.reported_at).toISOString()
-        : new Date().toISOString()
       const { data: inserted, error } = await q.insertIncident(supabase, {
         patient_id: localClient.id,
-        reported_at: reportedAt,
+        incident_date: incidentForm.incident_date,
+        reporting_date: incidentForm.reporting_date,
+        primary_contact_person: incidentForm.primary_contact_person.trim(),
         description: incidentForm.description.trim(),
-        incident_type: incidentForm.incident_type.trim() || null,
       })
       if (error) throw error
-      if (inserted) {
-        setLocalIncidents((prev) => [inserted, ...prev])
+      if (!inserted) throw new Error('Insert failed')
+      let file_path: string | null = null
+      let file_name: string | null = null
+      const safeName = incidentFormFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const path = `${localClient.id}/incidents/${inserted.id}_${safeName}`
+      const { error: uploadError } = await supabase.storage
+        .from('patient-documents')
+        .upload(path, incidentFormFile)
+      if (uploadError) {
+        await q.deleteIncident(supabase, inserted.id)
+        throw uploadError
       }
+      file_path = path
+      file_name = incidentFormFile.name
+      const { data: updated, error: updateError } = await q.updateIncident(supabase, inserted.id, { file_path, file_name })
+      if (updateError) throw updateError
+      const row = updated ?? { ...inserted, file_path, file_name }
+      setLocalIncidents((prev) => [row, ...prev])
       setIncidentModalOpen(false)
       router.refresh()
     } catch (err: unknown) {
@@ -610,9 +677,24 @@ export default function ClientDetailContent({ client, allClients, representative
       month: 'short',
       day: 'numeric',
       year: 'numeric',
+    })
+  }
+
+  const formatIncidentUploadedAt = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
     })
+  }
+
+  const getIncidentFileUrl = (incident: PatientIncident) => {
+    if (!incident.file_path) return null
+    const supabase = createClient()
+    const { data: { publicUrl } } = supabase.storage.from('patient-documents').getPublicUrl(incident.file_path)
+    return publicUrl
   }
 
   const handleDeleteIncident = async (incident: PatientIncident) => {
@@ -931,7 +1013,7 @@ export default function ClientDetailContent({ client, allClients, representative
                       <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                     </label>
                   </div>
-                  <div className="flex items-center justify-between">
+                  {/* <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-gray-900">Login Access</p>
                       <p className="text-xs text-gray-500">Control portal login access for this client</p>
@@ -945,7 +1027,7 @@ export default function ClientDetailContent({ client, allClients, representative
                       />
                       <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                     </label>
-                  </div>
+                  </div> */}
                 </div>
               </div>
 
@@ -1114,106 +1196,90 @@ export default function ClientDetailContent({ client, allClients, representative
 
           {activeTab === 'representatives' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Representative #1 */}
+              {repListError && (
+                <div className="md:col-span-2 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                  {repListError}
+                </div>
+              )}
+              {sortedRepresentatives.map((rep, index) => (
+                <div key={rep.id} className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-base font-bold text-gray-900">Representative #{index + 1}</h3>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => openEditRep(rep)}
+                        className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                        aria-label={`Edit representative ${index + 1}`}
+                      >
+                        <Edit className="w-4 h-4 text-gray-600" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => confirmDeleteRep(rep)}
+                        disabled={deletingRepId === rep.id}
+                        className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                        aria-label={`Delete representative ${index + 1}`}
+                      >
+                        {deletingRepId === rep.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-3">
+                    <div>
+                      <span className="block text-xs text-gray-500 mb-0.5">Name</span>
+                      <p className="text-sm font-medium text-gray-900">{rep.name || '—'}</p>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-gray-500 mb-0.5">Relationship</span>
+                      <p className="text-sm font-medium text-gray-900">{rep.relationship || '—'}</p>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-gray-500 mb-0.5">Phone Number</span>
+                      <p className="text-sm font-medium text-gray-900">{rep.phone_number || '—'}</p>
+                    </div>
+                    <div>
+                      <span className="block text-xs text-gray-500 mb-0.5">Email Address</span>
+                      <p className="text-sm font-medium text-gray-900">{rep.email_address || '—'}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {/* Empty card for adding next representative */}
               <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-bold text-gray-900">Representative #1</h3>
+                  <h3 className="text-base font-bold text-gray-900">Representative #{sortedRepresentatives.length + 1}</h3>
                   <button
                     type="button"
-                    onClick={() => rep1Display ? openEditRep(1, rep1Display, rep1?.id ?? null) : openAddRep(1)}
-                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                    aria-label={rep1Display ? 'Edit representative 1' : 'Add representative 1'}
+                    onClick={() => openAddRep(nextRepDisplayOrder)}
+                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors opacity-0 hover:opacity-100"
+                    aria-label={`Add representative ${sortedRepresentatives.length + 1}`}
                   >
                     <Edit className="w-4 h-4 text-gray-600" />
                   </button>
                 </div>
-                {rep1Display?.name ? (
-                  <div className="space-y-3">
-                    <div>
-                      <span className="block text-xs text-gray-500 mb-0.5">Name</span>
-                      <p className="text-sm font-medium text-gray-900">{rep1Display.name}</p>
-                    </div>
-                    <div>
-                      <span className="block text-xs text-gray-500 mb-0.5">Relationship</span>
-                      <p className="text-sm font-medium text-gray-900">{rep1Display.relationship || '—'}</p>
-                    </div>
-                    <div>
-                      <span className="block text-xs text-gray-500 mb-0.5">Phone Number</span>
-                      <p className="text-sm font-medium text-gray-900">{rep1Display.phone_number || '—'}</p>
-                    </div>
-                    <div>
-                      <span className="block text-xs text-gray-500 mb-0.5">Email Address</span>
-                      <p className="text-sm font-medium text-gray-900">{rep1Display.email_address || '—'}</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <Users className="w-12 h-12 text-gray-300 mb-3" />
-                    <p className="text-sm text-gray-500 mb-4">No representative added</p>
-                    <button
-                      type="button"
-                      onClick={() => openAddRep(1)}
-                      className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Add Representative
-                    </button>
-                  </div>
-                )}
-              </div>
-
-              {/* Representative #2 */}
-              <div className="bg-white rounded-lg p-6 border border-gray-200 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-base font-bold text-gray-900">Representative #2</h3>
+                <div className="flex flex-col items-center justify-center py-8">
+                  <Users className="w-12 h-12 text-gray-300 mb-3" />
+                  <p className="text-sm text-gray-500 mb-4">No representative added</p>
                   <button
                     type="button"
-                    onClick={() => rep2Display ? openEditRep(2, rep2Display, rep2?.id ?? null) : openAddRep(2)}
-                    className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                    aria-label={rep2Display ? 'Edit representative 2' : 'Add representative 2'}
+                    onClick={() => openAddRep(nextRepDisplayOrder)}
+                    className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
                   >
-                    <Edit className="w-4 h-4 text-gray-600" />
+                    <Plus className="w-4 h-4" />
+                    Add Representative
                   </button>
                 </div>
-                {rep2Display?.name ? (
-                  <div className="space-y-3">
-                    <div>
-                      <span className="block text-xs text-gray-500 mb-0.5">Name</span>
-                      <p className="text-sm font-medium text-gray-900">{rep2Display.name}</p>
-                    </div>
-                    <div>
-                      <span className="block text-xs text-gray-500 mb-0.5">Relationship</span>
-                      <p className="text-sm font-medium text-gray-900">{rep2Display.relationship || '—'}</p>
-                    </div>
-                    <div>
-                      <span className="block text-xs text-gray-500 mb-0.5">Phone Number</span>
-                      <p className="text-sm font-medium text-gray-900">{rep2Display.phone_number || '—'}</p>
-                    </div>
-                    <div>
-                      <span className="block text-xs text-gray-500 mb-0.5">Email Address</span>
-                      <p className="text-sm font-medium text-gray-900">{rep2Display.email_address || '—'}</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-8">
-                    <Users className="w-12 h-12 text-gray-300 mb-3" />
-                    <p className="text-sm text-gray-500 mb-4">No representative added</p>
-                    <button
-                      type="button"
-                      onClick={() => openAddRep(2)}
-                      className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Add Representative
-                    </button>
-                  </div>
-                )}
               </div>
             </div>
           )}
 
           {activeTab === 'documents' && (
-            <div className="max-w-2xl">
+            <div className="w-full">
               <div className="text-center mb-8">
                 <FileText className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                 <h3 className="text-lg font-semibold text-gray-900 mb-1">Document Management</h3>
@@ -1269,7 +1335,7 @@ export default function ClientDetailContent({ client, allClients, representative
                             className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors"
                             aria-label="Open document"
                           >
-                            <ExternalLink className="w-4 h-4" />
+                            <Download className="w-4 h-4" />
                           </a>
                         )}
                         <button
@@ -1289,9 +1355,7 @@ export default function ClientDetailContent({ client, allClients, representative
                     </li>
                   ))}
                 </ul>
-              ) : (
-                <p className="text-sm text-gray-500 text-center py-6">No documents uploaded yet.</p>
-              )}
+              ) : ''}
             </div>
           )}
 
@@ -1373,84 +1437,109 @@ export default function ClientDetailContent({ client, allClients, representative
           )}
 
           {activeTab === 'incidents' && (
-            <div className="w-full">
-              <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
-                <div className="p-8 flex flex-col items-center justify-center text-center">
-                  {localIncidents.length > 0 ? (
-                    <div className="w-full space-y-4">
-                      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-                        <h3 className="text-lg font-bold text-gray-900">Incident Reports</h3>
-                        <button
-                          type="button"
-                          onClick={openReportIncidentModal}
-                          className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
-                        >
-                          <Plus className="w-4 h-4" />
-                          Report Incident
-                        </button>
-                      </div>
-                      <p className="text-sm text-gray-500 text-left mb-4">
-                        Track and manage incident reports for this client.
-                      </p>
-                      {incidentListError && (
-                        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
-                          {incidentListError}
-                        </div>
-                      )}
-                      <ul className="divide-y divide-gray-200 border border-gray-200 rounded-lg overflow-hidden">
-                        {localIncidents.map((incident) => (
-                          <li key={incident.id} className="p-4 bg-white hover:bg-gray-50 transition-colors flex items-start justify-between gap-4">
-                            <div className="flex flex-col gap-1 flex-1 min-w-0">
-                              <div className="flex items-center justify-between gap-2 flex-wrap">
-                                <span className="text-xs font-medium text-gray-500">
-                                  {formatIncidentDate(incident.reported_at)}
-                                </span>
-                                <div className="flex items-center gap-2">
-                                  {incident.incident_type && (
-                                    <span className="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-700">
-                                      {incident.incident_type}
-                                    </span>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteIncident(incident)}
-                                    disabled={deletingIncidentId === incident.id}
-                                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                                    aria-label="Delete incident"
-                                  >
-                                    {deletingIncidentId === incident.id ? (
-                                      <Loader2 className="w-4 h-4 animate-spin" />
-                                    ) : (
-                                      <Trash2 className="w-4 h-4" />
-                                    )}
-                                  </button>
-                                </div>
-                              </div>
-                              <p className="text-sm text-gray-900 mt-2">{incident.description}</p>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : (
-                    <>
-                      <AlertTriangle className="w-12 h-12 text-gray-300 mb-4" />
-                      <h3 className="text-lg font-bold text-gray-900 mb-2">Incident Reports</h3>
-                      <p className="text-sm text-gray-500 mb-6 max-w-md">
-                        Track and manage incident reports for this client.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={openReportIncidentModal}
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors w-full max-w-xs justify-center"
-                      >
-                        <Plus className="w-4 h-4" />
-                        Report Incident
-                      </button>
-                    </>
-                  )}
-                </div>
+            <div className="w-full space-y-4">
+              {/* Warning banner */}
+              <div className="rounded-lg border border-amber-400 bg-[#FFF8E5] px-4 py-3 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" aria-hidden />
+                <p className="text-sm text-gray-900">
+                  Important: Incident reports must also be stored outside this system — in your agency&apos;s physical records, secure file server, or compliance storage — in accordance with applicable regulations.
+                </p>
               </div>
+
+              {/* Section header */}
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0" aria-hidden />
+                    Incident Reports
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {localIncidents.length === 0
+                      ? 'No incident reports on file.'
+                      : `${localIncidents.length} report${localIncidents.length === 1 ? '' : 's'} on file.`}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={openReportIncidentModal}
+                  className="inline-flex items-center gap-2 px-4 py-2 border-2 border-gray-900 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  Report Incident
+                </button>
+              </div>
+
+              {incidentListError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                  {incidentListError}
+                </div>
+              )}
+
+              {localIncidents.length > 0 ? (
+                <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                          <th className="px-4 py-3">Incident Date</th>
+                          <th className="px-4 py-3">Reporting Date</th>
+                          <th className="px-4 py-3">Primary Contact</th>
+                          <th className="px-4 py-3">Description</th>
+                          <th className="px-4 py-3">File</th>
+                          <th className="px-4 py-3">Uploaded</th>
+                          <th className="px-4 py-3 text-right">Download</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {localIncidents.map((incident) => {
+                          const fileUrl = getIncidentFileUrl(incident)
+                          return (
+                            <tr key={incident.id} className="bg-white hover:bg-gray-50">
+                              <td className="px-4 py-3 text-gray-900">{formatIncidentDate(incident.incident_date)}</td>
+                              <td className="px-4 py-3 text-gray-900">{formatIncidentDate(incident.reporting_date)}</td>
+                              <td className="px-4 py-3 text-gray-900">{incident.primary_contact_person}</td>
+                              <td className="px-4 py-3 text-gray-900 max-w-xs truncate" title={incident.description}>{incident.description}</td>
+                              <td className="px-4 py-3">
+                                {incident.file_name && fileUrl ? (
+                                  <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-blue-600 hover:underline">
+                                    <FileText className="w-4 h-4 shrink-0" />
+                                    {incident.file_name}
+                                  </a>
+                                ) : (
+                                  <span className="text-gray-400">—</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-gray-600">{formatIncidentUploadedAt(incident.created_at)}</td>
+                              <td className="px-4 py-3 text-right">
+                                {fileUrl ? (
+                                  <a href={fileUrl} download={incident.file_name ?? undefined} className="inline-flex p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" aria-label="Download file">
+                                    <Download className="w-4 h-4" />
+                                  </a>
+                                ) : (
+                                  <span className="text-gray-300">—</span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-gray-300 rounded-lg bg-white p-12 flex flex-col items-center justify-center text-center">
+                  <AlertTriangle className="w-12 h-12 text-gray-300 mb-4" aria-hidden />
+                  <p className="text-gray-500 mb-6">No incident reports have been filed for this client.</p>
+                  <button
+                    type="button"
+                    onClick={openReportIncidentModal}
+                    className="inline-flex items-center gap-2 px-6 py-3 border border-gray-300 bg-white text-gray-900 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    File First Report
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -1558,6 +1647,49 @@ export default function ClientDetailContent({ client, allClients, representative
         </form>
       </Modal>
 
+      {/* Delete Representative Confirmation */}
+      <Modal
+        isOpen={!!repToDelete}
+        onClose={() => setRepToDelete(null)}
+        title="Delete Representative?"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-gray-600">
+            Are you sure you want to remove{' '}
+            <strong>{repToDelete ? (repToDelete.name && repToDelete.name.trim()) || 'this representative' : ''}</strong>
+            {' '}as a representative? This cannot be undone.
+          </p>
+          {repListError && (
+            <p className="text-sm text-red-600 bg-red-50 p-2 rounded-lg">{repListError}</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setRepToDelete(null)}
+              className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleDeleteRep}
+              disabled={!!repToDelete && deletingRepId === repToDelete.id}
+              className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              {repToDelete && deletingRepId === repToDelete.id ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                'Delete'
+              )}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
       {/* Caregiver Requirements Modal */}
       <Modal
         isOpen={caregiverReqsModalOpen}
@@ -1654,35 +1786,82 @@ export default function ClientDetailContent({ client, allClients, representative
         </div>
       </Modal>
 
-      {/* Report Incident Modal */}
+      {/* File Incident Report Modal */}
       <Modal
         isOpen={incidentModalOpen}
         onClose={closeIncidentModal}
-        title="Report Incident"
+        title={`File Incident Report — ${localClient.full_name}`}
         size="md"
       >
         <form onSubmit={handleSaveIncident} className="space-y-4">
+          <p className="text-sm text-gray-600">Complete all fields and attach the incident report file.</p>
+
+          <div className="rounded-lg border border-amber-400 bg-[#FFF8E5] px-4 py-3 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" aria-hidden />
+            <p className="text-sm text-gray-900">
+              <strong>Reminder:</strong> This report must also be stored outside this system in your agency&apos;s compliance records.
+            </p>
+          </div>
+
           {incidentFormError && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
               {incidentFormError}
             </div>
           )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="incident-incident_date" className="block text-sm font-bold text-gray-700 mb-1">
+                Incident Date <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  id="incident-incident_date"
+                  type="date"
+                  value={incidentForm.incident_date}
+                  onChange={(e) => setIncidentForm((p) => ({ ...p, incident_date: e.target.value }))}
+                  className="block w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isSavingIncident}
+                />
+                <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="incident-reporting_date" className="block text-sm font-bold text-gray-700 mb-1">
+                Reporting Date <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  id="incident-reporting_date"
+                  type="date"
+                  value={incidentForm.reporting_date}
+                  onChange={(e) => setIncidentForm((p) => ({ ...p, reporting_date: e.target.value }))}
+                  className="block w-full px-4 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={isSavingIncident}
+                />
+                <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+          </div>
+
           <div>
-            <label htmlFor="incident-reported_at" className="block text-sm font-medium text-gray-700 mb-1">
-              Date & Time
+            <label htmlFor="incident-primary_contact" className="block text-sm font-bold text-gray-700 mb-1">
+              Primary Contact Person <span className="text-red-500">*</span>
             </label>
             <input
-              id="incident-reported_at"
-              type="datetime-local"
-              value={incidentForm.reported_at}
-              onChange={(e) => setIncidentForm((p) => ({ ...p, reported_at: e.target.value }))}
+              id="incident-primary_contact"
+              type="text"
+              value={incidentForm.primary_contact_person}
+              onChange={(e) => setIncidentForm((p) => ({ ...p, primary_contact_person: e.target.value }))}
               className="block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               disabled={isSavingIncident}
+              placeholder="Full name of primary contact for this incident"
             />
           </div>
+
           <div>
-            <label htmlFor="incident-description" className="block text-sm font-medium text-gray-700 mb-1">
-              Description <span className="text-red-500">*</span>
+            <label htmlFor="incident-description" className="block text-sm font-bold text-gray-700 mb-1">
+              Description of Incident <span className="text-red-500">*</span>
             </label>
             <textarea
               id="incident-description"
@@ -1691,41 +1870,77 @@ export default function ClientDetailContent({ client, allClients, representative
               onChange={(e) => setIncidentForm((p) => ({ ...p, description: e.target.value }))}
               className="block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               disabled={isSavingIncident}
-              placeholder="Describe what happened..."
+              placeholder="Describe what occurred, when, where, and who was involved..."
             />
           </div>
+
           <div>
-            <label htmlFor="incident-type" className="block text-sm font-medium text-gray-700 mb-1">
-              Type (optional)
+            <label className="block text-sm font-bold text-gray-700 mb-1">
+              Attach Incident Report File <span className="text-red-500">*</span>
             </label>
             <input
-              id="incident-type"
-              type="text"
-              value={incidentForm.incident_type}
-              onChange={(e) => setIncidentForm((p) => ({ ...p, incident_type: e.target.value }))}
-              className="block w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              disabled={isSavingIncident}
-              placeholder="e.g. Fall, Medication error"
+              ref={incidentFileInputRef}
+              type="file"
+              accept={ACCEPTED_INCIDENT_FILE_TYPES}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                setIncidentFormFile(file ?? null)
+              }}
+              className="hidden"
             />
+            {!incidentFormFile ? (
+              <button
+                type="button"
+                onClick={() => incidentFileInputRef.current?.click()}
+                disabled={isSavingIncident}
+                className="w-full rounded-lg border-2 border-dashed border-gray-300 bg-gray-50/50 py-6 flex flex-col items-center justify-center gap-2 text-gray-500 hover:border-gray-400 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                <Upload className="w-8 h-8" />
+                <span>Click to upload</span>
+                <span className="text-xs">PDF, DOC, DOCX, PNG, JPG</span>
+              </button>
+            ) : (
+              <div className="rounded-lg border-2 border-dashed border-green-400 bg-green-50/30 py-3 px-4 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <FileText className="w-5 h-5 text-green-600 shrink-0" />
+                  <span className="text-sm font-medium text-gray-900 truncate">{incidentFormFile.name}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIncidentFormFile(null)
+                    if (incidentFileInputRef.current) incidentFileInputRef.current.value = ''
+                  }}
+                  disabled={isSavingIncident}
+                  className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50"
+                  aria-label="Remove file"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
+
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200">
             <button
               type="button"
               onClick={closeIncidentModal}
               disabled={isSavingIncident}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSavingIncident}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
             >
               {isSavingIncident ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
-              ) : null}
-              Save Incident
+              ) : (
+                <AlertTriangle className="w-4 h-4" />
+              )}
+              Submit Report
             </button>
           </div>
         </form>
