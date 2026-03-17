@@ -1,0 +1,2 @@
+-- phast_two: adl_lists removed; ADL options are defined in app constants (src/lib/constants.ts ADL_LISTS).
+-- No table created. adls and schedules use adl_code / adl_codes (TEXT) referencing those constants.

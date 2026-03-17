@@ -1,0 +1,166 @@
+'use client'
+
+import { useState } from 'react'
+import Image from 'next/image'
+import { FileText, Download, Image as ImageIcon, Loader2, ExternalLink } from 'lucide-react'
+
+interface CertificationDocumentViewerProps {
+  documentUrl: string | null | undefined
+  certificationName: string
+}
+
+export default function CertificationDocumentViewer({
+  documentUrl,
+  certificationName
+}: CertificationDocumentViewerProps) {
+  const [isDownloading, setIsDownloading] = useState(false)
+  const [imageError, setImageError] = useState(false)
+
+  if (!documentUrl) {
+    return null
+  }
+
+  // Determine if the file is an image based on extension
+  const getFileExtension = (url: string): string => {
+    const urlParts = url.split('.')
+    if (urlParts.length > 1) {
+      return urlParts[urlParts.length - 1].split('?')[0].toLowerCase()
+    }
+    return ''
+  }
+
+  const isImageFile = (url: string): boolean => {
+    const ext = getFileExtension(url)
+    return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'].includes(ext)
+  }
+
+  const handleDownload = async () => {
+    if (!documentUrl) return
+
+    setIsDownloading(true)
+    try {
+      // Fetch the file
+      const response = await fetch(documentUrl)
+      if (!response.ok) {
+        throw new Error('Failed to download file')
+      }
+
+      // Get the blob
+      const blob = await response.blob()
+
+      // Get file extension from URL
+      const extension = getFileExtension(documentUrl) || 'pdf'
+      
+      // Create a blob URL
+      const blobUrl = window.URL.createObjectURL(blob)
+
+      // Create a temporary anchor element and trigger download
+      const a = document.createElement('a')
+      a.href = blobUrl
+      
+      // Create a safe filename
+      const safeCertName = certificationName.replace(/[^a-z0-9]/gi, '_').toLowerCase()
+      a.download = `${safeCertName}_certification.${extension}`
+
+      document.body.appendChild(a)
+      a.click()
+
+      // Cleanup
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(blobUrl)
+    } catch (error) {
+      console.error('Error downloading file:', error)
+      alert('Failed to download file. Please try again.')
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  const fileExtension = getFileExtension(documentUrl)
+  const isImage = isImageFile(documentUrl)
+
+  return (
+    <div className="mt-6 pt-6 border-t border-gray-200">
+      <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+        {isImage ? (
+          <ImageIcon className="w-5 h-5 text-blue-600" />
+        ) : (
+          <FileText className="w-5 h-5 text-blue-600" />
+        )}
+        {isImage ? 'Certification Image' : 'Certification Document'}
+      </h2>
+      
+      <div className="space-y-4">
+        {/* Image Preview */}
+        {isImage && (
+          <div className="border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+            {!imageError ? (
+              <div className="relative w-full max-w-2xl min-h-[200px] aspect-video max-h-96">
+                <Image
+                  src={documentUrl}
+                  alt={`${certificationName} certification`}
+                  fill
+                  className="object-contain"
+                  onError={() => setImageError(true)}
+                  sizes="(max-width: 672px) 100vw, 672px"
+                />
+              </div>
+            ) : (
+              <div className="p-8 text-center">
+                <ImageIcon className="w-16 h-16 text-gray-400 mx-auto mb-3" />
+                <p className="text-sm text-gray-600 mb-1">Unable to load image preview</p>
+                <p className="text-xs text-gray-500">Click &quot;View Full Image&quot; or &quot;Download&quot; to access the file</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Document Preview Placeholder for non-images */}
+        {!isImage && (
+          <div className="border border-gray-200 rounded-lg p-8 bg-gray-50 flex items-center justify-center">
+            <div className="text-center">
+              <FileText className="w-16 h-16 text-gray-400 mx-auto mb-3" />
+              <p className="text-sm text-gray-600 mb-1">
+                {fileExtension.toUpperCase()} Document
+              </p>
+                <p className="text-xs text-gray-500">
+                Click &quot;View Document&quot; to open in a new tab
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="flex items-center gap-3">
+          <a
+            href={documentUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            <ExternalLink className="w-4 h-4" />
+            {isImage ? 'View Full Image' : 'View Document'}
+          </a>
+          
+          <button
+            onClick={handleDownload}
+            disabled={isDownloading}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isDownloading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Downloading...
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4" />
+                Download
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,97 @@
+/**
+ * Expert process step phases. Used for phase select options in Add/Edit Expert Step modals
+ * and for ordering phase groups when displaying expert steps.
+ */
+
+export const EXPERT_STEP_PHASES: { value: string; label: string }[] = [
+  { value: 'Client Intake', label: 'Client Intake' },
+  { value: 'Application Preparation', label: 'Application Preparation' },
+  { value: 'Application Submission', label: 'Application Submission' },
+  { value: 'Survey Preparation', label: 'Survey Preparation' },
+  { value: 'Survey Guidance', label: 'Survey Guidance' },
+]
+
+export const DEFAULT_EXPERT_STEP_PHASE: string = EXPERT_STEP_PHASES[0].value
+
+/** US state names (alphabetical) for dropdowns and forms. */
+export const US_STATES: string[] = [
+  'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado',
+  'Connecticut', 'Delaware', 'Florida', 'Georgia', 'Hawaii', 'Idaho',
+  'Illinois', 'Indiana', 'Iowa', 'Kansas', 'Kentucky', 'Louisiana',
+  'Maine', 'Maryland', 'Massachusetts', 'Michigan', 'Minnesota',
+  'Mississippi', 'Missouri', 'Montana', 'Nebraska', 'Nevada',
+  'New Hampshire', 'New Jersey', 'New Mexico', 'New York',
+  'North Carolina', 'North Dakota', 'Ohio', 'Oklahoma', 'Oregon',
+  'Pennsylvania', 'Rhode Island', 'South Carolina', 'South Dakota',
+  'Tennessee', 'Texas', 'Utah', 'Vermont', 'Virginia', 'Washington',
+  'West Virginia', 'Wisconsin', 'Wyoming',
+]
+
+/**
+ * Activities of Daily Living (ADL) library. Used for adls.adl_code and schedules.adl_codes.
+ * Store the `name` value in the database; use these constants for options and validation.
+ */
+export const ADL_LISTS: { name: string; type: string }[] = [
+  { name: 'Uncategorized', type: 'General' },
+  { name: 'Activity Out of Home', type: 'Social Activities' },
+  { name: 'Ambulation', type: 'Mobility' },
+  { name: 'Apartment Numbers Per Zone', type: 'Orientation' },
+  { name: 'Apply Lotion', type: 'Grooming' },
+  { name: 'Assist Eating', type: 'Eating' },
+  { name: 'Assist Shaving', type: 'Grooming' },
+  { name: 'Bathing', type: 'Personal Hygiene' },
+  { name: 'Bathroom Cleanup', type: 'Housekeeping' },
+  { name: 'Bed Care', type: 'Personal Care' },
+  { name: 'Bedpan Assistance', type: 'Personal Care' },
+  { name: 'Behavioral Concerns', type: 'Mental Health' },
+  { name: 'Behavioral Triggers', type: 'Mental Health' },
+  { name: 'Bladder Care', type: 'Medical Care' },
+  { name: 'Bowel Care', type: 'Medical Care' },
+  { name: 'Exercise', type: 'Physical Activities' },
+]
+
+/**
+ * Caregiver skills and certifications. Used for caregiver_requirements.skill_codes.
+ * Store the `name` value in the database; use these constants for options and validation.
+ */
+export const CAREGIVER_SKILL_POINTS: { type: string; name: string }[] = [
+  { type: 'Clinical Care', name: 'Wound Care' },
+  { type: 'Clinical Care', name: 'Catheter Care' },
+  { type: 'Clinical Care', name: 'Ostomy Care' },
+  { type: 'Clinical Care', name: 'Feeding Tube Care' },
+  { type: 'Clinical Care', name: 'Tracheostomy Care' },
+  { type: 'Clinical Care', name: 'Oxygen Therapy' },
+  { type: 'Clinical Care', name: 'IV Therapy' },
+  { type: 'Clinical Care', name: 'Insulin Administration' },
+  { type: 'Clinical Care', name: 'Vital Signs Monitoring' },
+  { type: 'Clinical Care', name: 'Dialysis Support' },
+  { type: 'Specialty Conditions', name: "Alzheimer's / Dementia Care" },
+  { type: 'Specialty Conditions', name: "Parkinson's Care" },
+  { type: 'Specialty Conditions', name: 'Stroke Care' },
+  { type: 'Specialty Conditions', name: 'Multiple Sclerosis Care' },
+  { type: 'Specialty Conditions', name: 'ALS Care' },
+  { type: 'Specialty Conditions', name: 'Traumatic Brain Injury Care' },
+  { type: 'Specialty Conditions', name: 'Hospice / Palliative Care' },
+  { type: 'Specialty Conditions', name: 'Post-Surgery Recovery' },
+  { type: 'Specialty Conditions', name: 'Diabetic Care' },
+  { type: 'Specialty Conditions', name: 'Pediatric Care' },
+  { type: 'Specialty Conditions', name: 'Autism Spectrum Care' },
+  { type: 'Specialty Conditions', name: 'Behavioral Health Support' },
+  { type: 'Physical Support', name: 'Transfer & Mobility Assistance' },
+  { type: 'Physical Support', name: 'Fall Prevention' },
+  { type: 'Physical Support', name: 'Physical Therapy Assistance' },
+  { type: 'Physical Support', name: 'Occupational Therapy Assistance' },
+  { type: 'Daily Living', name: 'Meal Preparation' },
+  { type: 'Daily Living', name: 'Housekeeping' },
+  { type: 'Daily Living', name: 'Medication Reminders' },
+  { type: 'Daily Living', name: 'Companionship' },
+  { type: 'Daily Living', name: 'Transportation' },
+  { type: 'Certifications', name: 'CPR Certified' },
+  { type: 'Certifications', name: 'AED Certified' },
+  { type: 'Certifications', name: 'First Aid Certified' },
+  { type: 'Language', name: 'Bilingual — Spanish' },
+  { type: 'Language', name: 'Bilingual — French' },
+  { type: 'Language', name: 'Bilingual — Mandarin' },
+  { type: 'Language', name: 'Bilingual — Portuguese' },
+  { type: 'Language', name: 'American Sign Language (ASL)' },
+]
