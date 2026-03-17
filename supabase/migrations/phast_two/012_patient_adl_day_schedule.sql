@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS patient_adl_day_schedule (
   slot_afternoon TEXT CHECK (slot_afternoon IS NULL OR slot_afternoon IN ('always', 'as_needed')),
   slot_evening TEXT CHECK (slot_evening IS NULL OR slot_evening IN ('always', 'as_needed')),
   slot_night TEXT CHECK (slot_night IS NULL OR slot_night IN ('always', 'as_needed')),
+  display_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   CONSTRAINT patient_adl_day_schedule_unique UNIQUE (patient_id, adl_code, day_of_week)

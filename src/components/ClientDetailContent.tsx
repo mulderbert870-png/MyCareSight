@@ -903,7 +903,6 @@ export default function ClientDetailContent({ client, allClients, representative
     setAdlPlanError(null)
     try {
       const supabase = createClient()
-      await q.deletePatientAdlDaySchedulesForAdl(supabase, localClient.id, adlCode)
       const { error } = await q.deleteAdl(supabase, localClient.id, adlCode)
       if (error) throw error
       setLocalAdls((prev) => prev.filter((a) => a.adl_code !== adlCode))
@@ -943,17 +942,22 @@ export default function ClientDetailContent({ client, allClients, representative
     }
   }
 
-  const formatAdlDaySummary = (schedule: PatientAdlDaySchedule | undefined) => {
+  const formatAdlDaySummary = (schedule: PatientAdlDaySchedule | undefined): string | null => {
     if (!schedule || schedule.schedule_type === 'never') return null
     if (schedule.schedule_type === 'always') return 'Always'
     if (schedule.schedule_type === 'as_needed') return 'As Needed'
-    const parts: string[] = []
-    if (schedule.slot_morning) parts.push('Morning')
-    if (schedule.slot_afternoon) parts.push('Afternoon')
-    if (schedule.slot_evening) parts.push('Evening')
-    if (schedule.slot_night) parts.push('Night')
-    const n = schedule.times_per_day ?? 1
-    return parts.length ? `${parts.join(' ')} ${n}x` : null
+    return null
+  }
+
+  const getSpecificTimesSlots = (schedule: PatientAdlDaySchedule | undefined): { labels: string[]; timesPerDay: number } | null => {
+    if (!schedule || schedule.schedule_type !== 'specific_times') return null
+    const labels: string[] = []
+    if (schedule.slot_morning) labels.push('Morning')
+    if (schedule.slot_afternoon) labels.push('Afternoon')
+    if (schedule.slot_evening) labels.push('Evening')
+    if (schedule.slot_night) labels.push('Night')
+    if (labels.length === 0) return null
+    return { labels, timesPerDay: schedule.times_per_day ?? 1 }
   }
 
   const skillsByType = CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
@@ -1144,8 +1148,8 @@ export default function ClientDetailContent({ client, allClients, representative
                       className="p-2 hover:bg-gray-200 rounded-lg transition-colors"
                       aria-label="Edit personal information"
                     >
-                      <Edit className="w-4 h-4 text-gray-600" />
-                    </button>
+                    <Edit className="w-4 h-4 text-gray-600" />
+                  </button>
                   )}
                 </div>
                 {isEditingPersonal ? (
@@ -1216,24 +1220,24 @@ export default function ClientDetailContent({ client, allClients, representative
                     </div>
                   </form>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <span className="text-sm text-gray-600">Full Name:</span>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-sm text-gray-600">Full Name:</span>
                       <p className="text-sm font-medium text-gray-900">{localClient.full_name}</p>
-                    </div>
-                    <div>
-                      <span className="text-sm text-gray-600">Gender:</span>
-                      <p className="text-sm font-medium text-gray-900">{localClient.gender || 'N/A'}</p>
-                    </div>
-                    <div>
-                      <span className="text-sm text-gray-600">Date of Birth:</span>
-                      <p className="text-sm font-medium text-gray-900">{formatDate(localClient.date_of_birth)}</p>
-                    </div>
-                    <div>
-                      <span className="text-sm text-gray-600">Age:</span>
-                      <p className="text-sm font-medium text-gray-900">{localClient.age || 'N/A'} years</p>
-                    </div>
                   </div>
+                  <div>
+                    <span className="text-sm text-gray-600">Gender:</span>
+                      <p className="text-sm font-medium text-gray-900">{localClient.gender || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <span className="text-sm text-gray-600">Date of Birth:</span>
+                      <p className="text-sm font-medium text-gray-900">{formatDate(localClient.date_of_birth)}</p>
+                  </div>
+                  <div>
+                    <span className="text-sm text-gray-600">Age:</span>
+                      <p className="text-sm font-medium text-gray-900">{localClient.age || 'N/A'} years</p>
+                  </div>
+                </div>
                 )}
               </div>
 
@@ -1405,32 +1409,32 @@ export default function ClientDetailContent({ client, allClients, representative
                     </div>
                   </form>
                 ) : (
-                  <div className="space-y-4">
-                    <div>
+                <div className="space-y-4">
+                  <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Primary Diagnosis</label>
                       <div className="mt-1 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
                         <p className="text-sm font-medium text-gray-900">
                           {localClient.primary_diagnosis || 'Not specified'}
                         </p>
                       </div>
-                    </div>
-                    <div>
+                  </div>
+                  <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Current Medications</label>
                       <div className="mt-1 px-4 py-3 bg-white border border-gray-300 rounded-lg">
                         <p className="text-sm font-medium text-gray-900 whitespace-pre-line">
                           {localClient.current_medications || 'None listed'}
                         </p>
                       </div>
-                    </div>
-                    <div>
+                  </div>
+                  <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Allergies</label>
                       <div className="mt-1 px-4 py-3 bg-red-50 border border-red-300 rounded-lg flex items-center gap-2">
                         <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" aria-hidden />
                         <p className="text-sm font-medium text-red-700 whitespace-pre-line">
                           {localClient.allergies || 'None listed'}
-                        </p>
-                      </div>
-                    </div>
+                    </p>
+                  </div>
+                </div>
                   </div>
                 )}
               </div>
@@ -1553,7 +1557,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   )}
                   Upload Documents
                 </button>
-              </div>
+                      </div>
               {patientDocuments.length > 0 ? (
                 <ul className="border border-gray-200 rounded-lg divide-y divide-gray-200">
                   {patientDocuments.map((doc) => (
@@ -1567,7 +1571,7 @@ export default function ClientDetailContent({ client, allClients, representative
                               {new Date(doc.uploaded_at).toLocaleDateString()}
                             </p>
                           )}
-                        </div>
+                    </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         {doc.url && (
@@ -1690,7 +1694,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 <p className="text-sm text-gray-900">
                   Important: Incident reports must also be stored outside this system — in your agency&apos;s physical records, secure file server, or compliance storage — in accordance with applicable regulations.
                 </p>
-              </div>
+                      </div>
 
               {/* Section header */}
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -1718,8 +1722,8 @@ export default function ClientDetailContent({ client, allClients, representative
               {incidentListError && (
                 <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
                   {incidentListError}
-                </div>
-              )}
+                    </div>
+                  )}
 
               {localIncidents.length > 0 ? (
                 <div className="border border-gray-200 rounded-lg overflow-hidden bg-white">
@@ -1770,8 +1774,8 @@ export default function ClientDetailContent({ client, allClients, representative
                         })}
                       </tbody>
                     </table>
-                  </div>
                 </div>
+              </div>
               ) : (
                 <div className="border-2 border-dashed border-gray-300 rounded-lg bg-white p-12 flex flex-col items-center justify-center text-center">
                   <AlertTriangle className="w-12 h-12 text-gray-300 mb-4" aria-hidden />
@@ -1804,7 +1808,7 @@ export default function ClientDetailContent({ client, allClients, representative
                     Activities of Daily Living ({localAdls.length})
                   </h3>
                   <p className="text-sm text-gray-500 mt-1">Manage client care tasks and schedules.</p>
-                </div>
+        </div>
                 <button
                   type="button"
                   onClick={openAddAdlModal}
@@ -1813,12 +1817,12 @@ export default function ClientDetailContent({ client, allClients, representative
                   <Plus className="w-4 h-4" />
                   ADD ADL
                 </button>
-              </div>
+      </div>
 
               {adlPlanError && (
                 <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
                   {adlPlanError}
-                </div>
+    </div>
               )}
 
               <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
@@ -1857,35 +1861,46 @@ export default function ClientDetailContent({ client, allClients, representative
                               {ADL_DAYS.map((d) => {
                                 const s = getSchedule(adlRow.adl_code, d.value)
                                 const summary = formatAdlDaySummary(s)
+                                const specificSlots = getSpecificTimesSlots(s)
                                 const type = s?.schedule_type ?? 'never'
                                 return (
-                                  <td key={d.value} className="px-2 py-3 text-center">
+                                  <td key={d.value} className="px-2 py-3 text-center align-top">
                                     <button
                                       type="button"
                                       onClick={() => openSelectTimeModal(adlInfo, d.value, DAY_LABELS[d.value])}
-                                      className="inline-flex flex-col items-center gap-0.5 p-1 rounded hover:bg-gray-100 focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                                      className="inline-flex flex-row items-start gap-1.5 p-1 rounded hover:bg-gray-100 focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 min-w-0"
                                       aria-label={`Set schedule for ${adlInfo.name} on ${d.label}`}
                                     >
                                       {type === 'never' && (
-                                        <span className="w-6 h-6 rounded-full border-2 border-gray-300 bg-white inline-block" />
+                                        <span className="w-6 h-6 rounded-full border-2 border-gray-300 bg-white inline-block shrink-0" />
                                       )}
                                       {type === 'always' && (
-                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center">
+                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center shrink-0">
                                           <Infinity className="w-3.5 h-3.5" />
                                         </span>
                                       )}
                                       {type === 'as_needed' && (
-                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center text-xs font-bold">
+                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center text-xs font-bold shrink-0">
                                           *
                                         </span>
                                       )}
                                       {type === 'specific_times' && (
-                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center">
-                                          <Check className="w-3.5 h-3.5" />
-                                        </span>
+                                        <>
+                                          <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center shrink-0">
+                                            <Check className="w-3.5 h-3.5" />
+                                          </span>
+                                          {specificSlots && (
+                                            <div className="flex flex-col items-start text-[10px] text-gray-600 leading-tight text-left">
+                                              {specificSlots.labels.map((label) => (
+                                                <span key={label}>{label}</span>
+                                              ))}
+                                              <span className="text-blue-600 font-medium mt-0.5">{specificSlots.timesPerDay}x</span>
+                                            </div>
+                                          )}
+                                        </>
                                       )}
-                                      {summary && (
-                                        <span className="text-[10px] text-gray-600 leading-tight max-w-[4rem] truncate block">
+                                      {summary && !specificSlots && (
+                                        <span className="text-[10px] text-gray-600 leading-tight block">
                                           {summary}
                                         </span>
                                       )}
