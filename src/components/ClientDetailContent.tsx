@@ -24,7 +24,11 @@ import {
   Sparkles,
   Save,
   Upload,
-  Download
+  Download,
+  Search,
+  ClipboardList,
+  Infinity,
+  Check
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
@@ -33,7 +37,8 @@ import type { PatientRepresentative } from '@/lib/supabase/query/patients-repres
 import type { PatientDocument } from '@/lib/supabase/query/patients'
 import type { CaregiverRequirement } from '@/lib/supabase/query/caregiver-requirements'
 import type { PatientIncident } from '@/lib/supabase/query/patient-incidents'
-import { CAREGIVER_SKILL_POINTS } from '@/lib/constants'
+import type { PatientAdl, PatientAdlDaySchedule } from '@/lib/supabase/query/patient-adls'
+import { CAREGIVER_SKILL_POINTS, ADL_LISTS } from '@/lib/constants'
 import Modal from '@/components/Modal'
 
 interface SmallClient {
@@ -72,9 +77,11 @@ interface ClientDetailContentProps {
   representatives?: PatientRepresentative[]
   caregiverRequirements?: CaregiverRequirement | null
   incidents?: PatientIncident[] | null
+  adls?: PatientAdl[] | null
+  adlSchedules?: PatientAdlDaySchedule[] | null
 }
 
-export default function ClientDetailContent({ client, allClients, representatives = [], caregiverRequirements: initialCaregiverRequirements = null, incidents: initialIncidents = [] }: ClientDetailContentProps) {
+export default function ClientDetailContent({ client, allClients, representatives = [], caregiverRequirements: initialCaregiverRequirements = null, incidents: initialIncidents = [], adls: initialAdls = [], adlSchedules: initialAdlSchedules = [] }: ClientDetailContentProps) {
   const router = useRouter()
   const [localClient, setLocalClient] = useState<SmallClient>(client)
   const [activeTab, setActiveTab] = useState('overview')
@@ -106,6 +113,8 @@ export default function ClientDetailContent({ client, allClients, representative
   const [repFormError, setRepFormError] = useState<string | null>(null)
   const [deletingRepId, setDeletingRepId] = useState<string | null>(null)
   const [repToDelete, setRepToDelete] = useState<PatientRepresentative | null>(null)
+  const [adlToDelete, setAdlToDelete] = useState<string | null>(null)
+  const [docToDelete, setDocToDelete] = useState<PatientDocument | null>(null)
   const [repListError, setRepListError] = useState<string | null>(null)
   const [localRepresentatives, setLocalRepresentatives] = useState<PatientRepresentative[]>(representatives)
   const [documentUploadError, setDocumentUploadError] = useState<string | null>(null)
@@ -132,6 +141,32 @@ export default function ClientDetailContent({ client, allClients, representative
   const [incidentFormError, setIncidentFormError] = useState<string | null>(null)
   const [incidentListError, setIncidentListError] = useState<string | null>(null)
   const [deletingIncidentId, setDeletingIncidentId] = useState<string | null>(null)
+  const [localAdls, setLocalAdls] = useState<PatientAdl[]>(initialAdls ?? [])
+  const [localAdlSchedules, setLocalAdlSchedules] = useState<PatientAdlDaySchedule[]>(initialAdlSchedules ?? [])
+  const [addAdlModalOpen, setAddAdlModalOpen] = useState(false)
+  const [addAdlSearch, setAddAdlSearch] = useState('')
+  const [addAdlSelected, setAddAdlSelected] = useState<Set<string>>(new Set())
+  const [isSavingAddAdl, setIsSavingAddAdl] = useState(false)
+  const [addAdlError, setAddAdlError] = useState<string | null>(null)
+  const [selectTimeModalOpen, setSelectTimeModalOpen] = useState(false)
+  const [selectTimeAdl, setSelectTimeAdl] = useState<{ name: string; type: string } | null>(null)
+  const [selectTimeDay, setSelectTimeDay] = useState<number>(1)
+  const [selectTimeDayLabel, setSelectTimeDayLabel] = useState<string>('Monday')
+  const [selectTimeForm, setSelectTimeForm] = useState({
+    timesPerDay: 1 as 1 | 2 | 3 | 4,
+    morning: false,
+    afternoon: false,
+    evening: false,
+    night: false,
+    slotMorning: 'always' as 'always' | 'as_needed',
+    slotAfternoon: 'always' as 'always' | 'as_needed',
+    slotEvening: 'always' as 'always' | 'as_needed',
+    slotNight: 'always' as 'always' | 'as_needed',
+  })
+  const [isSavingSelectTime, setIsSavingSelectTime] = useState(false)
+  const [isSavingAdlPlan, setIsSavingAdlPlan] = useState(false)
+  const [adlPlanError, setAdlPlanError] = useState<string | null>(null)
+  const [deletingAdlCode, setDeletingAdlCode] = useState<string | null>(null)
 
   // Sync local client when switching to a different client (by id)
   useEffect(() => {
@@ -150,6 +185,11 @@ export default function ClientDetailContent({ client, allClients, representative
   useEffect(() => {
     setLocalIncidents(initialIncidents ?? [])
   }, [client.id, initialIncidents])
+
+  useEffect(() => {
+    setLocalAdls(initialAdls ?? [])
+    setLocalAdlSchedules(initialAdlSchedules ?? [])
+  }, [client.id, initialAdls, initialAdlSchedules])
 
   useEffect(() => {
     if (isEditingMedical) {
@@ -545,6 +585,7 @@ export default function ClientDetailContent({ client, allClients, representative
       const { error } = await updatePatientDocumentsAction(localClient.id, nextDocs)
       if (error) throw new Error(error)
       setLocalClient((c) => ({ ...c, documents: nextDocs }))
+      setDocToDelete(null)
     } catch (err: unknown) {
       setDocumentUploadError(err instanceof Error ? err.message : 'Delete failed')
     } finally {
@@ -711,6 +752,208 @@ export default function ClientDetailContent({ client, allClients, representative
     } finally {
       setDeletingIncidentId(null)
     }
+  }
+
+  const ADL_DAYS = [
+    { label: 'Mon', value: 1 },
+    { label: 'Tue', value: 2 },
+    { label: 'Wed', value: 3 },
+    { label: 'Thu', value: 4 },
+    { label: 'Fri', value: 5 },
+    { label: 'Sat', value: 6 },
+    { label: 'Sun', value: 7 },
+  ] as const
+  const DAY_LABELS: Record<number, string> = {
+    1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday',
+    5: 'Friday', 6: 'Saturday', 7: 'Sunday',
+  }
+  const getSchedule = (adlCode: string, dayOfWeek: number) =>
+    localAdlSchedules.find((s) => s.adl_code === adlCode && s.day_of_week === dayOfWeek)
+
+  const openAddAdlModal = () => {
+    setAddAdlSearch('')
+    setAddAdlSelected(new Set())
+    setAddAdlError(null)
+    setAddAdlModalOpen(true)
+  }
+  const closeAddAdlModal = () => {
+    if (!isSavingAddAdl) setAddAdlModalOpen(false)
+  }
+  const handleSaveAddAdl = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const toAdd = Array.from(addAdlSelected).filter((name) => !localAdls.some((a) => a.adl_code === name))
+    if (toAdd.length === 0) {
+      setAddAdlModalOpen(false)
+      return
+    }
+    setIsSavingAddAdl(true)
+    setAddAdlError(null)
+    try {
+      const supabase = createClient()
+      const nextOrder = localAdls.length > 0 ? Math.max(...localAdls.map((a) => a.display_order)) + 1 : 0
+      const { data: inserted, error } = await q.insertAdls(supabase, localClient.id, toAdd, nextOrder)
+      if (error) throw error
+      if (inserted) setLocalAdls((prev) => [...prev, ...inserted])
+      setAddAdlModalOpen(false)
+      router.refresh()
+    } catch (err: unknown) {
+      setAddAdlError(err instanceof Error ? err.message : 'Failed to add ADLs.')
+    } finally {
+      setIsSavingAddAdl(false)
+    }
+  }
+
+  const openSelectTimeModal = (adl: { name: string; type: string }, dayOfWeek: number, dayLabel: string) => {
+    const existing = getSchedule(adl.name, dayOfWeek)
+    setSelectTimeAdl(adl)
+    setSelectTimeDay(dayOfWeek)
+    setSelectTimeDayLabel(dayLabel)
+    if (existing && existing.schedule_type === 'specific_times') {
+      const slots = {
+        morning: !!existing.slot_morning,
+        afternoon: !!existing.slot_afternoon,
+        evening: !!existing.slot_evening,
+        night: !!existing.slot_night,
+      }
+      setSelectTimeForm({
+        timesPerDay: Math.min(4, Math.max(1, existing.times_per_day ?? 1)) as 1 | 2 | 3 | 4,
+        morning: slots.morning,
+        afternoon: slots.afternoon,
+        evening: slots.evening,
+        night: slots.night,
+        slotMorning: (existing.slot_morning === 'as_needed' ? 'as_needed' : 'always') as 'always' | 'as_needed',
+        slotAfternoon: (existing.slot_afternoon === 'as_needed' ? 'as_needed' : 'always') as 'always' | 'as_needed',
+        slotEvening: (existing.slot_evening === 'as_needed' ? 'as_needed' : 'always') as 'always' | 'as_needed',
+        slotNight: (existing.slot_night === 'as_needed' ? 'as_needed' : 'always') as 'always' | 'as_needed',
+      })
+    } else {
+      setSelectTimeForm({
+        timesPerDay: 1,
+        morning: false,
+        afternoon: false,
+        evening: false,
+        night: false,
+        slotMorning: 'always',
+        slotAfternoon: 'always',
+        slotEvening: 'always',
+        slotNight: 'always',
+      })
+    }
+    setSelectTimeModalOpen(true)
+  }
+  const closeSelectTimeModal = () => {
+    if (!isSavingSelectTime) setSelectTimeModalOpen(false)
+  }
+  const applySelectTimeSchedule = async (scheduleType: 'never' | 'always' | 'as_needed' | 'specific_times', payload?: {
+    times_per_day?: number
+    slot_morning?: string | null
+    slot_afternoon?: string | null
+    slot_evening?: string | null
+    slot_night?: string | null
+  }) => {
+    if (!selectTimeAdl) return
+    setIsSavingSelectTime(true)
+    try {
+      const supabase = createClient()
+      const { data: row, error } = await q.upsertPatientAdlDaySchedule(supabase, {
+        patient_id: localClient.id,
+        adl_code: selectTimeAdl.name,
+        day_of_week: selectTimeDay,
+        schedule_type: scheduleType,
+        times_per_day: payload?.times_per_day ?? null,
+        slot_morning: payload?.slot_morning ?? null,
+        slot_afternoon: payload?.slot_afternoon ?? null,
+        slot_evening: payload?.slot_evening ?? null,
+        slot_night: payload?.slot_night ?? null,
+      })
+      if (error) throw error
+      setLocalAdlSchedules((prev) => {
+        const rest = prev.filter((s) => !(s.adl_code === selectTimeAdl.name && s.day_of_week === selectTimeDay))
+        return row ? [...rest, row] : rest
+      })
+      setSelectTimeModalOpen(false)
+      router.refresh()
+    } catch (err: unknown) {
+      setAdlPlanError(err instanceof Error ? err.message : 'Failed to save time.')
+    } finally {
+      setIsSavingSelectTime(false)
+    }
+  }
+
+  const handleDoneSelectTime = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectTimeAdl) return
+    const hasSlots = selectTimeForm.morning || selectTimeForm.afternoon || selectTimeForm.evening || selectTimeForm.night
+    const scheduleType = hasSlots ? 'specific_times' : 'never'
+    await applySelectTimeSchedule(scheduleType, hasSlots ? {
+      times_per_day: selectTimeForm.timesPerDay,
+      slot_morning: selectTimeForm.morning ? selectTimeForm.slotMorning : null,
+      slot_afternoon: selectTimeForm.afternoon ? selectTimeForm.slotAfternoon : null,
+      slot_evening: selectTimeForm.evening ? selectTimeForm.slotEvening : null,
+      slot_night: selectTimeForm.night ? selectTimeForm.slotNight : null,
+    } : undefined)
+  }
+
+  const handleSelectTimeQuick = (scheduleType: 'always' | 'as_needed' | 'never') => {
+    applySelectTimeSchedule(scheduleType)
+  }
+
+  const handleDeleteAdl = async (adlCode: string) => {
+    setDeletingAdlCode(adlCode)
+    setAdlPlanError(null)
+    try {
+      const supabase = createClient()
+      await q.deletePatientAdlDaySchedulesForAdl(supabase, localClient.id, adlCode)
+      const { error } = await q.deleteAdl(supabase, localClient.id, adlCode)
+      if (error) throw error
+      setLocalAdls((prev) => prev.filter((a) => a.adl_code !== adlCode))
+      setLocalAdlSchedules((prev) => prev.filter((s) => s.adl_code !== adlCode))
+      setAdlToDelete(null)
+      router.refresh()
+    } catch (err: unknown) {
+      setAdlPlanError(err instanceof Error ? err.message : 'Failed to remove ADL.')
+    } finally {
+      setDeletingAdlCode(null)
+    }
+  }
+
+  const handleSaveAdlPlan = async () => {
+    setIsSavingAdlPlan(true)
+    setAdlPlanError(null)
+    try {
+      const supabase = createClient()
+      for (const s of localAdlSchedules) {
+        await q.upsertPatientAdlDaySchedule(supabase, {
+          patient_id: s.patient_id,
+          adl_code: s.adl_code,
+          day_of_week: s.day_of_week,
+          schedule_type: s.schedule_type,
+          times_per_day: s.times_per_day,
+          slot_morning: s.slot_morning,
+          slot_afternoon: s.slot_afternoon,
+          slot_evening: s.slot_evening,
+          slot_night: s.slot_night,
+        })
+      }
+      router.refresh()
+    } catch (err: unknown) {
+      setAdlPlanError(err instanceof Error ? err.message : 'Failed to save ADL plan.')
+    } finally {
+      setIsSavingAdlPlan(false)
+    }
+  }
+
+  const formatAdlDaySummary = (schedule: PatientAdlDaySchedule | undefined) => {
+    if (!schedule || schedule.schedule_type === 'never') return null
+    if (schedule.schedule_type === 'always') return 'Always'
+    if (schedule.schedule_type === 'as_needed') return 'As Needed'
+    const parts: string[] = []
+    if (schedule.slot_morning) parts.push('Morning')
+    if (schedule.slot_afternoon) parts.push('Afternoon')
+    if (schedule.slot_evening) parts.push('Evening')
+    if (schedule.slot_night) parts.push('Night')
+    const n = schedule.times_per_day ?? 1
+    return parts.length ? `${parts.join(' ')} ${n}x` : null
   }
 
   const skillsByType = CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
@@ -1340,7 +1583,10 @@ export default function ClientDetailContent({ client, allClients, representative
                         )}
                         <button
                           type="button"
-                          onClick={() => handleDeleteDocument(doc)}
+                          onClick={() => {
+                            setDocumentUploadError(null)
+                            setDocToDelete(doc)
+                          }}
                           disabled={isDeletingDocId === doc.id}
                           className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
                           aria-label="Delete document"
@@ -1543,10 +1789,181 @@ export default function ClientDetailContent({ client, allClients, representative
             </div>
           )}
 
-          {(activeTab === 'schedule' || activeTab === 'adls') && (
+          {activeTab === 'schedule' && (
             <div className="text-center py-12">
               <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-4" />
               <p className="text-gray-500">This section is coming soon</p>
+            </div>
+          )}
+
+          {activeTab === 'adls' && (
+            <div className="w-full space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">
+                    Activities of Daily Living ({localAdls.length})
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">Manage client care tasks and schedules.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={openAddAdlModal}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  ADD ADL
+                </button>
+              </div>
+
+              {adlPlanError && (
+                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                  {adlPlanError}
+                </div>
+              )}
+
+              <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+                {localAdls.length === 0 ? (
+                  <div className="p-12 flex flex-col items-center justify-center text-center">
+                    <ClipboardList className="w-12 h-12 text-gray-300 mb-4" aria-hidden />
+                    <p className="text-gray-700 font-medium mb-1">No ADL tasks added yet</p>
+                    <p className="text-sm text-gray-500 mb-0">Click &quot;ADD ADL&quot; to get started.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                          <th className="px-4 py-3">Name</th>
+                          {ADL_DAYS.map((d) => (
+                            <th key={d.value} className="px-2 py-3 text-center">
+                              {d.label}
+                            </th>
+                          ))}
+                          <th className="px-2 py-3 text-center w-12">All</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {localAdls.map((adlRow) => {
+                          const adlInfo = ADL_LISTS.find((a) => a.name === adlRow.adl_code) ?? { name: adlRow.adl_code, type: 'General' }
+                          return (
+                            <tr key={adlRow.id} className="bg-white hover:bg-gray-50">
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-gray-900">{adlInfo.name}</div>
+                                <div className="text-xs text-gray-500">{adlInfo.type}</div>
+                                <button type="button" className="text-xs text-gray-500 hover:text-blue-600 mt-0.5">
+                                  Add client note...
+                                </button>
+                              </td>
+                              {ADL_DAYS.map((d) => {
+                                const s = getSchedule(adlRow.adl_code, d.value)
+                                const summary = formatAdlDaySummary(s)
+                                const type = s?.schedule_type ?? 'never'
+                                return (
+                                  <td key={d.value} className="px-2 py-3 text-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => openSelectTimeModal(adlInfo, d.value, DAY_LABELS[d.value])}
+                                      className="inline-flex flex-col items-center gap-0.5 p-1 rounded hover:bg-gray-100 focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+                                      aria-label={`Set schedule for ${adlInfo.name} on ${d.label}`}
+                                    >
+                                      {type === 'never' && (
+                                        <span className="w-6 h-6 rounded-full border-2 border-gray-300 bg-white inline-block" />
+                                      )}
+                                      {type === 'always' && (
+                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center">
+                                          <Infinity className="w-3.5 h-3.5" />
+                                        </span>
+                                      )}
+                                      {type === 'as_needed' && (
+                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center text-xs font-bold">
+                                          *
+                                        </span>
+                                      )}
+                                      {type === 'specific_times' && (
+                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center">
+                                          <Check className="w-3.5 h-3.5" />
+                                        </span>
+                                      )}
+                                      {summary && (
+                                        <span className="text-[10px] text-gray-600 leading-tight max-w-[4rem] truncate block">
+                                          {summary}
+                                        </span>
+                                      )}
+                                    </button>
+                                  </td>
+                                )
+                              })}
+                              <td className="px-2 py-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                  setAdlPlanError(null)
+                                  setAdlToDelete(adlRow.adl_code)
+                                }}
+                                  disabled={deletingAdlCode === adlRow.adl_code}
+                                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 inline-flex items-center justify-center"
+                                  aria-label={`Remove ${adlInfo.name}`}
+                                >
+                                  {deletingAdlCode === adlRow.adl_code ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-4 h-4" />
+                                  )}
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              <div className="border border-gray-200 rounded-lg bg-white px-4 py-3">
+                <p className="text-xs font-semibold text-gray-700 mb-2">Legend:</p>
+                <div className="flex flex-wrap gap-4">
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-4 h-4 rounded-full border-2 border-gray-400 bg-white" aria-hidden />
+                    <span className="text-xs text-gray-600">Never</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-4 h-4 rounded-full bg-blue-600 text-white inline-flex items-center justify-center">
+                      <Infinity className="w-3 h-3" />
+                    </span>
+                    <span className="text-xs text-gray-600">Always</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-4 h-4 rounded-full bg-blue-600 text-white inline-flex items-center justify-center text-[10px] font-bold">*</span>
+                    <span className="text-xs text-gray-600">As Needed</span>
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-4 h-4 rounded-full bg-blue-600 text-white inline-flex items-center justify-center">
+                      <Check className="w-3 h-3" />
+                    </span>
+                    <span className="text-xs text-gray-600">Specific Times</span>
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => router.refresh()}
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveAdlPlan}
+                  disabled={isSavingAdlPlan}
+                  className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {isSavingAdlPlan && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Save ADL Plan
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -1647,37 +2064,69 @@ export default function ClientDetailContent({ client, allClients, representative
         </form>
       </Modal>
 
-      {/* Delete Representative Confirmation */}
+      {/* Delete confirmation (Representative, ADL, or Document) */}
       <Modal
-        isOpen={!!repToDelete}
-        onClose={() => setRepToDelete(null)}
-        title="Delete Representative?"
+        isOpen={!!repToDelete || !!adlToDelete || !!docToDelete}
+        onClose={() => {
+          setRepToDelete(null)
+          setAdlToDelete(null)
+          setDocToDelete(null)
+        }}
+        title={repToDelete ? 'Delete Representative?' : adlToDelete ? 'Remove ADL?' : docToDelete ? 'Delete Document?' : ''}
         size="sm"
       >
         <div className="space-y-4">
-          <p className="text-gray-600">
-            Are you sure you want to remove{' '}
-            <strong>{repToDelete ? (repToDelete.name && repToDelete.name.trim()) || 'this representative' : ''}</strong>
-            {' '}as a representative? This cannot be undone.
-          </p>
-          {repListError && (
-            <p className="text-sm text-red-600 bg-red-50 p-2 rounded-lg">{repListError}</p>
-          )}
+          {repToDelete ? (
+            <p className="text-gray-600">
+              Are you sure you want to remove{' '}
+              <strong>{(repToDelete.name && repToDelete.name.trim()) || 'this representative'}</strong>
+              {' '}as a representative? This cannot be undone.
+            </p>
+          ) : adlToDelete ? (
+            <p className="text-gray-600">
+              Are you sure you want to remove{' '}
+              <strong>{ADL_LISTS.find((a) => a.name === adlToDelete)?.name ?? adlToDelete}</strong>
+              {' '}from this client&apos;s ADL plan? This cannot be undone.
+            </p>
+          ) : docToDelete ? (
+            <p className="text-gray-600">
+              Are you sure you want to delete the document{' '}
+              <strong>{docToDelete.name || 'this file'}</strong>
+              ? This cannot be undone.
+            </p>
+          ) : null}
+          {(repToDelete && repListError) || (adlToDelete && adlPlanError) || (docToDelete && documentUploadError) ? (
+            <p className="text-sm text-red-600 bg-red-50 p-2 rounded-lg">
+              {repToDelete ? repListError : adlToDelete ? adlPlanError : documentUploadError}
+            </p>
+          ) : null}
           <div className="flex justify-end gap-2">
             <button
               type="button"
-              onClick={() => setRepToDelete(null)}
+              onClick={() => {
+                setRepToDelete(null)
+                setAdlToDelete(null)
+                setDocToDelete(null)
+              }}
               className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
             >
               Cancel
             </button>
             <button
               type="button"
-              onClick={handleDeleteRep}
-              disabled={!!repToDelete && deletingRepId === repToDelete.id}
+              onClick={() => {
+                if (repToDelete) {
+                  handleDeleteRep()
+                } else if (adlToDelete) {
+                  handleDeleteAdl(adlToDelete)
+                } else if (docToDelete) {
+                  handleDeleteDocument(docToDelete)
+                }
+              }}
+              disabled={(!!repToDelete && deletingRepId === repToDelete.id) || (!!adlToDelete && deletingAdlCode === adlToDelete) || (!!docToDelete && isDeletingDocId === docToDelete.id)}
               className="px-4 py-2 text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2"
             >
-              {repToDelete && deletingRepId === repToDelete.id ? (
+              {(repToDelete && deletingRepId === repToDelete.id) || (adlToDelete && deletingAdlCode === adlToDelete) || (docToDelete && isDeletingDocId === docToDelete.id) ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
                   Deleting...
@@ -1941,6 +2390,229 @@ export default function ClientDetailContent({ client, allClients, representative
                 <AlertTriangle className="w-4 h-4" />
               )}
               Submit Report
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Add ADL Task Modal */}
+      <Modal
+        isOpen={addAdlModalOpen}
+        onClose={closeAddAdlModal}
+        title="Add ADL Task"
+        size="md"
+      >
+        <form onSubmit={handleSaveAddAdl} className="space-y-4">
+          <p className="text-sm text-gray-600">Search and select from the library of daily living activities</p>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={addAdlSearch}
+              onChange={(e) => setAddAdlSearch(e.target.value)}
+              placeholder="Type to search..."
+              className="block w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+          <div className="border border-gray-200 rounded-lg max-h-64 overflow-y-auto">
+            {ADL_LISTS.filter(
+              (a) =>
+                !localAdls.some((x) => x.adl_code === a.name) &&
+                (addAdlSearch.trim() === '' ||
+                  a.name.toLowerCase().includes(addAdlSearch.toLowerCase()) ||
+                  a.type.toLowerCase().includes(addAdlSearch.toLowerCase()))
+            ).map((a) => (
+              <label
+                key={a.name}
+                className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0"
+              >
+                <input
+                  type="checkbox"
+                  checked={addAdlSelected.has(a.name)}
+                  onChange={(e) => {
+                    setAddAdlSelected((prev) => {
+                      const next = new Set(prev)
+                      if (e.target.checked) next.add(a.name)
+                      else next.delete(a.name)
+                      return next
+                    })
+                  }}
+                  className="mt-1 rounded border-gray-300 text-gray-900 focus:ring-blue-500"
+                />
+                <div>
+                  <div className="font-medium text-gray-900">{a.name}</div>
+                  <div className="text-sm text-gray-500">{a.type}</div>
+                </div>
+              </label>
+            ))}
+            {ADL_LISTS.filter(
+              (a) =>
+                !localAdls.some((x) => x.adl_code === a.name) &&
+                (addAdlSearch.trim() === '' ||
+                  a.name.toLowerCase().includes(addAdlSearch.toLowerCase()) ||
+                  a.type.toLowerCase().includes(addAdlSearch.toLowerCase()))
+            ).length === 0 && (
+              <div className="px-4 py-6 text-center text-sm text-gray-500">
+                No ADLs to add. Already added or no match.
+              </div>
+            )}
+          </div>
+          {addAdlError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+              {addAdlError}
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-3 pt-2">
+            <button
+              type="button"
+              onClick={closeAddAdlModal}
+              disabled={isSavingAddAdl}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSavingAddAdl || addAdlSelected.size === 0}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSavingAddAdl && <Loader2 className="w-4 h-4 animate-spin" />}
+              Save
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Select Time Modal — no Frequency section; times per day 1–4 */}
+      <Modal
+        isOpen={selectTimeModalOpen}
+        onClose={closeSelectTimeModal}
+        title="Select Time"
+        size="md"
+      >
+        <form onSubmit={handleDoneSelectTime} className="space-y-4">
+          {selectTimeAdl && (
+            <p className="text-sm text-gray-600">
+              Choose when this task should happen on {selectTimeDayLabel}
+            </p>
+          )}
+          
+          <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-800">Times per Day</label>
+                <p className="mt-1 text-xs text-gray-500">How many times this task should be performed on {selectTimeDayLabel}</p>
+              </div>
+              <select
+                value={selectTimeForm.timesPerDay}
+                onChange={(e) => {
+                  const next = Number(e.target.value) as 1 | 2 | 3 | 4
+                  setSelectTimeForm((p) => {
+                    const count = [p.morning, p.afternoon, p.evening, p.night].filter(Boolean).length
+                    if (count <= next) return { ...p, timesPerDay: next }
+                    const updated = { ...p, timesPerDay: next }
+                    const order: ('night' | 'evening' | 'afternoon' | 'morning')[] = ['night', 'evening', 'afternoon', 'morning']
+                    let toUncheck = count - next
+                    for (const k of order) {
+                      if (toUncheck > 0 && updated[k]) {
+                        updated[k] = false
+                        toUncheck--
+                      }
+                    }
+                    return updated
+                  })
+                }}
+                className="shrink-0 rounded border border-gray-300 bg-white px-4 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
+                disabled={isSavingSelectTime}
+              >
+                {[1, 2, 3, 4].map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="relative py-2">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-200" />
+            </div>
+            <div className="relative flex justify-center">
+              <span className="bg-white px-2 text-xs font-medium text-gray-500">OR SELECT SPECIFIC TIME</span>
+            </div>
+          </div>
+          <div>
+            <p className="text-sm font-bold text-gray-700 mb-2">Specific Times (select up to {selectTimeForm.timesPerDay})</p>
+            <div className="space-y-2">
+              {[
+                { key: 'morning' as const, label: 'Morning', range: '6 AM - 12 PM', slotKey: 'slotMorning' as const },
+                { key: 'afternoon' as const, label: 'Afternoon', range: '12 PM - 6 PM', slotKey: 'slotAfternoon' as const },
+                { key: 'evening' as const, label: 'Evening', range: '6 PM - 10 PM', slotKey: 'slotEvening' as const },
+                { key: 'night' as const, label: 'Night', range: '10 PM - 5 AM', slotKey: 'slotNight' as const },
+              ].map(({ key, label, range, slotKey }) => {
+                const selectedCount = [selectTimeForm.morning, selectTimeForm.afternoon, selectTimeForm.evening, selectTimeForm.night].filter(Boolean).length
+                const atLimit = selectedCount >= selectTimeForm.timesPerDay
+                const canCheck = !selectTimeForm[key] && atLimit ? false : true
+                const toggleSlot = () => {
+                  if (isSavingSelectTime) return
+                  if (selectTimeForm[key]) {
+                    setSelectTimeForm((p) => ({ ...p, [key]: false }))
+                  } else {
+                    if (atLimit) return
+                    setSelectTimeForm((p) => ({ ...p, [key]: true }))
+                  }
+                }
+                return (
+                <div
+                  key={key}
+                  role="button"
+                  tabIndex={0}
+                  onClick={toggleSlot}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSlot() } }}
+                  className="flex items-center gap-3 p-3 rounded-lg bg-blue-50/50 border border-blue-100 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectTimeForm[key]}
+                    onChange={(e) => {
+                      const checked = e.target.checked
+                      setSelectTimeForm((p) => {
+                        if (checked) {
+                          const n = [p.morning, p.afternoon, p.evening, p.night].filter(Boolean).length
+                          if (n >= p.timesPerDay) return p
+                        }
+                        return { ...p, [key]: checked }
+                      })
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    disabled={isSavingSelectTime || (canCheck === false)}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 pointer-events-none"
+                  />
+                  <div className="flex-1 pointer-events-none">
+                    <span className="font-medium text-gray-900">{label}</span>
+                    <span className="text-sm text-gray-500 ml-2">{range}</span>
+                  </div>
+                  <select
+                    value={selectTimeForm[slotKey]}
+                    onChange={(e) => setSelectTimeForm((p) => ({ ...p, [slotKey]: e.target.value as 'always' | 'as_needed' }))}
+                    onClick={(e) => e.stopPropagation()}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                    disabled={isSavingSelectTime || !selectTimeForm[key]}
+                  >
+                    <option value="always">Always</option>
+                    <option value="as_needed">As Needed</option>
+                  </select>
+                </div>
+                )
+              })}
+            </div>
+          </div>
+          <div className="flex justify-end pt-2">
+            <button
+              type="submit"
+              disabled={isSavingSelectTime}
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
+            >
+              {isSavingSelectTime && <Loader2 className="w-4 h-4 animate-spin" />}
+              Done
             </button>
           </div>
         </form>

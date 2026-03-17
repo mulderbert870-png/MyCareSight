@@ -55,6 +55,20 @@ export default async function ClientDetailPage({
     incidentsList = []
   }
 
+  let adlsList: Awaited<ReturnType<typeof q.getAdlsByPatientId>>['data'] = []
+  let adlSchedulesList: Awaited<ReturnType<typeof q.getPatientAdlDaySchedulesByPatientId>>['data'] = []
+  try {
+    const [adlsRes, schedulesRes] = await Promise.all([
+      q.getAdlsByPatientId(supabase, id),
+      q.getPatientAdlDaySchedulesByPatientId(supabase, id),
+    ])
+    adlsList = adlsRes.data ?? []
+    adlSchedulesList = schedulesRes.data ?? []
+  } catch {
+    adlsList = []
+    adlSchedulesList = []
+  }
+
   return (
     <DashboardLayout
       user={session.user}
@@ -67,6 +81,8 @@ export default async function ClientDetailPage({
         representatives={representativesList}
         caregiverRequirements={caregiverRequirements}
         incidents={incidentsList}
+        adls={adlsList}
+        adlSchedules={adlSchedulesList}
       />
     </DashboardLayout>
   )

@@ -1,2 +1,0 @@
--- phast_two: caregiver_skill_lists removed; skill options are defined in app constants (src/lib/constants.ts CAREGIVER_SKILL_LISTS).
--- No table created. caregiver_requirements uses skill_codes (TEXT[]) referencing those constants.
