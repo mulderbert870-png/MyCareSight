@@ -176,7 +176,6 @@ export default function ClientDetailContent({ client, allClients, representative
     slotEvening: 'always' as 'always' | 'as_needed',
     slotNight: 'always' as 'always' | 'as_needed',
   })
-  const [isSavingSelectTime, setIsSavingSelectTime] = useState(false)
   const [isSavingAdlPlan, setIsSavingAdlPlan] = useState(false)
   const [adlPlanError, setAdlPlanError] = useState<string | null>(null)
   const [deletingAdlCode, setDeletingAdlCode] = useState<string | null>(null)
@@ -952,56 +951,79 @@ export default function ClientDetailContent({ client, allClients, representative
     setSelectTimeModalOpen(true)
   }
   const closeSelectTimeModal = () => {
-    if (!isSavingSelectTime) setSelectTimeModalOpen(false)
+    setSelectTimeModalOpen(false)
   }
-  const applySelectTimeSchedule = async (scheduleType: 'never' | 'always' | 'as_needed' | 'specific_times', payload?: {
-    times_per_day?: number
-    slot_morning?: string | null
-    slot_afternoon?: string | null
-    slot_evening?: string | null
-    slot_night?: string | null
-  }) => {
-    if (!selectTimeAdl) return
-    setIsSavingSelectTime(true)
-    try {
-      const supabase = createClient()
-      const { data: row, error } = await q.upsertPatientAdlDaySchedule(supabase, {
-        patient_id: localClient.id,
-        adl_code: selectTimeAdl.name,
-        day_of_week: selectTimeDay,
-        schedule_type: scheduleType,
-        times_per_day: payload?.times_per_day ?? null,
-        slot_morning: payload?.slot_morning ?? null,
-        slot_afternoon: payload?.slot_afternoon ?? null,
-        slot_evening: payload?.slot_evening ?? null,
-        slot_night: payload?.slot_night ?? null,
-      })
-      if (error) throw error
-      setLocalAdlSchedules((prev) => {
-        const rest = prev.filter((s) => !(s.adl_code === selectTimeAdl.name && s.day_of_week === selectTimeDay))
-        return row ? [...rest, row] : rest
-      })
-      setSelectTimeModalOpen(false)
-      router.refresh()
-    } catch (err: unknown) {
-      setAdlPlanError(err instanceof Error ? err.message : 'Failed to save time.')
-    } finally {
-      setIsSavingSelectTime(false)
+  /** Updates local ADL day schedule only; DB is updated on Save ADL Plan. */
+  const applySelectTimeSchedule = (
+    scheduleType: 'never' | 'always' | 'as_needed' | 'specific_times',
+    payload?: {
+      times_per_day?: number
+      slot_morning?: string | null
+      slot_afternoon?: string | null
+      slot_evening?: string | null
+      slot_night?: string | null
     }
+  ) => {
+    if (!selectTimeAdl) return
+    const existing = localAdlSchedules.find(
+      (s) => s.adl_code === selectTimeAdl.name && s.day_of_week === selectTimeDay
+    )
+    const now = new Date().toISOString()
+    const base = {
+      id: existing?.id ?? `temp-${selectTimeAdl.name}-${selectTimeDay}`,
+      patient_id: localClient.id,
+      adl_code: selectTimeAdl.name,
+      day_of_week: selectTimeDay,
+      display_order: existing?.display_order ?? 0,
+      created_at: existing?.created_at || now,
+      updated_at: now,
+    }
+    let row: PatientAdlDaySchedule
+    if (scheduleType === 'specific_times' && payload) {
+      row = {
+        ...base,
+        schedule_type: 'specific_times',
+        times_per_day: payload.times_per_day ?? null,
+        slot_morning: payload.slot_morning ?? null,
+        slot_afternoon: payload.slot_afternoon ?? null,
+        slot_evening: payload.slot_evening ?? null,
+        slot_night: payload.slot_night ?? null,
+      }
+    } else {
+      row = {
+        ...base,
+        schedule_type: scheduleType,
+        times_per_day: null,
+        slot_morning: null,
+        slot_afternoon: null,
+        slot_evening: null,
+        slot_night: null,
+      }
+    }
+    setLocalAdlSchedules((prev) => {
+      const rest = prev.filter((s) => !(s.adl_code === selectTimeAdl.name && s.day_of_week === selectTimeDay))
+      return [...rest, row]
+    })
+    setSelectTimeModalOpen(false)
   }
 
-  const handleDoneSelectTime = async (e: React.FormEvent) => {
+  const handleDoneSelectTime = (e: React.FormEvent) => {
     e.preventDefault()
     if (!selectTimeAdl) return
     const hasSlots = selectTimeForm.morning || selectTimeForm.afternoon || selectTimeForm.evening || selectTimeForm.night
     const scheduleType = hasSlots ? 'specific_times' : 'never'
-    await applySelectTimeSchedule(scheduleType, hasSlots ? {
-      times_per_day: selectTimeForm.timesPerDay,
-      slot_morning: selectTimeForm.morning ? selectTimeForm.slotMorning : null,
-      slot_afternoon: selectTimeForm.afternoon ? selectTimeForm.slotAfternoon : null,
-      slot_evening: selectTimeForm.evening ? selectTimeForm.slotEvening : null,
-      slot_night: selectTimeForm.night ? selectTimeForm.slotNight : null,
-    } : undefined)
+    applySelectTimeSchedule(
+      scheduleType,
+      hasSlots
+        ? {
+            times_per_day: selectTimeForm.timesPerDay,
+            slot_morning: selectTimeForm.morning ? selectTimeForm.slotMorning : null,
+            slot_afternoon: selectTimeForm.afternoon ? selectTimeForm.slotAfternoon : null,
+            slot_evening: selectTimeForm.evening ? selectTimeForm.slotEvening : null,
+            slot_night: selectTimeForm.night ? selectTimeForm.slotNight : null,
+          }
+        : undefined
+    )
   }
 
   const handleSelectTimeQuick = (scheduleType: 'always' | 'as_needed' | 'never') => {
@@ -1056,6 +1078,31 @@ export default function ClientDetailContent({ client, allClients, representative
       setIsSavingAdlPlan(false)
     }
   }
+
+  const hasAdlPlanChanges = useMemo(() => {
+    const initAdls = initialAdls ?? []
+    const initSched = initialAdlSchedules ?? []
+    const sortAdl = (a: PatientAdl, b: PatientAdl) => a.adl_code.localeCompare(b.adl_code)
+    const localAdlSig = [...localAdls].sort(sortAdl).map((a) => ({ c: a.adl_code, o: a.display_order }))
+    const initAdlSig = [...initAdls].sort(sortAdl).map((a) => ({ c: a.adl_code, o: a.display_order }))
+    if (JSON.stringify(localAdlSig) !== JSON.stringify(initAdlSig)) return true
+    const schedKey = (s: PatientAdlDaySchedule) => ({
+      adl_code: s.adl_code,
+      day_of_week: s.day_of_week,
+      schedule_type: s.schedule_type,
+      times_per_day: s.times_per_day,
+      slot_morning: s.slot_morning,
+      slot_afternoon: s.slot_afternoon,
+      slot_evening: s.slot_evening,
+      slot_night: s.slot_night,
+      display_order: s.display_order,
+    })
+    const sortSched = (a: PatientAdlDaySchedule, b: PatientAdlDaySchedule) =>
+      a.adl_code.localeCompare(b.adl_code) || a.day_of_week - b.day_of_week
+    const localSchedSig = [...localAdlSchedules].sort(sortSched).map(schedKey)
+    const initSchedSig = [...initSched].sort(sortSched).map(schedKey)
+    return JSON.stringify(localSchedSig) !== JSON.stringify(initSchedSig)
+  }, [localAdls, localAdlSchedules, initialAdls, initialAdlSchedules])
 
   const formatAdlDaySummary = (schedule: PatientAdlDaySchedule | undefined): string | null => {
     if (!schedule || schedule.schedule_type === 'never') return null
@@ -1393,30 +1440,30 @@ export default function ClientDetailContent({ client, allClients, representative
   }
 
   const handleAddVisitSubmit = async () => {
-    // if (!visitForm.startTime || !visitForm.endTime) {
-    //   setVisitError('Please set start time and end time.')
-    //   return
-    // }
-    // if (visitAdlSelected.size === 0) {
-    //   setVisitError('Please select at least one ADL task in the ADLs tab.')
-    //   return
-    // }
-    // if (!visitForm.isRecurring && !visitForm.date) {
-    //   setVisitError('Please set date.')
-    //   return
-    // }
-    // if (visitForm.isRecurring && !visitForm.repeatStart) {
-    //   setVisitError('Please set Start Date in the Recurring section.')
-    //   return
-    // }
-    // if (visitForm.isRecurring && visitForm.repeatFrequency === 'daily' && !visitForm.repeatEnd) {
-    //   setVisitError('Please set End Date in the Recurring section for daily recurrence.')
-    //   return
-    // }
-    // if (visitForm.isRecurring && visitForm.repeatFrequency === 'weekly' && visitForm.repeatDays.length === 0) {
-    //   setVisitError('Please select at least one day of the week.')
-    //   return
-    // }
+    if (!visitForm.startTime || !visitForm.endTime) {
+      setVisitError('Please set start time and end time.')
+      return
+    }
+    if (visitAdlSelected.size === 0) {
+      setVisitError('Please select at least one ADL task in the ADLs tab.')
+      return
+    }
+    if (!visitForm.isRecurring && !visitForm.date) {
+      setVisitError('Please set date.')
+      return
+    }
+    if (visitForm.isRecurring && !visitForm.repeatStart) {
+      setVisitError('Please set Start Date in the Recurring section.')
+      return
+    }
+    if (visitForm.isRecurring && visitForm.repeatFrequency === 'daily' && !visitForm.repeatEnd) {
+      setVisitError('Please set End Date in the Recurring section for daily recurrence.')
+      return
+    }
+    if (visitForm.isRecurring && visitForm.repeatFrequency === 'weekly' && visitForm.repeatDays.length === 0) {
+      setVisitError('Please select at least one day of the week.')
+      return
+    }
     setVisitError(null)
     setScheduleLimitWarning(null)
 
@@ -1496,12 +1543,12 @@ export default function ClientDetailContent({ client, allClients, representative
         const totalNewMins = newMins * newDatesInLimit.length
         const limitMins = limit.total_hours * 60
         if (existingMins + totalNewMins > limitMins) {
-          setScheduleLimitWarning(
-            `Total scheduled hours (${(existingMins / 60).toFixed(1)}h) plus new visit(s) (${(totalNewMins / 60).toFixed(1)}h) would exceed the contracted limit of ${limit.total_hours} hours for this period (${limit.effective_date} to ${limit.end_date ?? 'ongoing'}). Save is blocked.`
-          )
-          setVisitError(
-            'Cannot save: adding this visit would exceed the contracted hours limit for this period. Reduce the number of visits or the limit.'
-          )
+          // setScheduleLimitWarning(
+          //   `Total scheduled hours (${(existingMins / 60).toFixed(1)}h) plus new visit(s) (${(totalNewMins / 60).toFixed(1)}h) would exceed the contracted limit of ${limit.total_hours} hours for this period (${limit.effective_date} to ${limit.end_date ?? 'ongoing'}). Save is blocked.`
+          // )
+        setVisitError(
+          'Cannot save: this update would exceed the contracted hours limit for this period.'
+        )
           return
         }
       }
@@ -1638,9 +1685,9 @@ export default function ClientDetailContent({ client, allClients, representative
       }
       const totalAfterUpdate = existingMins - oldVisitMins + newVisitMins
       if (totalAfterUpdate > limit.total_hours * 60) {
-        setScheduleLimitWarning(
-          `Total scheduled hours after this update (${(totalAfterUpdate / 60).toFixed(1)}h) would exceed the contracted limit of ${limit.total_hours} hours for this period. Save is blocked.`
-        )
+        // setScheduleLimitWarning(
+        //   `Total scheduled hours after this update (${(totalAfterUpdate / 60).toFixed(1)}h) would exceed the contracted limit of ${limit.total_hours} hours for this period. Save is blocked.`
+        // )
         setVisitError(
           'Cannot save: this update would exceed the contracted hours limit for this period.'
         )
@@ -3236,7 +3283,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 <button
                   type="button"
                   onClick={handleSaveAdlPlan}
-                  disabled={isSavingAdlPlan}
+                  disabled={isSavingAdlPlan || !hasAdlPlanChanges}
                   className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
                 >
                   {isSavingAdlPlan && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -3802,7 +3849,6 @@ export default function ClientDetailContent({ client, allClients, representative
                   })
                 }}
                 className="shrink-0 rounded border border-gray-300 bg-white px-4 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent cursor-pointer"
-                disabled={isSavingSelectTime}
               >
                 {[1, 2, 3, 4].map((n) => (
                   <option key={n} value={n}>{n}</option>
@@ -3831,7 +3877,6 @@ export default function ClientDetailContent({ client, allClients, representative
                 const atLimit = selectedCount >= selectTimeForm.timesPerDay
                 const canCheck = !selectTimeForm[key] && atLimit ? false : true
                 const toggleSlot = () => {
-                  if (isSavingSelectTime) return
                   if (selectTimeForm[key]) {
                     setSelectTimeForm((p) => ({ ...p, [key]: false }))
                   } else {
@@ -3862,7 +3907,7 @@ export default function ClientDetailContent({ client, allClients, representative
                       })
                     }}
                     onClick={(e) => e.stopPropagation()}
-                    disabled={isSavingSelectTime || (canCheck === false)}
+                    disabled={canCheck === false}
                     className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50 pointer-events-none"
                   />
                   <div className="flex-1 pointer-events-none">
@@ -3874,7 +3919,7 @@ export default function ClientDetailContent({ client, allClients, representative
                     onChange={(e) => setSelectTimeForm((p) => ({ ...p, [slotKey]: e.target.value as 'always' | 'as_needed' }))}
                     onClick={(e) => e.stopPropagation()}
                     className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 cursor-pointer"
-                    disabled={isSavingSelectTime || !selectTimeForm[key]}
+                    disabled={!selectTimeForm[key]}
                   >
                     <option value="always">Always</option>
                     <option value="as_needed">As Needed</option>
@@ -3887,10 +3932,8 @@ export default function ClientDetailContent({ client, allClients, representative
           <div className="flex justify-end pt-2">
             <button
               type="submit"
-              disabled={isSavingSelectTime}
-              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 flex items-center gap-2"
             >
-              {isSavingSelectTime && <Loader2 className="w-4 h-4 animate-spin" />}
               Done
             </button>
           </div>
@@ -4293,7 +4336,7 @@ export default function ClientDetailContent({ client, allClients, representative
         )}
 
         {visitError && (
-          <p className="mt-4 text-sm text-red-600 bg-red-100 border border-red-200 p-2 rounded">{visitError}</p>
+          <p className="mt-4 text-sm text-yellow-600 bg-yellow-100 border border-yellow-200 p-2 rounded">{visitError}</p>
         )}
         {scheduleLimitWarning && (
           <p className="mt-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 p-2 rounded">{scheduleLimitWarning}</p>
@@ -4714,7 +4757,7 @@ export default function ClientDetailContent({ client, allClients, representative
         )}
 
         {visitError && (
-          <p className="mt-4 text-sm text-red-600 bg-red-100 border border-red-200 p-2 rounded">{visitError}</p>
+          <p className="mt-4 text-sm text-yellow-600 bg-yellow-100 border border-yellow-200 p-2 rounded">{visitError}</p>
         )}
         <div className="flex flex-wrap items-center justify-end gap-2 mt-6">
           {editingSchedule?.status === 'missed' ? (
