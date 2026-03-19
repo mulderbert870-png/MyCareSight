@@ -352,7 +352,7 @@ export default function ClientDetailContent({ client, allClients, representative
   const dobFromAge = (age: number) => {
     const d = new Date()
     d.setFullYear(d.getFullYear() - age)
-    return d.toISOString().slice(0, 10)
+    return toLocalDateString(d)
   }
 
   const handleStatusToggle = async (newStatus: 'active' | 'inactive') => {
@@ -730,7 +730,7 @@ export default function ClientDetailContent({ client, allClients, representative
   }
 
   const openReportIncidentModal = () => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = toLocalDateString(new Date())
     setIncidentForm({
       incident_date: today,
       reporting_date: today,
@@ -1152,7 +1152,7 @@ export default function ClientDetailContent({ client, allClients, representative
     const end = new Date(endStr + 'T12:00:00')
     const d = new Date(start)
     while (d <= end && out.length < 365) {
-      out.push(d.toISOString().slice(0, 10))
+      out.push(toLocalDateString(d))
       d.setDate(d.getDate() + 1)
     }
     return out
@@ -1301,7 +1301,7 @@ export default function ClientDetailContent({ client, allClients, representative
   }
 
   const openAddVisitModal = () => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = toLocalDateString(new Date())
     setVisitForm({
       date: today,
       startTime: '09:00',
@@ -1371,8 +1371,8 @@ export default function ClientDetailContent({ client, allClients, representative
     const monday = getMonday(new Date())
     const sunday = new Date(monday)
     sunday.setDate(sunday.getDate() + 6)
-    const mondayStr = monday.toISOString().slice(0, 10)
-    const sundayStr = sunday.toISOString().slice(0, 10)
+    const mondayStr = toLocalDateString(monday)
+    const sundayStr = toLocalDateString(sunday)
     setLimitForm({ totalHours: '', effectiveDate: mondayStr, endDate: sundayStr, note: '' })
     setLimitError(null)
     setManageLimitModalOpen(true)
@@ -1428,7 +1428,7 @@ export default function ClientDetailContent({ client, allClients, representative
         const end = visitForm.repeatEnd || (() => {
           const d = new Date(repStart + 'T12:00:00')
           d.setDate(d.getDate() + 6)
-          return d.toISOString().slice(0, 10)
+          return toLocalDateString(d)
         })()
         datesToInsert = datesWeeklyBetween(repStart, end, visitForm.repeatDays)
       } else if (visitForm.repeatFrequency === 'monthly') {
@@ -1443,7 +1443,7 @@ export default function ClientDetailContent({ client, allClients, representative
           const d = new Date(repStart + 'T12:00:00')
           d.setMonth(d.getMonth() + 1)
           d.setDate(0)
-          return d.toISOString().slice(0, 10)
+          return toLocalDateString(d)
         })()
         datesToInsert = datesMonthlyBetweenFromRules(repStart, end, monthlyRules)
       }
@@ -1825,7 +1825,7 @@ export default function ClientDetailContent({ client, allClients, representative
   }, [weekSchedules])
 
   const currentEffectiveLimit = localContractedHours.find((l) => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = toLocalDateString(new Date())
     const ed = l.end_date ?? '9999-12-31'
     return l.effective_date <= today && ed >= today
   })
@@ -4041,14 +4041,14 @@ export default function ClientDetailContent({ client, allClients, representative
                       setVisitForm((p) => {
                         const next = { ...p, repeatFrequency: v }
                         if (v === 'daily') {
-                          const today = new Date().toISOString().slice(0, 10)
+                          const today = toLocalDateString(new Date())
                           next.repeatStart = today
                           next.repeatEnd = today
                         } else if (v === 'weekly') {
                           const mon = getMonday(new Date())
                           const sun = getSundayFromMonday(mon)
-                          next.repeatStart = mon.toISOString().slice(0, 10)
-                          next.repeatEnd = sun.toISOString().slice(0, 10)
+                          next.repeatStart = toLocalDateString(mon)
+                          next.repeatEnd = toLocalDateString(sun)
                         } else if (v === 'monthly') {
                           const d = new Date()
                           const y = d.getFullYear()
@@ -4463,14 +4463,14 @@ export default function ClientDetailContent({ client, allClients, representative
                       setVisitForm((p) => {
                         const next = { ...p, repeatFrequency: v }
                         if (v === 'daily') {
-                          const today = new Date().toISOString().slice(0, 10)
+                          const today = toLocalDateString(new Date())
                           next.repeatStart = today
                           next.repeatEnd = today
                         } else if (v === 'weekly') {
                           const mon = getMonday(new Date())
                           const sun = getSundayFromMonday(mon)
-                          next.repeatStart = mon.toISOString().slice(0, 10)
-                          next.repeatEnd = sun.toISOString().slice(0, 10)
+                          next.repeatStart = toLocalDateString(mon)
+                          next.repeatEnd = toLocalDateString(sun)
                         } else if (v === 'monthly') {
                           const d = new Date()
                           const y = d.getFullYear()
@@ -4846,7 +4846,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 </thead>
                 <tbody>
                   {localContractedHours.map((row) => {
-                    const today = new Date().toISOString().slice(0, 10)
+                    const today = toLocalDateString(new Date())
                     const isCurrent = row.effective_date <= today && (row.end_date == null || row.end_date >= today)
                     return (
                       <tr key={row.id} className={isCurrent ? 'bg-blue-50' : 'bg-white'}>
