@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS schedules (
   days_of_week INTEGER[] DEFAULT '{}',
   repeat_start DATE,
   repeat_end DATE,
+  repeat_monthly_rules JSONB DEFAULT '[]',
+  status TEXT DEFAULT 'scheduled' CHECK (status IN ('scheduled', 'completed', 'missed')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT TIMEZONE('utc'::text, NOW()) NOT NULL
 );

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { 
@@ -28,7 +28,11 @@ import {
   Search,
   ClipboardList,
   Infinity,
-  Check
+  Check,
+  Clock,
+  TrendingUp,
+  X,
+  Timer
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
@@ -38,7 +42,11 @@ import type { PatientDocument } from '@/lib/supabase/query/patients'
 import type { CaregiverRequirement } from '@/lib/supabase/query/caregiver-requirements'
 import type { PatientIncident } from '@/lib/supabase/query/patient-incidents'
 import type { PatientAdl, PatientAdlDaySchedule } from '@/lib/supabase/query/patient-adls'
+import type { ScheduleRow } from '@/lib/supabase/query/schedules'
+import type { PatientContractedHoursRow } from '@/lib/supabase/query/patient-contracted-hours'
 import { CAREGIVER_SKILL_POINTS, ADL_LISTS } from '@/lib/constants'
+
+const VISIT_TYPES = ['Routine', 'Medical', 'Therapy', 'Social', 'Other'] as const
 import Modal from '@/components/Modal'
 
 interface SmallClient {
@@ -71,6 +79,8 @@ interface SmallClient {
   created_at: string
 }
 
+type StaffMember = { id: string; user_id?: string; first_name?: string; last_name?: string; [key: string]: unknown }
+
 interface ClientDetailContentProps {
   client: SmallClient
   allClients: Array<{ id: string; full_name: string }>
@@ -79,9 +89,11 @@ interface ClientDetailContentProps {
   incidents?: PatientIncident[] | null
   adls?: PatientAdl[] | null
   adlSchedules?: PatientAdlDaySchedule[] | null
+  staff?: StaffMember[] | null
+  contractedHours?: PatientContractedHoursRow[] | null
 }
 
-export default function ClientDetailContent({ client, allClients, representatives = [], caregiverRequirements: initialCaregiverRequirements = null, incidents: initialIncidents = [], adls: initialAdls = [], adlSchedules: initialAdlSchedules = [] }: ClientDetailContentProps) {
+export default function ClientDetailContent({ client, allClients, representatives = [], caregiverRequirements: initialCaregiverRequirements = null, incidents: initialIncidents = [], adls: initialAdls = [], adlSchedules: initialAdlSchedules = [], staff: staffList = [], contractedHours: initialContractedHours = [] }: ClientDetailContentProps) {
   const router = useRouter()
   const [localClient, setLocalClient] = useState<SmallClient>(client)
   const [activeTab, setActiveTab] = useState('overview')
@@ -114,6 +126,7 @@ export default function ClientDetailContent({ client, allClients, representative
   const [deletingRepId, setDeletingRepId] = useState<string | null>(null)
   const [repToDelete, setRepToDelete] = useState<PatientRepresentative | null>(null)
   const [adlToDelete, setAdlToDelete] = useState<string | null>(null)
+  const [pendingAdlDeletes, setPendingAdlDeletes] = useState<string[]>([])
   const [docToDelete, setDocToDelete] = useState<PatientDocument | null>(null)
   const [repListError, setRepListError] = useState<string | null>(null)
   const [localRepresentatives, setLocalRepresentatives] = useState<PatientRepresentative[]>(representatives)
@@ -168,6 +181,47 @@ export default function ClientDetailContent({ client, allClients, representative
   const [adlPlanError, setAdlPlanError] = useState<string | null>(null)
   const [deletingAdlCode, setDeletingAdlCode] = useState<string | null>(null)
 
+  const getMonday = (d: Date) => {
+    const date = new Date(d)
+    const day = date.getDay()
+    const diff = day === 0 ? -6 : 1 - day
+    date.setDate(date.getDate() + diff)
+    return date
+  }
+  const [scheduleWeekStart, setScheduleWeekStart] = useState<Date>(() => getMonday(new Date()))
+  const [weekSchedules, setWeekSchedules] = useState<ScheduleRow[]>([])
+  const [scheduleHover, setScheduleHover] = useState<{ dateStr: string; startHour: number; endHourExclusive: number } | null>(null)
+  const [scheduleLoading, setScheduleLoading] = useState(false)
+  const [addVisitModalOpen, setAddVisitModalOpen] = useState(false)
+  const [addVisitTab, setAddVisitTab] = useState<'details' | 'adls'>('details')
+  const [visitForm, setVisitForm] = useState({
+    date: '',
+    startTime: '09:00',
+    endTime: '10:00',
+    description: '',
+    type: 'Routine' as string,
+    caregiverId: '',
+    notes: '',
+    isRecurring: false,
+    repeatFrequency: '',
+    repeatDays: [] as number[],
+    repeatMonthlyRules: [] as { ordinal: number | null; weekday: number | null }[],
+    repeatStart: '',
+    repeatEnd: '',
+  })
+  const [visitAdlSelected, setVisitAdlSelected] = useState<Set<string>>(new Set())
+  const [isSavingVisit, setIsSavingVisit] = useState(false)
+  const [visitError, setVisitError] = useState<string | null>(null)
+  const [manageLimitModalOpen, setManageLimitModalOpen] = useState(false)
+  const [limitForm, setLimitForm] = useState({ totalHours: '', effectiveDate: '', endDate: '', note: '' })
+  const [localContractedHours, setLocalContractedHours] = useState<PatientContractedHoursRow[]>(initialContractedHours ?? [])
+  const [isSavingLimit, setIsSavingLimit] = useState(false)
+  const [limitError, setLimitError] = useState<string | null>(null)
+  const [scheduleLimitWarning, setScheduleLimitWarning] = useState<string | null>(null)
+  const [visitDateSchedules, setVisitDateSchedules] = useState<ScheduleRow[]>([])
+  const [editVisitModalOpen, setEditVisitModalOpen] = useState(false)
+  const [editingSchedule, setEditingSchedule] = useState<ScheduleRow | null>(null)
+
   // Sync local client when switching to a different client (by id)
   useEffect(() => {
     setLocalClient(client)
@@ -190,6 +244,40 @@ export default function ClientDetailContent({ client, allClients, representative
     setLocalAdls(initialAdls ?? [])
     setLocalAdlSchedules(initialAdlSchedules ?? [])
   }, [client.id, initialAdls, initialAdlSchedules])
+
+  useEffect(() => {
+    setLocalContractedHours(initialContractedHours ?? [])
+  }, [client.id, initialContractedHours])
+
+  useEffect(() => {
+    setPendingAdlDeletes([])
+  }, [client.id])
+
+  const scheduleWeekEnd = new Date(scheduleWeekStart)
+  scheduleWeekEnd.setDate(scheduleWeekEnd.getDate() + 6)
+  const scheduleWeekStartStr = scheduleWeekStart.toISOString().slice(0, 10)
+  const scheduleWeekEndStr = scheduleWeekEnd.toISOString().slice(0, 10)
+
+  useEffect(() => {
+    if (activeTab !== 'schedule') return
+    setScheduleLoading(true)
+    const supabase = createClient()
+    q.getSchedulesByPatientIdAndDateRange(supabase, localClient.id, scheduleWeekStartStr, scheduleWeekEndStr)
+      .then(({ data }) => { setWeekSchedules(data ?? []) })
+      .finally(() => setScheduleLoading(false))
+  }, [activeTab, localClient.id, scheduleWeekStartStr, scheduleWeekEndStr])
+
+  useEffect(() => {
+    const dateForFetch = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
+    if ((!addVisitModalOpen && !editVisitModalOpen) || !dateForFetch) {
+      setVisitDateSchedules([])
+      return
+    }
+    const supabase = createClient()
+    q.getSchedulesByPatientIdAndDateRange(supabase, localClient.id, dateForFetch, dateForFetch).then(
+      ({ data }) => setVisitDateSchedules(data ?? [])
+    )
+  }, [addVisitModalOpen, editVisitModalOpen, localClient.id, visitForm.date, visitForm.isRecurring, visitForm.repeatStart])
 
   useEffect(() => {
     if (isEditingMedical) {
@@ -222,21 +310,30 @@ export default function ClientDetailContent({ client, allClients, representative
       .slice(0, 2)
   }
 
+  const parseDateOnly = (dateString: string): Date => {
+    const s = (dateString ?? '').slice(0, 10)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const [y, m, d] = s.split('-').map(Number)
+      return new Date(y, m - 1, d)
+    }
+    return new Date(dateString)
+  }
+
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
-    return date.toLocaleDateString('en-US', { 
-      month: 'long', 
-      day: 'numeric', 
-      year: 'numeric' 
+    const date = parseDateOnly(dateString)
+    return date.toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
     })
   }
 
   const formatShortDate = (dateString: string) => {
-    const date = new Date(dateString)
-    return date.toLocaleDateString('en-US', { 
-      month: '2-digit', 
-      day: '2-digit', 
-      year: 'numeric' 
+    const date = parseDateOnly(dateString)
+    return date.toLocaleDateString('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric',
     })
   }
 
@@ -921,6 +1018,11 @@ export default function ClientDetailContent({ client, allClients, representative
     setAdlPlanError(null)
     try {
       const supabase = createClient()
+      for (const adlCode of pendingAdlDeletes) {
+        const { error } = await q.deleteAdl(supabase, localClient.id, adlCode)
+        if (error) throw error
+      }
+      setPendingAdlDeletes([])
       for (const s of localAdlSchedules) {
         await q.upsertPatientAdlDaySchedule(supabase, {
           patient_id: s.patient_id,
@@ -959,6 +1061,766 @@ export default function ClientDetailContent({ client, allClients, representative
     if (labels.length === 0) return null
     return { labels, timesPerDay: schedule.times_per_day ?? 1 }
   }
+
+  const isAdlRowAllSelected = (adlCode: string) => {
+    return [1, 2, 3, 4, 5, 6, 7].every((dow) => {
+      const s = localAdlSchedules.find((x) => x.adl_code === adlCode && x.day_of_week === dow)
+      return s && s.schedule_type === 'specific_times' && s.times_per_day === 1 && s.slot_morning
+    })
+  }
+
+  const handleToggleAdlRowAll = (adlRow: { adl_code: string; display_order?: number }) => {
+    const existingForAdl = localAdlSchedules.filter((s) => s.adl_code === adlRow.adl_code)
+    const isAllSelected = isAdlRowAllSelected(adlRow.adl_code)
+    const displayOrder = existingForAdl[0]?.display_order ?? adlRow.display_order ?? 0
+    const rest = localAdlSchedules.filter((s) => s.adl_code !== adlRow.adl_code)
+    const newEntries: PatientAdlDaySchedule[] = []
+    for (let dow = 1; dow <= 7; dow++) {
+      const existing = existingForAdl.find((x) => x.day_of_week === dow)
+      const base = {
+        id: existing?.id ?? `temp-${adlRow.adl_code}-${dow}`,
+        patient_id: localClient.id,
+        adl_code: adlRow.adl_code,
+        day_of_week: dow,
+        display_order: displayOrder,
+        created_at: existing?.created_at ?? '',
+        updated_at: existing?.updated_at ?? '',
+      } as const
+      if (isAllSelected) {
+        newEntries.push({
+          ...base,
+          schedule_type: 'never',
+          times_per_day: null,
+          slot_morning: null,
+          slot_afternoon: null,
+          slot_evening: null,
+          slot_night: null,
+        })
+      } else {
+        newEntries.push({
+          ...base,
+          schedule_type: 'specific_times',
+          times_per_day: 1,
+          slot_morning: 'always',
+          slot_afternoon: null,
+          slot_evening: null,
+          slot_night: null,
+        })
+      }
+    }
+    setLocalAdlSchedules([...rest, ...newEntries])
+  }
+
+  const formatWeekRangeLabel = (start: Date, end: Date) => {
+    const m1 = start.toLocaleString('en-US', { month: 'short' })
+    const m2 = end.toLocaleString('en-US', { month: 'short' })
+    const y = start.getFullYear()
+    return `${m1} ${start.getDate()} - ${m2} ${end.getDate()}, ${y}`
+  }
+
+  const MONTHLY_ORDINAL_LABELS = ['first', 'second', 'third', 'fourth', 'last'] as const
+  const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+  const getOrdinalAndWeekdayFromDate = (dateStr: string): { ordinal: 1 | 2 | 3 | 4 | 5; weekday: number } => {
+    const d = new Date(dateStr + 'T12:00:00')
+    const weekday = d.getDay()
+    const year = d.getFullYear()
+    const month = d.getMonth()
+    const dayOfMonth = d.getDate()
+    const sameWeekdayDates: number[] = []
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    for (let date = 1; date <= lastDay; date++) {
+      if (new Date(year, month, date).getDay() === weekday) sameWeekdayDates.push(date)
+    }
+    const occurrenceIndex = sameWeekdayDates.indexOf(dayOfMonth) + 1
+    const isLast = occurrenceIndex === sameWeekdayDates.length && sameWeekdayDates.length >= 1
+    const ordinal = isLast ? 5 : (Math.min(occurrenceIndex, 4) as 1 | 2 | 3 | 4)
+    return { ordinal, weekday }
+  }
+
+  const getMonthlyRepeatLabel = (ordinal: number, weekday: number) =>
+    ordinal === 0
+      ? `Monthly on every ${WEEKDAY_NAMES[weekday]}`
+      : `Monthly on the ${MONTHLY_ORDINAL_LABELS[(ordinal as 1 | 2 | 3 | 4 | 5) - 1]} ${WEEKDAY_NAMES[weekday]}`
+
+  const datesBetween = (startStr: string, endStr: string): string[] => {
+    const out: string[] = []
+    const start = new Date(startStr + 'T12:00:00')
+    const end = new Date(endStr + 'T12:00:00')
+    const d = new Date(start)
+    while (d <= end && out.length < 365) {
+      out.push(d.toISOString().slice(0, 10))
+      d.setDate(d.getDate() + 1)
+    }
+    return out
+  }
+
+  const datesWeeklyBetween = (startStr: string, endStr: string, daysOfWeek: number[]): string[] => {
+    const set = new Set(daysOfWeek)
+    return datesBetween(startStr, endStr).filter((dateStr) => {
+      const d = new Date(dateStr + 'T12:00:00')
+      return set.has(d.getDay())
+    })
+  }
+
+  const getOrdinalWeekdayInMonth = (year: number, month: number, ordinal: 1 | 2 | 3 | 4 | 5, weekday: number): string | null => {
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    const sameWeekdayDates: number[] = []
+    for (let date = 1; date <= lastDay; date++) {
+      if (new Date(year, month, date).getDay() === weekday) sameWeekdayDates.push(date)
+    }
+    if (sameWeekdayDates.length === 0) return null
+    const index = ordinal === 5 ? sameWeekdayDates.length - 1 : Math.min(ordinal - 1, sameWeekdayDates.length - 1)
+    const day = sameWeekdayDates[index]
+    const y = year
+    const m = String(month + 1).padStart(2, '0')
+    const dd = String(day).padStart(2, '0')
+    return `${y}-${m}-${dd}`
+  }
+
+  const getAllWeekdayDatesInMonth = (year: number, month: number, weekday: number): string[] => {
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    const out: string[] = []
+    for (let date = 1; date <= lastDay; date++) {
+      if (new Date(year, month, date).getDay() === weekday) {
+        const m = String(month + 1).padStart(2, '0')
+        const dd = String(date).padStart(2, '0')
+        out.push(`${year}-${m}-${dd}`)
+      }
+    }
+    return out
+  }
+
+  const datesMonthlyBetween = (startStr: string, endStr: string, ordinal: number, weekday: number): string[] => {
+    const out: string[] = []
+    const start = new Date(startStr + 'T12:00:00')
+    const end = new Date(endStr + 'T12:00:00')
+    let y = start.getFullYear()
+    let m = start.getMonth()
+    const wd = Math.min(6, Math.max(0, weekday))
+    while (out.length < 365) {
+      if (ordinal === 0) {
+        for (const dateStr of getAllWeekdayDatesInMonth(y, m, wd)) {
+          const d = new Date(dateStr + 'T12:00:00')
+          if (d >= start && d <= end) out.push(dateStr)
+        }
+      } else {
+        const ord = Math.min(5, Math.max(1, ordinal)) as 1 | 2 | 3 | 4 | 5
+        const dateStr = getOrdinalWeekdayInMonth(y, m, ord, wd)
+        if (dateStr) {
+          const d = new Date(dateStr + 'T12:00:00')
+          if (d >= start && d <= end) out.push(dateStr)
+        }
+      }
+      m += 1
+      if (m > 11) {
+        m = 0
+        y += 1
+      }
+      if (y > end.getFullYear() || (y === end.getFullYear() && m > end.getMonth())) break
+    }
+    return out
+  }
+
+  const datesMonthlyBetweenFromRules = (
+    startStr: string,
+    endStr: string,
+    rules: { ordinal: number; weekday: number }[]
+  ): string[] => {
+    const set = new Set<string>()
+    for (const r of rules) {
+      const ord = r.ordinal
+      const wd = Math.min(6, Math.max(0, r.weekday))
+      for (const d of datesMonthlyBetween(startStr, endStr, ord, wd)) set.add(d)
+    }
+    return Array.from(set).sort()
+  }
+
+  const getSundayFromMonday = (monday: Date): Date => {
+    const d = new Date(monday)
+    d.setDate(d.getDate() + 6)
+    return d
+  }
+
+  const DAY_LABELS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const getWeekDates = () => {
+    const dates: Date[] = []
+    const d = new Date(scheduleWeekStart)
+    for (let i = 0; i < 7; i++) {
+      dates.push(new Date(d))
+      d.setDate(d.getDate() + 1)
+    }
+    return dates
+  }
+
+  const getDayOfWeekDb = (dateStr: string) => {
+    const d = new Date(dateStr + 'T12:00:00').getDay()
+    return d === 0 ? 7 : d
+  }
+
+  const getDueAdlCountForDay = (dateStr: string) => {
+    const dayOfWeekDb = getDayOfWeekDb(dateStr)
+    let count = 0
+    for (const a of localAdls) {
+      const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
+      if (s && s.schedule_type !== 'never') count += 1
+    }
+    return count
+  }
+
+  const getUnassignedAdlCountForDay = (dateStr: string) => {
+    const dayOfWeekDb = getDayOfWeekDb(dateStr)
+    const assignedOnDate = new Set(
+      weekSchedules
+        .filter((s) => s.date === dateStr && s.adl_codes?.length)
+        .flatMap((s) => s.adl_codes as string[])
+    )
+    const dueCodes = new Set<string>()
+    for (const a of localAdls) {
+      const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
+      if (s && s.schedule_type !== 'never' && !assignedOnDate.has(a.adl_code)) dueCodes.add(a.adl_code)
+    }
+    return dueCodes.size
+  }
+
+  const getScheduleBlockColors = (type: string | null): { bg: string; border: string; text: string } => {
+    const t = (type ?? 'Routine').toLowerCase()
+    if (t === 'therapy') return { bg: '#f3e8ff', border: '#ad46ff', text: '#996cbb' }
+    if (t === 'medical') return { bg: '#ffe2e2', border: '#fb2c36', text: '#c28082' }
+    if (t === 'social') return { bg: '#fef9c2', border: '#f0b100', text: '#966d38' }
+    if (t === 'other') return { bg: '#f3f4f6', border: '#6a7282', text: '#858a93' }
+    return { bg: '#dbfce7', border: '#00c950', text: '#417e5a' }
+  }
+
+  const openAddVisitModal = () => {
+    const today = new Date().toISOString().slice(0, 10)
+    setVisitForm({
+      date: today,
+      startTime: '09:00',
+      endTime: '10:00',
+      description: '',
+      type: 'Routine',
+      caregiverId: '',
+      notes: '',
+      isRecurring: false,
+      repeatFrequency: '',
+      repeatDays: [],
+      repeatMonthlyRules: [{ ordinal: null, weekday: null }],
+      repeatStart: today,
+      repeatEnd: '',
+    })
+    setVisitAdlSelected(new Set())
+    setAddVisitTab('details')
+    setVisitError(null)
+    setScheduleLimitWarning(null)
+    setAddVisitModalOpen(true)
+  }
+
+  const closeAddVisitModal = () => {
+    if (!isSavingVisit) setAddVisitModalOpen(false)
+  }
+
+  const openEditVisitModal = (schedule: ScheduleRow) => {
+    const start = (schedule.start_time ?? '09:00').slice(0, 5)
+    const end = (schedule.end_time ?? '10:00').slice(0, 5)
+    setEditingSchedule(schedule)
+    setVisitForm({
+      date: schedule.date,
+      startTime: start,
+      endTime: end,
+      description: schedule.description ?? '',
+      type: (schedule.type ?? 'Routine') as string,
+      caregiverId: schedule.caregiver_id ?? '',
+      notes: schedule.notes ?? '',
+      isRecurring: schedule.is_recurring ?? false,
+      repeatFrequency: schedule.repeat_frequency ?? '',
+      repeatDays: Array.isArray(schedule.days_of_week) ? schedule.days_of_week : [],
+      repeatMonthlyRules: (() => {
+        const rules = (schedule as { repeat_monthly_rules?: { ordinal: number; weekday: number }[] }).repeat_monthly_rules
+        if (Array.isArray(rules) && rules.length > 0) {
+          return [...rules.map((r) => ({ ordinal: r.ordinal, weekday: r.weekday })), { ordinal: null as number | null, weekday: null as number | null }]
+        }
+        return [{ ordinal: null, weekday: null }]
+      })(),
+      repeatStart: schedule.repeat_start ?? schedule.date,
+      repeatEnd: schedule.repeat_end ?? '',
+    })
+    setVisitAdlSelected(new Set(schedule.adl_codes ?? []))
+    setAddVisitTab('details')
+    setVisitError(null)
+    setScheduleLimitWarning(null)
+    setEditVisitModalOpen(true)
+  }
+
+  const closeEditVisitModal = () => {
+    if (!isSavingVisit) {
+      setEditVisitModalOpen(false)
+      setEditingSchedule(null)
+    }
+  }
+
+  const openManageLimitModal = () => {
+    const monday = getMonday(new Date())
+    const sunday = new Date(monday)
+    sunday.setDate(sunday.getDate() + 6)
+    const mondayStr = monday.toISOString().slice(0, 10)
+    const sundayStr = sunday.toISOString().slice(0, 10)
+    setLimitForm({ totalHours: '', effectiveDate: mondayStr, endDate: sundayStr, note: '' })
+    setLimitError(null)
+    setManageLimitModalOpen(true)
+  }
+
+  const closeManageLimitModal = () => {
+    if (!isSavingLimit) setManageLimitModalOpen(false)
+  }
+
+  const handleAddVisitSubmit = async () => {
+    // if (!visitForm.startTime || !visitForm.endTime) {
+    //   setVisitError('Please set start time and end time.')
+    //   return
+    // }
+    // if (visitAdlSelected.size === 0) {
+    //   setVisitError('Please select at least one ADL task in the ADLs tab.')
+    //   return
+    // }
+    // if (!visitForm.isRecurring && !visitForm.date) {
+    //   setVisitError('Please set date.')
+    //   return
+    // }
+    // if (visitForm.isRecurring && !visitForm.repeatStart) {
+    //   setVisitError('Please set Start Date in the Recurring section.')
+    //   return
+    // }
+    // if (visitForm.isRecurring && visitForm.repeatFrequency === 'daily' && !visitForm.repeatEnd) {
+    //   setVisitError('Please set End Date in the Recurring section for daily recurrence.')
+    //   return
+    // }
+    // if (visitForm.isRecurring && visitForm.repeatFrequency === 'weekly' && visitForm.repeatDays.length === 0) {
+    //   setVisitError('Please select at least one day of the week.')
+    //   return
+    // }
+    setVisitError(null)
+    setScheduleLimitWarning(null)
+
+    const startTime = visitForm.startTime.length === 5 ? visitForm.startTime : visitForm.startTime.slice(0, 5)
+    const endTime = visitForm.endTime.length === 5 ? visitForm.endTime : visitForm.endTime.slice(0, 5)
+    const startParts = visitForm.startTime.split(':').map(Number)
+    const endParts = visitForm.endTime.split(':').map(Number)
+    const newMins = (endParts[0] * 60 + (endParts[1] ?? 0)) - (startParts[0] * 60 + (startParts[1] ?? 0))
+
+    let datesToInsert: string[] = []
+    if (!visitForm.isRecurring) {
+      datesToInsert = [visitForm.date]
+    } else {
+      const repStart = visitForm.repeatStart!
+      const repEnd = visitForm.repeatEnd || repStart
+      if (visitForm.repeatFrequency === 'daily') {
+        datesToInsert = datesBetween(repStart, repEnd)
+      } else if (visitForm.repeatFrequency === 'weekly') {
+        const end = visitForm.repeatEnd || (() => {
+          const d = new Date(repStart + 'T12:00:00')
+          d.setDate(d.getDate() + 6)
+          return d.toISOString().slice(0, 10)
+        })()
+        datesToInsert = datesWeeklyBetween(repStart, end, visitForm.repeatDays)
+      } else if (visitForm.repeatFrequency === 'monthly') {
+        const monthlyRules = visitForm.repeatMonthlyRules.filter(
+          (r): r is { ordinal: number; weekday: number } => r.ordinal != null && r.weekday != null
+        )
+        if (monthlyRules.length === 0) {
+          setVisitError('Please add at least one week and day for monthly repeat.')
+          return
+        }
+        const end = visitForm.repeatEnd || (() => {
+          const d = new Date(repStart + 'T12:00:00')
+          d.setMonth(d.getMonth() + 1)
+          d.setDate(0)
+          return d.toISOString().slice(0, 10)
+        })()
+        datesToInsert = datesMonthlyBetweenFromRules(repStart, end, monthlyRules)
+      }
+    }
+
+    if (visitForm.isRecurring && datesToInsert.length === 0) {
+      setVisitError('No dates in the selected range. Check Start Date and End Date.')
+      return
+    }
+
+    const toDateOnly = (d: string) => (d == null || d === '') ? '' : d.slice(0, 10)
+    const minDate = datesToInsert[0]
+    const maxDate = datesToInsert[datesToInsert.length - 1]
+    const limitsInRange = localContractedHours.filter((l) => {
+      const eff = toDateOnly(l.effective_date)
+      const ed = toDateOnly(l.end_date ?? '9999-12-31')
+      const overlaps = eff <= maxDate && ed >= minDate
+      return overlaps
+    })
+    if (limitsInRange.length > 0 && datesToInsert.length > 0) {
+      const supabase = createClient()
+      for (const limit of limitsInRange) {
+        const limitStart = toDateOnly(limit.effective_date)
+        const limitEnd = toDateOnly(limit.end_date ?? '9999-12-31')
+        const { data: periodSchedules } = await q.getSchedulesByPatientIdAndDateRange(
+          supabase,
+          localClient.id,
+          limitStart,
+          limitEnd
+        )
+        let existingMins = 0
+        for (const s of periodSchedules ?? []) {
+          const [sh, sm] = (s.start_time ?? '0:0').split(':').map(Number)
+          const [eh, em] = (s.end_time ?? '0:0').split(':').map(Number)
+          existingMins += (eh * 60 + em) - (sh * 60 + sm)
+        }
+        const newDatesInLimit = datesToInsert.filter(
+          (d) => d >= limitStart && d <= limitEnd
+        )
+        const totalNewMins = newMins * newDatesInLimit.length
+        const limitMins = limit.total_hours * 60
+        if (existingMins + totalNewMins > limitMins) {
+          setScheduleLimitWarning(
+            `Total scheduled hours (${(existingMins / 60).toFixed(1)}h) plus new visit(s) (${(totalNewMins / 60).toFixed(1)}h) would exceed the contracted limit of ${limit.total_hours} hours for this period (${limit.effective_date} to ${limit.end_date ?? 'ongoing'}). Save is blocked.`
+          )
+          setVisitError(
+            'Cannot save: adding this visit would exceed the contracted hours limit for this period. Reduce the number of visits or the limit.'
+          )
+          return
+        }
+      }
+    }
+    setScheduleLimitWarning(null)
+
+    const timeToMins = (t: string) => {
+      const [h, m] = (t ?? '0:0').split(':').map(Number)
+      return h * 60 + (m ?? 0)
+    }
+    const newStartMins = timeToMins(startTime)
+    const newEndMins = timeToMins(endTime)
+    const overlaps = (aStart: number, aEnd: number, bStart: number, bEnd: number) =>
+      aStart < bEnd && aEnd > bStart
+
+    const supabase = createClient()
+    const { data: existingInRange } = await q.getSchedulesByPatientIdAndDateRange(
+      supabase,
+      localClient.id,
+      minDate,
+      maxDate
+    )
+    const overlappingIds = new Set<string>()
+    for (const dateStr of datesToInsert) {
+      for (const s of existingInRange ?? []) {
+        if (s.date !== dateStr) continue
+        const sStart = timeToMins(s.start_time ?? '0:0')
+        const sEnd = timeToMins(s.end_time ?? '0:0')
+        if (overlaps(newStartMins, newEndMins, sStart, sEnd)) overlappingIds.add(s.id)
+      }
+    }
+    if (overlappingIds.size > 0) {
+      const ok = typeof window !== 'undefined' && window.confirm(
+        'Schedule for this time is already added. Do you replace it?'
+      )
+      if (!ok) return
+    }
+
+    setIsSavingVisit(true)
+    try {
+      const idsToReplace = Array.from(overlappingIds)
+      for (let i = 0; i < idsToReplace.length; i++) {
+        await q.deleteSchedule(supabase, idsToReplace[i])
+      }
+      const basePayload = {
+        patient_id: localClient.id,
+        start_time: startTime,
+        end_time: endTime,
+        description: visitForm.description || null,
+        type: visitForm.type || 'Routine',
+        caregiver_id: visitForm.caregiverId || null,
+        notes: visitForm.notes || null,
+        adl_codes: Array.from(visitAdlSelected),
+        is_recurring: visitForm.isRecurring,
+        repeat_frequency: visitForm.isRecurring ? visitForm.repeatFrequency || null : null,
+        days_of_week:
+          visitForm.isRecurring && visitForm.repeatFrequency === 'weekly' && visitForm.repeatDays.length
+            ? visitForm.repeatDays
+            : null,
+        repeat_monthly_rules:
+          visitForm.isRecurring && visitForm.repeatFrequency === 'monthly'
+            ? visitForm.repeatMonthlyRules.filter(
+                (r): r is { ordinal: number; weekday: number } => r.ordinal != null && r.weekday != null
+              )
+            : null,
+        repeat_start: visitForm.isRecurring ? visitForm.repeatStart || null : null,
+        repeat_end: visitForm.isRecurring && visitForm.repeatEnd ? visitForm.repeatEnd : null,
+      }
+      for (const dateStr of datesToInsert) {
+        const { error } = await q.insertSchedule(supabase, { ...basePayload, date: dateStr })
+        if (error) {
+          setVisitError(error.message ?? 'Failed to add visit.')
+          return
+        }
+      }
+      if (maxDate >= scheduleWeekStartStr && minDate <= scheduleWeekEndStr) {
+        const { data } = await q.getSchedulesByPatientIdAndDateRange(
+          supabase,
+          localClient.id,
+          scheduleWeekStartStr,
+          scheduleWeekEndStr
+        )
+        setWeekSchedules(data ?? [])
+      }
+      setAddVisitModalOpen(false)
+      router.refresh()
+    } catch (e) {
+      setVisitError(e instanceof Error ? e.message : 'Failed to add visit.')
+    } finally {
+      setIsSavingVisit(false)
+    }
+  }
+
+  const handleUpdateVisitSubmit = async () => {
+    if (!editingSchedule) return
+    if (!visitForm.startTime || !visitForm.endTime) {
+      setVisitError('Please set start time and end time.')
+      return
+    }
+    if (visitAdlSelected.size === 0) {
+      setVisitError('Please select at least one ADL task in the ADLs tab.')
+      return
+    }
+    if (!visitForm.isRecurring && !visitForm.date) {
+      setVisitError('Please set date.')
+      return
+    }
+    setVisitError(null)
+    setScheduleLimitWarning(null)
+    const dateToSave = visitForm.isRecurring ? editingSchedule.date : visitForm.date!
+    const newStartParts = visitForm.startTime.split(':').map(Number)
+    const newEndParts = visitForm.endTime.split(':').map(Number)
+    const newVisitMins = (newEndParts[0] * 60 + (newEndParts[1] ?? 0)) - (newStartParts[0] * 60 + (newStartParts[1] ?? 0))
+    const limit = localContractedHours.find((l) => {
+      const ed = l.end_date ?? '9999-12-31'
+      return l.effective_date <= dateToSave && ed >= dateToSave
+    })
+    if (limit) {
+      const supabase = createClient()
+      const { data: periodSchedules } = await q.getSchedulesByPatientIdAndDateRange(
+        supabase,
+        localClient.id,
+        limit.effective_date,
+        limit.end_date ?? '9999-12-31'
+      )
+      let existingMins = 0
+      let oldVisitMins = 0
+      for (const s of periodSchedules ?? []) {
+        const [sh, sm] = (s.start_time ?? '0:0').split(':').map(Number)
+        const [eh, em] = (s.end_time ?? '0:0').split(':').map(Number)
+        const dur = (eh * 60 + em) - (sh * 60 + sm)
+        existingMins += dur
+        if (s.id === editingSchedule.id) oldVisitMins = dur
+      }
+      const totalAfterUpdate = existingMins - oldVisitMins + newVisitMins
+      if (totalAfterUpdate > limit.total_hours * 60) {
+        setScheduleLimitWarning(
+          `Total scheduled hours after this update (${(totalAfterUpdate / 60).toFixed(1)}h) would exceed the contracted limit of ${limit.total_hours} hours for this period. Save is blocked.`
+        )
+        setVisitError(
+          'Cannot save: this update would exceed the contracted hours limit for this period.'
+        )
+        return
+      }
+    }
+
+    setIsSavingVisit(true)
+    try {
+      const supabase = createClient()
+      const { error } = await q.updateSchedule(supabase, editingSchedule.id, {
+        date: dateToSave,
+        start_time: visitForm.startTime.length === 5 ? visitForm.startTime : visitForm.startTime.slice(0, 5),
+        end_time: visitForm.endTime.length === 5 ? visitForm.endTime : visitForm.endTime.slice(0, 5),
+        description: visitForm.description || null,
+        type: visitForm.type || 'Routine',
+        caregiver_id: visitForm.caregiverId || null,
+        notes: visitForm.notes || null,
+        adl_codes: Array.from(visitAdlSelected),
+        is_recurring: visitForm.isRecurring,
+        repeat_frequency: visitForm.isRecurring ? visitForm.repeatFrequency || null : null,
+        days_of_week:
+          visitForm.isRecurring && visitForm.repeatFrequency === 'weekly' && visitForm.repeatDays.length
+            ? visitForm.repeatDays
+            : null,
+        repeat_monthly_rules:
+          visitForm.isRecurring && visitForm.repeatFrequency === 'monthly'
+            ? visitForm.repeatMonthlyRules.filter(
+                (r): r is { ordinal: number; weekday: number } => r.ordinal != null && r.weekday != null
+              )
+            : null,
+        repeat_start: visitForm.isRecurring ? visitForm.repeatStart || null : null,
+        repeat_end: visitForm.isRecurring && visitForm.repeatEnd ? visitForm.repeatEnd : null,
+      })
+      if (error) {
+        setVisitError(error.message ?? 'Failed to update visit.')
+        return
+      }
+      if (dateToSave >= scheduleWeekStartStr && dateToSave <= scheduleWeekEndStr) {
+        const { data } = await q.getSchedulesByPatientIdAndDateRange(
+          supabase,
+          localClient.id,
+          scheduleWeekStartStr,
+          scheduleWeekEndStr
+        )
+        setWeekSchedules(data ?? [])
+      }
+      setEditVisitModalOpen(false)
+      setEditingSchedule(null)
+      router.refresh()
+    } catch (e) {
+      setVisitError(e instanceof Error ? e.message : 'Failed to update visit.')
+    } finally {
+      setIsSavingVisit(false)
+    }
+  }
+
+  const handleMarkVisitMissed = async () => {
+    if (!editingSchedule) return
+    setIsSavingVisit(true)
+    try {
+      const supabase = createClient()
+      const { error } = await q.updateSchedule(supabase, editingSchedule.id, { status: 'missed' })
+      if (!error) {
+        const { data } = await q.getSchedulesByPatientIdAndDateRange(
+          supabase,
+          localClient.id,
+          scheduleWeekStartStr,
+          scheduleWeekEndStr
+        )
+        setWeekSchedules(data ?? [])
+        setEditVisitModalOpen(false)
+        setEditingSchedule(null)
+        router.refresh()
+      } else {
+        setVisitError(error.message ?? 'Failed to mark as missed.')
+      }
+    } catch (e) {
+      setVisitError(e instanceof Error ? e.message : 'Failed to mark as missed.')
+    } finally {
+      setIsSavingVisit(false)
+    }
+  }
+
+  const handleMarkVisitUnmissed = async () => {
+    if (!editingSchedule) return
+    setIsSavingVisit(true)
+    try {
+      const supabase = createClient()
+      const { error } = await q.updateSchedule(supabase, editingSchedule.id, { status: null })
+      if (!error) {
+        const { data } = await q.getSchedulesByPatientIdAndDateRange(
+          supabase,
+          localClient.id,
+          scheduleWeekStartStr,
+          scheduleWeekEndStr
+        )
+        setWeekSchedules(data ?? [])
+        setEditVisitModalOpen(false)
+        setEditingSchedule(null)
+        router.refresh()
+      } else {
+        setVisitError(error.message ?? 'Failed to mark as unmissed.')
+      }
+    } catch (e) {
+      setVisitError(e instanceof Error ? e.message : 'Failed to mark as unmissed.')
+    } finally {
+      setIsSavingVisit(false)
+    }
+  }
+
+  const handleDeleteVisit = async () => {
+    if (!editingSchedule) return
+    if (!confirm('Delete this visit? This cannot be undone.')) return
+    setIsSavingVisit(true)
+    try {
+      const supabase = createClient()
+      await q.deleteSchedule(supabase, editingSchedule.id)
+      setWeekSchedules((prev) => prev.filter((s) => s.id !== editingSchedule.id))
+      setEditVisitModalOpen(false)
+      setEditingSchedule(null)
+      router.refresh()
+    } catch (e) {
+      setVisitError(e instanceof Error ? e.message : 'Failed to delete visit.')
+    } finally {
+      setIsSavingVisit(false)
+    }
+  }
+
+  const handleSaveLimit = async () => {
+    const total = parseFloat(limitForm.totalHours)
+    if (Number.isNaN(total) || total <= 0) {
+      setLimitError('Please enter a valid total amount of hours.')
+      return
+    }
+    if (!limitForm.effectiveDate) {
+      setLimitError('Effective date is required.')
+      return
+    }
+    if (limitForm.endDate && limitForm.endDate < limitForm.effectiveDate) {
+      setLimitError('End date must be on or after effective date.')
+      return
+    }
+    setLimitError(null)
+    setIsSavingLimit(true)
+    try {
+      const supabase = createClient()
+      const { data, error } = await q.insertPatientContractedHours(supabase, {
+        patient_id: localClient.id,
+        total_hours: total,
+        effective_date: limitForm.effectiveDate,
+        end_date: limitForm.endDate || null,
+        note: limitForm.note || null,
+      })
+      if (error) {
+        setLimitError(error.message ?? 'Failed to save.')
+        return
+      }
+      if (data) setLocalContractedHours((prev) => [data, ...prev])
+      setManageLimitModalOpen(false)
+      router.refresh()
+    } catch (e) {
+      setLimitError(e instanceof Error ? e.message : 'Failed to save.')
+    } finally {
+      setIsSavingLimit(false)
+    }
+  }
+
+  const handleDeleteLimit = async (id: string) => {
+    try {
+      const supabase = createClient()
+      await q.deletePatientContractedHours(supabase, id)
+      setLocalContractedHours((prev) => prev.filter((l) => l.id !== id))
+      router.refresh()
+    } catch (_) {}
+  }
+
+  const currentLimitForWeek = localContractedHours.find((l) => {
+    const start = scheduleWeekStartStr
+    const end = scheduleWeekEndStr
+    const eff = l.effective_date
+    const ed = l.end_date ?? '9999-12-31'
+    return eff <= end && ed >= start
+  })
+
+  const scheduledHoursForWeek = useMemo(() => {
+    return weekSchedules.reduce((acc, s) => {
+      const [sh, sm] = (s.start_time ?? '0:0').split(':').slice(0, 2).map(Number)
+      const [eh, em] = (s.end_time ?? '0:0').split(':').slice(0, 2).map(Number)
+      return acc + (eh * 60 + em - sh * 60 - sm) / 60
+    }, 0)
+  }, [weekSchedules])
+
+  const currentEffectiveLimit = localContractedHours.find((l) => {
+    const today = new Date().toISOString().slice(0, 10)
+    const ed = l.end_date ?? '9999-12-31'
+    return l.effective_date <= today && ed >= today
+  })
 
   const skillsByType = CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
     if (!acc[s.type]) acc[s.type] = []
@@ -1276,6 +2138,50 @@ export default function ClientDetailContent({ client, allClients, representative
                     </label>
                   </div> */}
                 </div>
+              </div>
+
+              {/* Contracted Weekly Hours Card */}
+              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                  <div className="flex items-center gap-2">
+                    <Timer className="w-5 h-5 text-blue-600" aria-hidden />
+                    <h3 className="text-lg font-bold text-gray-900">Contracted Weekly Hours</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openManageLimitModal}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-900 shadow-sm hover:bg-gray-50"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Set Limit
+                  </button>
+                </div>
+                {!currentEffectiveLimit ? (
+                  <div className="p-6">
+                    <div className="rounded-lg border-2 border-dashed border-gray-200 p-8 flex flex-col items-center justify-center min-h-[140px]">
+                      <Timer className="w-12 h-12 text-gray-300 mb-3" aria-hidden />
+                      <p className="text-sm font-medium text-gray-500 mb-4">No weekly hours limit set</p>
+                      <button
+                        type="button"
+                        onClick={openManageLimitModal}
+                        className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-bold text-white hover:bg-gray-800"
+                      >
+                        <Plus className="w-4 h-4" />
+                        Set Hours Limit
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4">
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-2xl font-bold text-gray-900">{currentEffectiveLimit.total_hours}</span>
+                      <span className="text-sm text-gray-500">hrs / week</span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Effective {parseDateOnly(currentEffectiveLimit.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Contact Information Card */}
@@ -1794,9 +2700,323 @@ export default function ClientDetailContent({ client, allClients, representative
           )}
 
           {activeTab === 'schedule' && (
-            <div className="text-center py-12">
-              <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500">This section is coming soon</p>
+            <div className="w-full space-y-4">
+              {/* Weekly Contracted Hours card (when limit set) or simple header + message */}
+              <div className="rounded-lg border border-gray-200 bg-blue-50/50 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex h-8 w-8 items-center justify-center rounded bg-blue-100 text-blue-600">
+                      <TrendingUp className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                        THIS WEEK – {formatWeekRangeLabel(scheduleWeekStart, scheduleWeekEnd).toUpperCase()}
+                      </p>
+                      <h3 className="text-base font-bold text-gray-900">Weekly Contracted Hours</h3>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openManageLimitModal}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50"
+                  >
+                    <Edit className="h-3.5 w-3.5" />
+                    Manage Limit
+                  </button>
+                </div>
+                {currentLimitForWeek ? (
+                  <>
+                    <div className="mt-4 grid grid-cols-3 gap-3">
+                      <div className="rounded-lg border border-gray-200 bg-white p-3 text-center">
+                        <p className="text-2xl font-bold text-gray-900">{Number(currentLimitForWeek.total_hours)}</p>
+                        <p className="text-xs text-gray-500">Contracted hrs</p>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 bg-white p-3 text-center">
+                        <p className="text-2xl font-bold text-gray-900">{scheduledHoursForWeek.toFixed(1)}</p>
+                        <p className="text-xs text-gray-500">Scheduled hrs</p>
+                      </div>
+                      <div className="rounded-lg border border-gray-200 bg-white p-3 text-center">
+                        <p className="text-2xl font-bold text-gray-900">
+                          {Math.max(0, Number(currentLimitForWeek.total_hours) - scheduledHoursForWeek).toFixed(1)}
+                        </p>
+                        <p className="text-xs text-gray-500">Remaining hrs</p>
+                      </div>
+                    </div>
+                    {(() => {
+                      const contracted = Number(currentLimitForWeek.total_hours)
+                      const usedPct = contracted > 0 ? Math.min(100, (scheduledHoursForWeek / contracted) * 100) : 0
+                      const withinLimit = scheduledHoursForWeek <= contracted
+                      return (
+                        <div className="mt-4">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-gray-500">
+                              {usedPct.toFixed(0)}% of contracted hours used
+                            </span>
+                            <span className={withinLimit ? 'inline-flex items-center gap-1 font-medium text-green-600' : 'inline-flex items-center gap-1 font-medium text-amber-600'}>
+                              {withinLimit ? (
+                                <>
+                                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-green-600">
+                                    <Check className="h-3 w-3" />
+                                  </span>
+                                  Within limit
+                                </>
+                              ) : (
+                                <>Over limit</>
+                              )}
+                            </span>
+                          </div>
+                          <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                            <div
+                              className="h-full rounded-full bg-blue-500 transition-all"
+                              style={{ width: `${usedPct}%` }}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </>
+                ) : (
+                  <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                    No weekly hours limit set for this client. Click &apos;Manage Limit&apos; to configure.
+                  </div>
+                )}
+              </div>
+
+              {/* Weekly Care Schedule */}
+              <div className="rounded-lg border border-gray-200 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">Weekly Care Schedule</h3>
+                    <p className="text-sm text-gray-500">Client ADL tasks and appointments</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={openAddVisitModal}
+                      className="inline-flex items-center rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
+                    >
+                      <Plus className="w-4 h-4 mr-1" />
+                      Add Visit
+                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = new Date(scheduleWeekStart)
+                          d.setDate(d.getDate() - 7)
+                          setScheduleWeekStart(getMonday(d))
+                        }}
+                        className="rounded border border-gray-300 bg-white p-2 text-gray-600 hover:bg-gray-50"
+                        aria-label="Previous week"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const d = new Date(scheduleWeekStart)
+                          d.setDate(d.getDate() + 7)
+                          setScheduleWeekStart(getMonday(d))
+                        }}
+                        className="rounded border border-gray-300 bg-white p-2 text-gray-600 hover:bg-gray-50"
+                        aria-label="Next week"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setScheduleWeekStart(getMonday(new Date()))}
+                      className="rounded border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                    >
+                      Today
+                    </button>
+                  </div>
+                </div>
+
+                {/* Calendar grid with Unassigned ADLs row */}
+                <div className="relative border border-gray-200 rounded overflow-hidden">
+                  <table className="w-full border-collapse text-sm table-fixed">
+                    <colgroup>
+                      <col className="w-24 text-center" />
+                      <col />
+                      <col />
+                      <col />
+                      <col />
+                      <col />
+                      <col />
+                      <col />
+                    </colgroup>
+                    <thead>
+                      <tr className="bg-gray-100 text-center w-full">
+                        <th className="w-24 border-b border-r border-gray-200 p-2 text-xs font-medium text-gray-500 align-middle text-center">
+                          Unassigned ADLs
+                        </th>
+                        {getWeekDates().map((d) => {
+                          const dateStr = d.toISOString().slice(0, 10)
+                          const dueCount = getDueAdlCountForDay(dateStr)
+                          const unassignedCount = getUnassignedAdlCountForDay(dateStr)
+                          const isToday =
+                            dateStr === new Date().toISOString().slice(0, 10)
+                          return (
+                            <th
+                              key={dateStr}
+                              className={`border-b border-r border-gray-200 p-2 text-center text-sm font-medium last:border-r-0 align-middle ${isToday ? 'bg-blue-50 text-blue-700' : 'bg-white text-gray-700'}`}
+                            >
+                              {dueCount === 0 ? (
+                                <span className="text-gray-400">—</span>
+                              ) : unassignedCount === 0 ? (
+                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-green-100 text-green-600" aria-label="ADL quota achieved">
+                                  <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+                                </span>
+                              ) : (
+                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-gray-700 text-xs font-medium">
+                                  {unassignedCount}
+                                </span>
+                              )}
+                            </th>
+                          )
+                        })}
+                      </tr>
+                      <tr className="bg-gray-50">
+                        <th className="w-24 border-b border-r border-gray-200 p-2 text-center text-xs font-medium text-gray-500" />
+                        {getWeekDates().map((d) => {
+                          const dateStr = d.toISOString().slice(0, 10)
+                          const isToday =
+                            dateStr === new Date().toISOString().slice(0, 10)
+                          const isDayHeaderHighlighted = scheduleHover?.dateStr === dateStr
+                          return (
+                            <th
+                              key={dateStr}
+                              className={`border-b border-r border-gray-200 p-2 text-center text-xs font-medium last:border-r-0 transition-colors ${isToday ? 'text-blue-600' : 'text-gray-700'}`}
+                              style={isDayHeaderHighlighted ? { backgroundColor: '#8ab0ed' } : undefined}
+                            >
+                              {DAY_LABELS_SHORT[d.getDay()].toUpperCase()} {d.getDate()}
+                            </th>
+                          )
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Array.from({ length: 24 }, (_, hour) => {
+                        const weekDates = getWeekDates()
+                        const parseStartHour = (t: string) => {
+                          const [h] = (t || '00:00').split(':').map(Number)
+                          return h
+                        }
+                        const parseEndHourExclusive = (t: string) => {
+                          const parts = (t || '00:00').split(':').map(Number)
+                          const h = parts[0] ?? 0
+                          const m = parts[1] ?? 0
+                          if (h === 0 && m === 0) return 24
+                          return m > 0 ? h + 1 : h
+                        }
+                        const isTimeCellHighlighted = scheduleHover && hour >= scheduleHover.startHour && hour < scheduleHover.endHourExclusive
+                        return (
+                          <tr key={hour} style={{ height: '3rem' }}>
+                            <td
+                              className="w-24 border-b border-r border-gray-200 p-1 text-center text-xs text-gray-500 align-top transition-colors align-middle"
+                              style={{ height: '3rem', ...(isTimeCellHighlighted ? { backgroundColor: '#8ab0ed' } : {}) }}
+                            >
+                              {hour === 0
+                                ? '12 AM'
+                                : hour < 12
+                                  ? `${hour} AM`
+                                  : hour === 12
+                                    ? '12 PM'
+                                    : `${hour - 12} PM`}
+                            </td>
+                            {weekDates.map((d, colIdx) => {
+                              const dateStr = d.toISOString().slice(0, 10)
+                              const block = weekSchedules.find((s) => {
+                                if (s.date !== dateStr) return false
+                                const startH = parseStartHour(s.start_time ?? '00:00')
+                                const endExcl = parseEndHourExclusive(s.end_time ?? '00:00') || startH + 1
+                                return startH === hour && endExcl > startH
+                              })
+                              const spanning = weekSchedules.some((s) => {
+                                if (s.date !== dateStr) return false
+                                const startH = parseStartHour(s.start_time ?? '00:00')
+                                const endExcl = parseEndHourExclusive(s.end_time ?? '00:00') || startH + 1
+                                return startH < hour && endExcl > hour
+                              })
+                              if (spanning) return null
+                              if (block) {
+                                const startParts = (block.start_time ?? '0:0').split(':').slice(0, 2).map(Number)
+                                const endParts = (block.end_time ?? '0:0').split(':').slice(0, 2).map(Number)
+                                const sh = startParts[0] || 0
+                                const sm = startParts[1] || 0
+                                const eh = endParts[0] || 0
+                                const em = endParts[1] || 0
+                                const durationMins = Math.max(0, (eh * 60 + em) - (sh * 60 + sm))
+                                const durationHours = Math.ceil(durationMins / 60) || 1
+                                const rowSpan = Math.max(1, durationHours)
+                                const endHourExclusive = sh + durationHours
+                                return (
+                                  <td
+                                    key={dateStr}
+                                    rowSpan={rowSpan}
+                                    className="border-b border-r border-gray-200 p-0 align-top last:border-r-0 relative"
+                                    style={{ height: `${rowSpan * 3}rem`, verticalAlign: 'top' }}
+                                  >
+                                    {(() => {
+                                      const missed = block.status === 'missed'
+                                      const colors = missed
+                                        ? { bg: '#f5e6d3', border: '#a8701d', text: '#5c4a2a' }
+                                        : getScheduleBlockColors(block.type)
+                                      return (
+                                        <button
+                                          type="button"
+                                          onClick={() => openEditVisitModal(block)}
+                                          onMouseEnter={() => setScheduleHover({ dateStr, startHour: sh, endHourExclusive })}
+                                          onMouseLeave={() => setScheduleHover(null)}
+                                          className="w-full flex flex-col rounded border-l-4 p-2 text-left focus:outline-none focus:ring-2 box-border"
+                                          style={{
+                                            backgroundColor: colors.bg,
+                                            borderLeftColor: colors.border,
+                                            color: colors.text,
+                                            height: '100%',
+                                            minHeight: '100%',
+                                          }}
+                                        >
+                                          <div className="min-w-0 flex-1 flex flex-col">
+                                            <div className="font-medium">
+                                              {block.start_time?.slice(0, 5)} - {block.end_time?.slice(0, 5)}
+                                            </div>
+                                            <div className="text-xs" style={{ color: colors.text }}>
+                                              {block.type || 'Routine'}
+                                            </div>
+                                            <div className="mt-0.5 flex items-center gap-1 text-xs opacity-90" style={{ color: colors.text }}>
+                                              <Clock className="w-3 h-3" />
+                                              {durationMins >= 60 ? `${Math.floor(durationMins / 60)}h` : `${durationMins}m`}
+                                            </div>
+                                          </div>
+                                        </button>
+                                      )
+                                    })()}
+                                  </td>
+                                )
+                              }
+                              return (
+                                <td
+                                  key={dateStr}
+                                  className="border-b border-r border-gray-200 p-0 text-center last:border-r-0"
+                                  style={{ height: '3rem' }}
+                                />
+                              )
+                            })}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {scheduleLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/80">
+                    <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -1836,14 +3056,17 @@ export default function ClientDetailContent({ client, allClients, representative
                   <div className="overflow-x-auto">
                     <table className="w-full text-left text-sm">
                       <thead>
-                        <tr className="border-b border-gray-200 bg-gray-50 text-xs font-semibold uppercase tracking-wider text-gray-600">
-                          <th className="px-4 py-3">Name</th>
+                        <tr className="border-b border-gray-200 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                          <th className="px-4 py-3 bg-gray-50">Name</th>
                           {ADL_DAYS.map((d) => (
-                            <th key={d.value} className="px-2 py-3 text-center">
+                            <th key={d.value} className="px-2 py-3 text-center bg-gray-50">
                               {d.label}
                             </th>
                           ))}
-                          <th className="px-2 py-3 text-center w-12">All</th>
+                          <th className="px-2 py-3 text-center w-14 bg-gray-100 text-gray-800 font-medium">
+                            ALL
+                          </th>
+                          <th className="px-2 py-3 text-center w-14 bg-gray-50">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
@@ -1908,22 +3131,39 @@ export default function ClientDetailContent({ client, allClients, representative
                                   </td>
                                 )
                               })}
-                              <td className="px-2 py-3 text-center">
+                              <td className="px-2 py-3 text-center align-middle border-l border-gray-200 bg-gray-100">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleAdlRowAll(adlRow)}
+                                  className={`inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+                                    isAdlRowAllSelected(adlRow.adl_code)
+                                      ? 'bg-blue-600'
+                                      : 'bg-gray-300'
+                                  }`}
+                                  aria-label={isAdlRowAllSelected(adlRow.adl_code) ? `Unselect all days for ${adlInfo.name}` : `Select all days (morning 1x) for ${adlInfo.name}`}
+                                >
+                                  <span
+                                    className={`w-3 h-3 rounded-full border-2 ${
+                                      isAdlRowAllSelected(adlRow.adl_code)
+                                        ? 'border-white bg-white'
+                                        : 'border-gray-400 bg-white/80'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                              <td className="px-2 py-3 text-center align-middle">
                                 <button
                                   type="button"
                                   onClick={() => {
-                                  setAdlPlanError(null)
-                                  setAdlToDelete(adlRow.adl_code)
-                                }}
-                                  disabled={deletingAdlCode === adlRow.adl_code}
-                                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50 inline-flex items-center justify-center"
+                                    setAdlPlanError(null)
+                                    setPendingAdlDeletes((prev) => (prev.includes(adlRow.adl_code) ? prev : [...prev, adlRow.adl_code]))
+                                    setLocalAdls((prev) => prev.filter((a) => a.adl_code !== adlRow.adl_code))
+                                    setLocalAdlSchedules((prev) => prev.filter((s) => s.adl_code !== adlRow.adl_code))
+                                  }}
+                                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex items-center justify-center"
                                   aria-label={`Remove ${adlInfo.name}`}
                                 >
-                                  {deletingAdlCode === adlRow.adl_code ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="w-4 h-4" />
-                                  )}
+                                  <Trash2 className="w-4 h-4" />
                                 </button>
                               </td>
                             </tr>
@@ -1935,7 +3175,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 )}
               </div>
 
-              <div className="border border-gray-200 rounded-lg bg-white px-4 py-3">
+              {/* <div className="border border-gray-200 rounded-lg bg-white px-4 py-3">
                 <p className="text-xs font-semibold text-gray-700 mb-2">Legend:</p>
                 <div className="flex flex-wrap gap-4">
                   <span className="inline-flex items-center gap-2">
@@ -1959,12 +3199,18 @@ export default function ClientDetailContent({ client, allClients, representative
                     <span className="text-xs text-gray-600">Specific Times</span>
                   </span>
                 </div>
-              </div>
+              </div> */}
 
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => router.refresh()}
+                  onClick={() => {
+                    setLocalAdls(initialAdls ?? [])
+                    setLocalAdlSchedules(initialAdlSchedules ?? [])
+                    setPendingAdlDeletes([])
+                    setAdlPlanError(null)
+                    router.refresh()
+                  }}
                   className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
                 >
                   Cancel
@@ -2631,6 +3877,1008 @@ export default function ClientDetailContent({ client, allClients, representative
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Add Visit Modal */}
+      <Modal
+        isOpen={addVisitModalOpen}
+        onClose={closeAddVisitModal}
+        title="Add Visit"
+        size="lg"
+      >
+        <p className="text-sm text-gray-500 -mt-2 mb-4">
+          Add a new visit for {localClient.full_name}.
+        </p>
+        <div className="flex gap-2 border-b border-gray-200 mb-4">
+          <button
+            type="button"
+            onClick={() => setAddVisitTab('details')}
+            className={`px-4 py-2 text-sm font-medium rounded-t ${addVisitTab === 'details' ? 'bg-white border border-b-0 border-gray-200 shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            Details
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddVisitTab('adls')}
+            className={`px-4 py-2 text-sm font-medium rounded-t flex items-center gap-1 ${addVisitTab === 'adls' ? 'bg-white border border-b-0 border-gray-200 shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            ADLs
+            {visitAdlSelected.size > 0 && (
+              <span className="rounded-full bg-green-100 text-green-800 text-xs px-1.5 py-0.5">
+                {visitAdlSelected.size}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {addVisitTab === 'details' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date {!visitForm.isRecurring && '*'}</label>
+                <input
+                  type="date"
+                  value={visitForm.date}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, date: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                  disabled={isSavingVisit || visitForm.isRecurring}
+                />
+                {visitForm.isRecurring && (
+                  <p className="mt-1 text-xs text-gray-500">Ignored when Recurring is on. Use Start/End Date in Recurring section.</p>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Start Time *</label>
+                <input
+                  type="time"
+                  value={visitForm.startTime}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, startTime: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={isSavingVisit}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">End Time *</label>
+                <input
+                  type="time"
+                  value={visitForm.endTime}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, endTime: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={isSavingVisit}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={visitForm.description}
+                onChange={(e) => setVisitForm((p) => ({ ...p, description: e.target.value }))}
+                rows={2}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                placeholder="Optional"
+                disabled={isSavingVisit}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={visitForm.type}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, type: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                  disabled={isSavingVisit}
+                >
+                  {VISIT_TYPES.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Caregiver</label>
+                <select
+                  value={visitForm.caregiverId}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, caregiverId: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                  disabled={isSavingVisit}
+                >
+                  <option value="">Select caregiver...</option>
+                  {(staffList ?? []).map((s: StaffMember) => (
+                    <option key={s.id} value={s.id}>
+                      {s.first_name} {s.last_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+              <textarea
+                value={visitForm.notes}
+                onChange={(e) => setVisitForm((p) => ({ ...p, notes: e.target.value }))}
+                rows={2}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                placeholder="Optional"
+                disabled={isSavingVisit}
+              />
+            </div>
+            {/* Recurring — toggle only (top box) */}
+            <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="block text-sm font-semibold text-gray-900">Recurring</span>
+                  <span className="text-xs text-blue-600">Repeat this visit on a schedule</span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={visitForm.isRecurring}
+                  onClick={() => setVisitForm((p) => ({ ...p, isRecurring: !p.isRecurring }))}
+                  className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border transition-colors ${visitForm.isRecurring ? 'bg-gray-900 border-gray-900' : 'bg-gray-200 border-gray-300'}`}
+                >
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white border shadow transition-transform ${visitForm.isRecurring ? 'translate-x-5' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+            {/* Recurring configuration (bottom box) */}
+            {visitForm.isRecurring && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Repeat Frequency</label>
+                  <select
+                    value={visitForm.repeatFrequency}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setVisitForm((p) => {
+                        const next = { ...p, repeatFrequency: v }
+                        if (v === 'daily') {
+                          const today = new Date().toISOString().slice(0, 10)
+                          next.repeatStart = today
+                          next.repeatEnd = today
+                        } else if (v === 'weekly') {
+                          const mon = getMonday(new Date())
+                          const sun = getSundayFromMonday(mon)
+                          next.repeatStart = mon.toISOString().slice(0, 10)
+                          next.repeatEnd = sun.toISOString().slice(0, 10)
+                        } else if (v === 'monthly') {
+                          const d = new Date()
+                          const y = d.getFullYear()
+                          const m = d.getMonth()
+                          next.repeatStart = `${y}-${String(m + 1).padStart(2, '0')}-01`
+                          const lastDay = new Date(y, m + 1, 0).getDate()
+                          next.repeatEnd = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+                        }
+                        return next
+                      })
+                    }}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                  >
+                    <option value="">Select...</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+                {visitForm.repeatFrequency === 'weekly' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Days of the Week</label>
+                    <div className="flex flex-wrap gap-2">
+                      {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            const has = visitForm.repeatDays.includes(d)
+                            setVisitForm((p) => ({
+                              ...p,
+                              repeatDays: has ? p.repeatDays.filter((x) => x !== d) : [...p.repeatDays, d],
+                            }))
+                          }}
+                          className={`min-w-[2.5rem] h-10 rounded-full text-sm font-medium border transition-colors ${visitForm.repeatDays.includes(d) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'}`}
+                        >
+                          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][d]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {visitForm.repeatFrequency === 'monthly' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Repeat on (week + day)</label>
+                    <div className="space-y-2">
+                      {(visitForm.repeatMonthlyRules.length === 0 ? [{ ordinal: null, weekday: null }] : visitForm.repeatMonthlyRules).map((rule, i) => (
+                        <div key={i} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <select
+                            value={rule.ordinal ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const ord = v === '' ? null : Number(v)
+                              setVisitForm((p) => {
+                                const rules = [...(p.repeatMonthlyRules.length === 0 ? [{ ordinal: null as number | null, weekday: null as number | null }] : p.repeatMonthlyRules)]
+                                rules[i] = { ...rules[i], ordinal: ord }
+                                const isLast = i === rules.length - 1
+                                if (isLast && ord != null && rules[i].weekday != null && rules.length > 0) rules.push({ ordinal: null, weekday: null })
+                                return { ...p, repeatMonthlyRules: rules }
+                              })
+                            }}
+                            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 min-w-[120px]"
+                          >
+                            <option value="">Week...</option>
+                            <option value={0}>All Weeks</option>
+                            {([1, 2, 3, 4, 5] as const).map((ord) => (
+                              <option key={ord} value={ord}>{MONTHLY_ORDINAL_LABELS[ord - 1]}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={rule.weekday ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const wd = v === '' ? null : Number(v)
+                              setVisitForm((p) => {
+                                const rules = [...(p.repeatMonthlyRules.length === 0 ? [{ ordinal: null as number | null, weekday: null as number | null }] : p.repeatMonthlyRules)]
+                                rules[i] = { ...rules[i], weekday: wd }
+                                const isLast = i === rules.length - 1
+                                if (isLast && wd != null && rules[i].ordinal != null) rules.push({ ordinal: null, weekday: null })
+                                return { ...p, repeatMonthlyRules: rules }
+                              })
+                            }}
+                            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 min-w-[120px]"
+                          >
+                            <option value="">Day Of Week...</option>
+                            {WEEKDAY_NAMES.map((name, wd) => (
+                              <option key={wd} value={wd}>{name}</option>
+                            ))}
+                          </select>
+                          {rule.ordinal != null && rule.weekday != null && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setVisitForm((p) => {
+                                  const rules = p.repeatMonthlyRules.filter((_, idx) => idx !== i)
+                                  return { ...p, repeatMonthlyRules: rules.length === 0 ? [{ ordinal: null, weekday: null }] : rules }
+                                })
+                              }}
+                              className="text-gray-400 hover:text-red-600 p-1"
+                              aria-label="Remove"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={visitForm.repeatStart}
+                        onChange={(e) => setVisitForm((p) => ({ ...p, repeatStart: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm"
+                      />
+                      <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      End Date <span className="text-gray-500 font-normal">(optional)</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={visitForm.repeatEnd}
+                        onChange={(e) => setVisitForm((p) => ({ ...p, repeatEnd: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm placeholder:text-gray-400"
+                        placeholder="mm/dd/yyyy"
+                      />
+                      <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {addVisitTab === 'adls' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-700">Select ADL Tasks *</span>
+              {visitAdlSelected.size > 0 && (
+                <span className="text-green-600 font-medium">✓ {visitAdlSelected.size} tasks selected</span>
+              )}
+            </div>
+            {(() => {
+              const visitDate = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
+              const dayOfWeekDb = visitDate
+                ? (() => {
+                    const d = new Date(visitDate + 'T12:00:00').getDay()
+                    return d === 0 ? 7 : d
+                  })()
+                : null
+              const assignedOnDate = new Set(
+                (visitDateSchedules ?? []).flatMap((s) => s.adl_codes ?? [])
+              )
+              const available = localAdls.filter((a) => {
+                if (assignedOnDate.has(a.adl_code)) return false
+                if (!dayOfWeekDb) return true
+                const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
+                return !!(s && s.schedule_type !== 'never')
+              })
+              return (
+                <div className="max-h-64 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
+                  {available.length === 0 ? (
+                    <p className="text-sm text-gray-500 py-4 text-center">
+                      No ADLs available for this day of the week. Add ADLs in the ADLs tab and set them for this day, or all are already assigned to visits on this date.
+                    </p>
+                  ) : (
+                    available.map((a) => {
+                      const info = ADL_LISTS.find((x) => x.name === a.adl_code) ?? { name: a.adl_code, type: 'General' }
+                      const schedule = localAdlSchedules.find((s) => s.adl_code === a.adl_code && s.day_of_week === (dayOfWeekDb ?? 1))
+                      const slotLabels: string[] = []
+                      if (schedule?.slot_morning) slotLabels.push('Morning')
+                      if (schedule?.slot_afternoon) slotLabels.push('Afternoon')
+                      if (schedule?.slot_evening) slotLabels.push('Evening')
+                      if (schedule?.slot_night) slotLabels.push('Night')
+                      const isChecked = visitAdlSelected.has(a.adl_code)
+                      return (
+                        <label
+                          key={a.id}
+                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              setVisitAdlSelected((prev) => {
+                                const next = new Set(prev)
+                                if (e.target.checked) next.add(a.adl_code)
+                                else next.delete(a.adl_code)
+                                return next
+                              })
+                            }}
+                            className="mt-1 rounded border-gray-300"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-gray-900">{info.name}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{info.type}</div>
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                              <span className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                                {info.type}
+                              </span>
+                              {slotLabels.slice(0, 2).map((l) => (
+                                <span key={l} className="inline-flex items-center gap-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                                  <Clock className="w-3 h-3" />
+                                  {l}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </label>
+                      )
+                    })
+                  )}
+                </div>
+              )
+            })()}
+            {(visitForm.isRecurring ? visitForm.repeatStart : visitForm.date) && (
+              <p className="text-xs text-gray-500">
+                Only showing ADLs that are not already assigned to other visits on{' '}
+                {new Date((visitForm.isRecurring ? visitForm.repeatStart : visitForm.date)! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.
+              </p>
+            )}
+          </div>
+        )}
+
+        {visitError && (
+          <p className="mt-4 text-sm text-red-600 bg-red-100 border border-red-200 p-2 rounded">{visitError}</p>
+        )}
+        {scheduleLimitWarning && (
+          <p className="mt-4 text-sm text-amber-700 bg-amber-50 border border-amber-200 p-2 rounded">{scheduleLimitWarning}</p>
+        )}
+        <div className="flex justify-end gap-2 mt-6">
+          <button
+            type="button"
+            onClick={closeAddVisitModal}
+            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            disabled={isSavingVisit}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleAddVisitSubmit}
+            disabled={isSavingVisit}
+            className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
+          >
+            {isSavingVisit && <Loader2 className="w-4 h-4 animate-spin" />}
+            Add Visit
+          </button>
+        </div>
+      </Modal>
+
+      {/* Edit Visit Modal */}
+      <Modal
+        isOpen={editVisitModalOpen}
+        onClose={closeEditVisitModal}
+        title="Edit Visit"
+        size="lg"
+      >
+        <p className="text-sm text-gray-500 -mt-2 mb-4">
+          Edit visit for {localClient.full_name}.
+        </p>
+        <div className="flex gap-2 border-b border-gray-200 mb-4">
+          <button
+            type="button"
+            onClick={() => setAddVisitTab('details')}
+            className={`px-4 py-2 text-sm font-medium rounded-t ${addVisitTab === 'details' ? 'bg-white border border-b-0 border-gray-200 shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            Details
+          </button>
+          <button
+            type="button"
+            onClick={() => setAddVisitTab('adls')}
+            className={`px-4 py-2 text-sm font-medium rounded-t flex items-center gap-1 ${addVisitTab === 'adls' ? 'bg-white border border-b-0 border-gray-200 shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
+          >
+            ADLs
+            {visitAdlSelected.size > 0 && (
+              <span className="rounded-full bg-green-100 text-green-800 text-xs px-1.5 py-0.5">
+                {visitAdlSelected.size}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {addVisitTab === 'details' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Date {!visitForm.isRecurring && '*'}</label>
+                <input
+                  type="date"
+                  value={visitForm.date}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, date: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                  disabled={isSavingVisit || visitForm.isRecurring}
+                />
+                {visitForm.isRecurring && (
+                  <p className="mt-1 text-xs text-gray-500">Ignored when Recurring is on. Use Start/End Date in Recurring section.</p>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Start Time *</label>
+                <input
+                  type="time"
+                  value={visitForm.startTime}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, startTime: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={isSavingVisit}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">End Time *</label>
+                <input
+                  type="time"
+                  value={visitForm.endTime}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, endTime: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={isSavingVisit}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+              <textarea
+                value={visitForm.description}
+                onChange={(e) => setVisitForm((p) => ({ ...p, description: e.target.value }))}
+                rows={2}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                placeholder="Optional"
+                disabled={isSavingVisit}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={visitForm.type}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, type: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                  disabled={isSavingVisit}
+                >
+                  {VISIT_TYPES.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Caregiver</label>
+                <select
+                  value={visitForm.caregiverId}
+                  onChange={(e) => setVisitForm((p) => ({ ...p, caregiverId: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                  disabled={isSavingVisit}
+                >
+                  <option value="">Select caregiver...</option>
+                  {(staffList ?? []).map((s: StaffMember) => (
+                    <option key={s.id} value={s.id}>
+                      {s.first_name} {s.last_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+              <textarea
+                value={visitForm.notes}
+                onChange={(e) => setVisitForm((p) => ({ ...p, notes: e.target.value }))}
+                rows={2}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                placeholder="Optional"
+                disabled={isSavingVisit}
+              />
+            </div>
+            {/* Recurring — toggle only (top box) */}
+            <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="block text-sm font-semibold text-gray-900">Recurring</span>
+                  <span className="text-xs text-blue-600">Repeat this visit on a schedule</span>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={visitForm.isRecurring}
+                  onClick={() => setVisitForm((p) => ({ ...p, isRecurring: !p.isRecurring }))}
+                  className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border transition-colors ${visitForm.isRecurring ? 'bg-gray-900 border-gray-900' : 'bg-gray-200 border-gray-300'}`}
+                >
+                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white border shadow transition-transform ${visitForm.isRecurring ? 'translate-x-5' : 'translate-x-1'}`} />
+                </button>
+              </div>
+            </div>
+            {/* Recurring configuration (bottom box) */}
+            {visitForm.isRecurring && (
+              <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4 space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Repeat Frequency</label>
+                  <select
+                    value={visitForm.repeatFrequency}
+                    onChange={(e) => {
+                      const v = e.target.value
+                      setVisitForm((p) => {
+                        const next = { ...p, repeatFrequency: v }
+                        if (v === 'daily') {
+                          const today = new Date().toISOString().slice(0, 10)
+                          next.repeatStart = today
+                          next.repeatEnd = today
+                        } else if (v === 'weekly') {
+                          const mon = getMonday(new Date())
+                          const sun = getSundayFromMonday(mon)
+                          next.repeatStart = mon.toISOString().slice(0, 10)
+                          next.repeatEnd = sun.toISOString().slice(0, 10)
+                        } else if (v === 'monthly') {
+                          const d = new Date()
+                          const y = d.getFullYear()
+                          const m = d.getMonth()
+                          next.repeatStart = `${y}-${String(m + 1).padStart(2, '0')}-01`
+                          const lastDay = new Date(y, m + 1, 0).getDate()
+                          next.repeatEnd = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+                        }
+                        return next
+                      })
+                    }}
+                    className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
+                  >
+                    <option value="">Select...</option>
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                  </select>
+                </div>
+                {visitForm.repeatFrequency === 'weekly' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Days of the Week</label>
+                    <div className="flex flex-wrap gap-2">
+                      {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => {
+                            const has = visitForm.repeatDays.includes(d)
+                            setVisitForm((p) => ({
+                              ...p,
+                              repeatDays: has ? p.repeatDays.filter((x) => x !== d) : [...p.repeatDays, d],
+                            }))
+                          }}
+                          className={`min-w-[2.5rem] h-10 rounded-full text-sm font-medium border transition-colors ${visitForm.repeatDays.includes(d) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'}`}
+                        >
+                          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][d]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {visitForm.repeatFrequency === 'monthly' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Repeat on (week + day)</label>
+                    <div className="space-y-2">
+                      {(visitForm.repeatMonthlyRules.length === 0 ? [{ ordinal: null, weekday: null }] : visitForm.repeatMonthlyRules).map((rule, i) => (
+                        <div key={i} className="flex flex-wrap items-center gap-2">
+                          <select
+                            value={rule.ordinal ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const ord = v === '' ? null : Number(v)
+                              setVisitForm((p) => {
+                                const rules = [...(p.repeatMonthlyRules.length === 0 ? [{ ordinal: null as number | null, weekday: null as number | null }] : p.repeatMonthlyRules)]
+                                rules[i] = { ...rules[i], ordinal: ord }
+                                const isLast = i === rules.length - 1
+                                if (isLast && ord != null && rules[i].weekday != null && rules.length > 0) rules.push({ ordinal: null, weekday: null })
+                                return { ...p, repeatMonthlyRules: rules }
+                              })
+                            }}
+                            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 min-w-[120px]"
+                          >
+                            <option value="">Week...</option>
+                            <option value={0}>All</option>
+                            {([1, 2, 3, 4, 5] as const).map((ord) => (
+                              <option key={ord} value={ord}>{MONTHLY_ORDINAL_LABELS[ord - 1]}</option>
+                            ))}
+                          </select>
+                          <select
+                            value={rule.weekday ?? ''}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const wd = v === '' ? null : Number(v)
+                              setVisitForm((p) => {
+                                const rules = [...(p.repeatMonthlyRules.length === 0 ? [{ ordinal: null as number | null, weekday: null as number | null }] : p.repeatMonthlyRules)]
+                                rules[i] = { ...rules[i], weekday: wd }
+                                const isLast = i === rules.length - 1
+                                if (isLast && wd != null && rules[i].ordinal != null) rules.push({ ordinal: null, weekday: null })
+                                return { ...p, repeatMonthlyRules: rules }
+                              })
+                            }}
+                            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 min-w-[120px]"
+                          >
+                            <option value="">Day...</option>
+                            {WEEKDAY_NAMES.map((name, wd) => (
+                              <option key={wd} value={wd}>{name}</option>
+                            ))}
+                          </select>
+                          {rule.ordinal != null && rule.weekday != null && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setVisitForm((p) => {
+                                  const rules = p.repeatMonthlyRules.filter((_, idx) => idx !== i)
+                                  return { ...p, repeatMonthlyRules: rules.length === 0 ? [{ ordinal: null, weekday: null }] : rules }
+                                })
+                              }}
+                              className="text-gray-400 hover:text-red-600 p-1"
+                              aria-label="Remove"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={visitForm.repeatStart}
+                        onChange={(e) => setVisitForm((p) => ({ ...p, repeatStart: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm"
+                      />
+                      <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      End Date <span className="text-gray-500 font-normal">(optional)</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="date"
+                        value={visitForm.repeatEnd}
+                        onChange={(e) => setVisitForm((p) => ({ ...p, repeatEnd: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm placeholder:text-gray-400"
+                        placeholder="mm/dd/yyyy"
+                      />
+                      <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {addVisitTab === 'adls' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium text-gray-700">Select ADL Tasks *</span>
+              {visitAdlSelected.size > 0 && (
+                <span className="text-green-600 font-medium">✓ {visitAdlSelected.size} tasks selected</span>
+              )}
+            </div>
+            {(() => {
+              const visitDate = visitForm.date
+              const dayOfWeekDb = visitDate
+                ? (() => {
+                    const d = new Date(visitDate + 'T12:00:00').getDay()
+                    return d === 0 ? 7 : d
+                  })()
+                : null
+              const otherVisitsOnDate = (visitDateSchedules ?? []).filter((s) => s.id !== editingSchedule?.id)
+              const assignedOnDate = new Set(otherVisitsOnDate.flatMap((s) => s.adl_codes ?? []))
+              const available = localAdls.filter((a) => {
+                if (assignedOnDate.has(a.adl_code)) return false
+                if (!dayOfWeekDb) return true
+                const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
+                return !!(s && s.schedule_type !== 'never')
+              })
+              return (
+                <div className="max-h-64 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
+                  {available.length === 0 ? (
+                    <p className="text-sm text-gray-500 py-4 text-center">
+                      No ADLs available for this day of the week. Add ADLs in the ADLs tab and set them for this day, or all are already assigned to other visits on this date.
+                    </p>
+                  ) : (
+                    available.map((a) => {
+                      const info = ADL_LISTS.find((x) => x.name === a.adl_code) ?? { name: a.adl_code, type: 'General' }
+                      const schedule = localAdlSchedules.find((s) => s.adl_code === a.adl_code && s.day_of_week === (dayOfWeekDb ?? 1))
+                      const slotLabels: string[] = []
+                      if (schedule?.slot_morning) slotLabels.push('Morning')
+                      if (schedule?.slot_afternoon) slotLabels.push('Afternoon')
+                      if (schedule?.slot_evening) slotLabels.push('Evening')
+                      if (schedule?.slot_night) slotLabels.push('Night')
+                      const isChecked = visitAdlSelected.has(a.adl_code)
+                      return (
+                        <label
+                          key={a.id}
+                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              setVisitAdlSelected((prev) => {
+                                const next = new Set(prev)
+                                if (e.target.checked) next.add(a.adl_code)
+                                else next.delete(a.adl_code)
+                                return next
+                              })
+                            }}
+                            className="mt-1 rounded border-gray-300"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-gray-900">{info.name}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{info.type}</div>
+                            <div className="flex gap-1 mt-1 flex-wrap">
+                              <span className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                                {info.type}
+                              </span>
+                              {slotLabels.slice(0, 2).map((l) => (
+                                <span key={l} className="inline-flex items-center gap-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
+                                  <Clock className="w-3 h-3" />
+                                  {l}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </label>
+                      )
+                    })
+                  )}
+                </div>
+              )
+            })()}
+            {(visitForm.isRecurring ? visitForm.repeatStart : visitForm.date) && (
+              <p className="text-xs text-gray-500">
+                Only showing ADLs that are not already assigned to other visits on{' '}
+                {new Date((visitForm.isRecurring ? visitForm.repeatStart : visitForm.date)! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.
+              </p>
+            )}
+          </div>
+        )}
+
+        {visitError && (
+          <p className="mt-4 text-sm text-red-600 bg-red-100 border border-red-200 p-2 rounded">{visitError}</p>
+        )}
+        <div className="flex flex-wrap items-center justify-end gap-2 mt-6">
+          {editingSchedule?.status === 'missed' ? (
+            <button
+              type="button"
+              onClick={handleMarkVisitUnmissed}
+              disabled={isSavingVisit}
+              className="inline-flex items-center gap-1.5 px-4 py-2 border-2 border-[#a8701d] text-[#a8701d] rounded-lg text-sm font-medium hover:bg-[#f5e6d3] disabled:opacity-50"
+            >
+              <Check className="w-4 h-4" />
+              Mark as Unmissed
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleMarkVisitMissed}
+              disabled={isSavingVisit}
+              className="inline-flex items-center gap-1.5 px-4 py-2 border-2 border-orange-500 text-orange-600 rounded-lg text-sm font-medium hover:bg-orange-50 disabled:opacity-50"
+            >
+              <X className="w-4 h-4" />
+              Mark as Missed
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={handleDeleteVisit}
+            disabled={isSavingVisit}
+            className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete Visit
+          </button>
+          <button
+            type="button"
+            onClick={closeEditVisitModal}
+            className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            disabled={isSavingVisit}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleUpdateVisitSubmit}
+            disabled={isSavingVisit}
+            className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
+          >
+            {isSavingVisit && <Loader2 className="w-4 h-4 animate-spin" />}
+            Update Visit
+          </button>
+        </div>
+      </Modal>
+
+      {/* Manage Contracted Hours Modal */}
+      <Modal
+        isOpen={manageLimitModalOpen}
+        onClose={closeManageLimitModal}
+        title={`Manage Contracted Weekly Hours — ${localClient.full_name}`}
+        size="lg"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500 -mt-2">
+            Set the total contracted caregiver hours for a period (effective date to end date). You can schedule within that total for the period.
+          </p>
+          <div className="rounded-lg border border-gray-200 p-4 space-y-4">
+            <h4 className="text-sm font-semibold text-gray-900">Add New Hours Limit</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Total amount of hours *</label>
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={limitForm.totalHours}
+                  onChange={(e) => setLimitForm((p) => ({ ...p, totalHours: e.target.value }))}
+                  placeholder="e.g. 40"
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={isSavingLimit}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Effective Date *</label>
+                <input
+                  type="date"
+                  value={limitForm.effectiveDate}
+                  onChange={(e) => setLimitForm((p) => ({ ...p, effectiveDate: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={isSavingLimit}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                <input
+                  type="date"
+                  value={limitForm.endDate}
+                  onChange={(e) => setLimitForm((p) => ({ ...p, endDate: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  disabled={isSavingLimit}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Note (optional)</label>
+              <input
+                type="text"
+                value={limitForm.note}
+                onChange={(e) => setLimitForm((p) => ({ ...p, note: e.target.value }))}
+                placeholder="e.g. Plan renewal, insurance update..."
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                disabled={isSavingLimit}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveLimit}
+              disabled={isSavingLimit}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
+            >
+              {isSavingLimit && <Loader2 className="w-4 h-4 animate-spin" />}
+              Save Hours Limit
+            </button>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-1 mb-2">
+              <Clock className="w-4 h-4" />
+              Limit History
+            </h4>
+            <div className="rounded border border-gray-200 overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="text-left p-2 font-medium text-gray-700">Total hrs</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Effective Date</th>
+                    <th className="text-left p-2 font-medium text-gray-700">End Date</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Note</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Status</th>
+                    <th className="w-10" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {localContractedHours.map((row) => {
+                    const today = new Date().toISOString().slice(0, 10)
+                    const isCurrent = row.effective_date <= today && (row.end_date == null || row.end_date >= today)
+                    return (
+                      <tr key={row.id} className={isCurrent ? 'bg-blue-50' : 'bg-white'}>
+                        <td className="p-2">{row.total_hours} hrs</td>
+                        <td className="p-2">{formatShortDate(row.effective_date)}</td>
+                        <td className="p-2">{row.end_date ? formatShortDate(row.end_date) : '—'}</td>
+                        <td className="p-2 text-gray-600">{row.note ?? '—'}</td>
+                        <td className="p-2">{isCurrent ? <span className="text-xs font-medium text-blue-600">Current</span> : '—'}</td>
+                        <td className="p-2">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteLimit(row.id)}
+                            className="text-gray-400 hover:text-red-600"
+                            aria-label="Delete"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {localContractedHours.length === 0 && (
+              <p className="text-sm text-gray-500 py-4 text-center">No limit history yet.</p>
+            )}
+          </div>
+
+          {limitError && <p className="text-sm text-red-600">{limitError}</p>}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={closeManageLimitModal}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            >
+              Close
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   )

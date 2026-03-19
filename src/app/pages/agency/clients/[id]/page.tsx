@@ -69,6 +69,21 @@ export default async function ClientDetailPage({
     adlSchedulesList = []
   }
 
+  const { data: agencyClient } = await q.getClientByCompanyOwnerId(supabase, session.user.id)
+  let staffList: Awaited<ReturnType<typeof q.getStaffMembersByCompanyOwnerId>>['data'] = []
+  if (agencyClient?.id) {
+    const res = await q.getStaffMembersByCompanyOwnerId(supabase, agencyClient.id, { status: 'active' })
+    staffList = res.data ?? []
+  }
+
+  let contractedHoursList: Awaited<ReturnType<typeof q.getPatientContractedHoursByPatientId>>['data'] = []
+  try {
+    const res = await q.getPatientContractedHoursByPatientId(supabase, id)
+    contractedHoursList = res.data ?? []
+  } catch {
+    contractedHoursList = []
+  }
+
   return (
     <DashboardLayout
       user={session.user}
@@ -83,6 +98,8 @@ export default async function ClientDetailPage({
         incidents={incidentsList}
         adls={adlsList}
         adlSchedules={adlSchedulesList}
+        staff={staffList}
+        contractedHours={contractedHoursList}
       />
     </DashboardLayout>
   )
