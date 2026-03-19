@@ -867,6 +867,16 @@ export default function ClientDetailContent({ client, allClients, representative
     1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday',
     5: 'Friday', 6: 'Saturday', 7: 'Sunday',
   }
+  /** Weekly visit repeat uses JS getDay(): 0=Sun … 6=Sat. Buttons shown Mo → Su. */
+  const VISIT_WEEKLY_REPEAT_DAYS_ORDER = [
+    { getDay: 1, label: 'Mo' },
+    { getDay: 2, label: 'Tu' },
+    { getDay: 3, label: 'We' },
+    { getDay: 4, label: 'Th' },
+    { getDay: 5, label: 'Fr' },
+    { getDay: 6, label: 'Sa' },
+    { getDay: 0, label: 'Su' },
+  ] as const
   const getSchedule = (adlCode: string, dayOfWeek: number) =>
     localAdlSchedules.find((s) => s.adl_code === adlCode && s.day_of_week === dayOfWeek)
 
@@ -4072,7 +4082,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Days of the Week</label>
                     <div className="flex flex-wrap gap-2">
-                      {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+                      {VISIT_WEEKLY_REPEAT_DAYS_ORDER.map(({ getDay: d, label }) => (
                         <button
                           key={d}
                           type="button"
@@ -4085,7 +4095,7 @@ export default function ClientDetailContent({ client, allClients, representative
                           }}
                           className={`min-w-[2.5rem] h-10 rounded-full text-sm font-medium border transition-colors ${visitForm.repeatDays.includes(d) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'}`}
                         >
-                          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][d]}
+                          {label}
                         </button>
                       ))}
                     </div>
@@ -4494,7 +4504,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Days of the Week</label>
                     <div className="flex flex-wrap gap-2">
-                      {[0, 1, 2, 3, 4, 5, 6].map((d) => (
+                      {VISIT_WEEKLY_REPEAT_DAYS_ORDER.map(({ getDay: d, label }) => (
                         <button
                           key={d}
                           type="button"
@@ -4507,7 +4517,7 @@ export default function ClientDetailContent({ client, allClients, representative
                           }}
                           className={`min-w-[2.5rem] h-10 rounded-full text-sm font-medium border transition-colors ${visitForm.repeatDays.includes(d) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'}`}
                         >
-                          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][d]}
+                          {label}
                         </button>
                       ))}
                     </div>
