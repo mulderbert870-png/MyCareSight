@@ -4772,7 +4772,7 @@ export default function ClientDetailContent({ client, allClients, representative
             <h4 className="text-sm font-semibold text-gray-900">Add New Hours Limit</h4>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Total amount of hours *</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Hours Per Week *</label>
                 <input
                   type="number"
                   min={0}
