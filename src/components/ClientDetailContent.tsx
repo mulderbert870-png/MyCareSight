@@ -188,6 +188,9 @@ export default function ClientDetailContent({ client, allClients, representative
     date.setDate(date.getDate() + diff)
     return date
   }
+  /** YYYY-MM-DD in local time (so schedule grid and ADL day_of_week 1=Mon..7=Sun match). */
+  const toLocalDateString = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const [scheduleWeekStart, setScheduleWeekStart] = useState<Date>(() => getMonday(new Date()))
   const [weekSchedules, setWeekSchedules] = useState<ScheduleRow[]>([])
   const [scheduleHover, setScheduleHover] = useState<{ dateStr: string; startHour: number; endHourExclusive: number } | null>(null)
@@ -255,8 +258,8 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const scheduleWeekEnd = new Date(scheduleWeekStart)
   scheduleWeekEnd.setDate(scheduleWeekEnd.getDate() + 6)
-  const scheduleWeekStartStr = scheduleWeekStart.toISOString().slice(0, 10)
-  const scheduleWeekEndStr = scheduleWeekEnd.toISOString().slice(0, 10)
+  const scheduleWeekStartStr = toLocalDateString(scheduleWeekStart)
+  const scheduleWeekEndStr = toLocalDateString(scheduleWeekEnd)
 
   useEffect(() => {
     if (activeTab !== 'schedule') return
@@ -1270,17 +1273,22 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const getUnassignedAdlCountForDay = (dateStr: string) => {
     const dayOfWeekDb = getDayOfWeekDb(dateStr)
-    const assignedOnDate = new Set(
-      weekSchedules
-        .filter((s) => s.date === dateStr && s.adl_codes?.length)
-        .flatMap((s) => s.adl_codes as string[])
-    )
-    const dueCodes = new Set<string>()
+    // Expected slots = sum over ADLs scheduled this day of (morning + afternoon + evening + night slots)
+    let expectedSlots = 0
     for (const a of localAdls) {
       const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
-      if (s && s.schedule_type !== 'never' && !assignedOnDate.has(a.adl_code)) dueCodes.add(a.adl_code)
+      if (!s || s.schedule_type === 'never') continue
+      if (s.schedule_type === 'always' || s.schedule_type === 'as_needed') {
+        expectedSlots += 1
+        continue
+      }
+      expectedSlots += [s.slot_morning, s.slot_afternoon, s.slot_evening, s.slot_night].filter(Boolean).length
     }
-    return dueCodes.size
+    // Assigned slots = each schedule row on this date counts one slot per adl_code in it
+    const assignedSlots = weekSchedules
+      .filter((s) => s.date === dateStr && s.adl_codes?.length)
+      .reduce((sum, s) => sum + (s.adl_codes as string[]).length, 0)
+    return Math.max(0, expectedSlots - assignedSlots)
   }
 
   const getScheduleBlockColors = (type: string | null): { bg: string; border: string; text: string } => {
@@ -2853,11 +2861,11 @@ export default function ClientDetailContent({ client, allClients, representative
                           Unassigned ADLs
                         </th>
                         {getWeekDates().map((d) => {
-                          const dateStr = d.toISOString().slice(0, 10)
+                          const dateStr = toLocalDateString(d)
                           const dueCount = getDueAdlCountForDay(dateStr)
                           const unassignedCount = getUnassignedAdlCountForDay(dateStr)
                           const isToday =
-                            dateStr === new Date().toISOString().slice(0, 10)
+                            dateStr === toLocalDateString(new Date())
                           return (
                             <th
                               key={dateStr}
@@ -2881,9 +2889,9 @@ export default function ClientDetailContent({ client, allClients, representative
                       <tr className="bg-gray-50">
                         <th className="w-24 border-b border-r border-gray-200 p-2 text-center text-xs font-medium text-gray-500" />
                         {getWeekDates().map((d) => {
-                          const dateStr = d.toISOString().slice(0, 10)
+                          const dateStr = toLocalDateString(d)
                           const isToday =
-                            dateStr === new Date().toISOString().slice(0, 10)
+                            dateStr === toLocalDateString(new Date())
                           const isDayHeaderHighlighted = scheduleHover?.dateStr === dateStr
                           return (
                             <th
@@ -2927,7 +2935,7 @@ export default function ClientDetailContent({ client, allClients, representative
                                     : `${hour - 12} PM`}
                             </td>
                             {weekDates.map((d, colIdx) => {
-                              const dateStr = d.toISOString().slice(0, 10)
+                              const dateStr = toLocalDateString(d)
                               const block = weekSchedules.find((s) => {
                                 if (s.date !== dateStr) return false
                                 const startH = parseStartHour(s.start_time ?? '00:00')
