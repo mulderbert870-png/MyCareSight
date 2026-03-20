@@ -31,23 +31,21 @@ export const US_STATES: string[] = [
  * Activities of Daily Living (ADL) library. Used for patient_adls.adl_code and schedules.adl_codes.
  * Store the `name` value in the database; use these constants for options and validation.
  */
-export const ADL_LISTS: { name: string; type: string }[] = [
-  { name: 'Uncategorized', type: 'General' },
-  { name: 'Activity Out of Home', type: 'Social Activities' },
-  { name: 'Ambulation', type: 'Mobility' },
-  { name: 'Apartment Numbers Per Zone', type: 'Orientation' },
-  { name: 'Apply Lotion', type: 'Grooming' },
-  { name: 'Assist Eating', type: 'Eating' },
-  { name: 'Assist Shaving', type: 'Grooming' },
-  { name: 'Bathing', type: 'Personal Hygiene' },
-  { name: 'Bathroom Cleanup', type: 'Housekeeping' },
-  { name: 'Bed Care', type: 'Personal Care' },
-  { name: 'Bedpan Assistance', type: 'Personal Care' },
-  { name: 'Behavioral Concerns', type: 'Mental Health' },
-  { name: 'Behavioral Triggers', type: 'Mental Health' },
-  { name: 'Bladder Care', type: 'Medical Care' },
-  { name: 'Bowel Care', type: 'Medical Care' },
-  { name: 'Exercise', type: 'Physical Activities' },
+export const ADL_LISTS: { name: string; group: string }[] = [
+  { name: 'Ambulating', group: 'ADL' },
+  { name: 'Feeding', group: 'ADL' },
+  { name: 'Dressing', group: 'ADL' },
+  { name: 'Personal Hygiene', group: 'ADL' },
+  { name: 'Continenece', group: 'ADL' },
+  { name: 'Toileting', group: 'ADL' },
+
+  { name: 'Transportation', group: 'IADL' },
+  { name: 'Managing Finances', group: 'IADL' },
+  { name: 'Shopping', group: 'IADL' },
+  { name: 'Meal Preparation', group: 'IADL' },
+  { name: 'Housecleaning and Home Maintenance', group: 'IADL' },
+  { name: 'Managing Communication with Others', group: 'IADL' },
+  { name: 'Managing Medications', group: 'IADL' },
 ]
 
 /**

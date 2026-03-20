@@ -4,6 +4,7 @@ export interface ScheduleRow {
   id: string
   patient_id: string
   caregiver_id: string | null
+  /** Encoded as `slotKey::adlName` (e.g. `morning::Bathing`) for per–time-slot assignments; legacy rows may store plain `adlName` only. */
   adl_codes: string[]
   date: string
   start_time: string | null
@@ -20,6 +21,19 @@ export interface ScheduleRow {
   status: string | null
   created_at: string
   updated_at: string
+}
+
+/** Get all schedules for a patient. */
+export async function getSchedulesByPatientId(
+  supabase: Supabase,
+  patientId: string
+) {
+  return supabase
+    .from('schedules')
+    .select('*')
+    .eq('patient_id', patientId)
+    .order('date', { ascending: true })
+    .order('start_time', { ascending: true })
 }
 
 /** Get schedules for a patient within a date range (inclusive). */

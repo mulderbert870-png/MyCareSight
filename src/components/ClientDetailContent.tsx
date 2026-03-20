@@ -45,9 +45,87 @@ import type { PatientAdl, PatientAdlDaySchedule } from '@/lib/supabase/query/pat
 import type { ScheduleRow } from '@/lib/supabase/query/schedules'
 import type { PatientContractedHoursRow } from '@/lib/supabase/query/patient-contracted-hours'
 import { CAREGIVER_SKILL_POINTS, ADL_LISTS } from '@/lib/constants'
+import Modal from '@/components/Modal'
 
 const VISIT_TYPES = ['Routine', 'Medical', 'Therapy', 'Social', 'Other'] as const
-import Modal from '@/components/Modal'
+
+/** Order used in Add/Edit Visit → ADLs tab when ADL plan uses specific times (morning…night). */
+const ADL_VISIT_TIME_SLOTS = [
+  { key: 'morning' as const, label: 'Morning' },
+  { key: 'afternoon' as const, label: 'Afternoon' },
+  { key: 'evening' as const, label: 'Evening' },
+  { key: 'night' as const, label: 'Night' },
+]
+
+function scheduleHasAdlSlot(
+  schedule: PatientAdlDaySchedule | undefined,
+  slotKey: (typeof ADL_VISIT_TIME_SLOTS)[number]['key']
+): boolean {
+  if (!schedule || schedule.schedule_type !== 'specific_times') return false
+  switch (slotKey) {
+    case 'morning':
+      return !!schedule.slot_morning
+    case 'afternoon':
+      return !!schedule.slot_afternoon
+    case 'evening':
+      return !!schedule.slot_evening
+    case 'night':
+      return !!schedule.slot_night
+    default:
+      return false
+  }
+}
+
+/** Stored in schedules.adl_codes so the same ADL can be chosen per time slot independently. */
+const VISIT_ADL_SLOT_SEP = '::'
+
+function dayOfWeekDbFromDateStr(dateStr: string): number {
+  const d = new Date(dateStr + 'T12:00:00').getDay()
+  return d === 0 ? 7 : d
+}
+
+function encodeVisitAdlSlotKey(slotKey: string, adlCode: string): string {
+  return `${slotKey}${VISIT_ADL_SLOT_SEP}${adlCode}`
+}
+
+/** Legacy rows used plain ADL names; map to one slot key for this weekday. */
+function expandLegacyVisitAdlToken(
+  adlCode: string,
+  dayOfWeekDb: number,
+  schedules: PatientAdlDaySchedule[]
+): string {
+  const s = schedules.find((x) => x.adl_code === adlCode && x.day_of_week === dayOfWeekDb)
+  if (!s || s.schedule_type === 'never') return encodeVisitAdlSlotKey('any', adlCode)
+  if (s.schedule_type === 'always') return encodeVisitAdlSlotKey('any', adlCode)
+  if (s.schedule_type === 'as_needed') return encodeVisitAdlSlotKey('as_needed', adlCode)
+  for (const { key } of ADL_VISIT_TIME_SLOTS) {
+    if (scheduleHasAdlSlot(s, key)) return encodeVisitAdlSlotKey(key, adlCode)
+  }
+  return encodeVisitAdlSlotKey('any', adlCode)
+}
+
+function normalizeScheduleAdlToken(
+  token: string,
+  dayOfWeekDb: number,
+  schedules: PatientAdlDaySchedule[]
+): string {
+  if (token.includes(VISIT_ADL_SLOT_SEP)) return token
+  return expandLegacyVisitAdlToken(token, dayOfWeekDb, schedules)
+}
+
+function buildAssignedVisitAdlSlotSet(
+  rows: ScheduleRow[],
+  schedules: PatientAdlDaySchedule[]
+): Set<string> {
+  const set = new Set<string>()
+  for (const row of rows) {
+    const dow = dayOfWeekDbFromDateStr(row.date)
+    for (const token of row.adl_codes ?? []) {
+      set.add(normalizeScheduleAdlToken(token, dow, schedules))
+    }
+  }
+  return set
+}
 
 interface SmallClient {
   id: string
@@ -138,6 +216,8 @@ export default function ClientDetailContent({ client, allClients, representative
   const [caregiverRequirements, setCaregiverRequirements] = useState<string[]>(initialCaregiverRequirements?.skill_codes ?? [])
   const [caregiverReqsModalOpen, setCaregiverReqsModalOpen] = useState(false)
   const [caregiverReqsSelection, setCaregiverReqsSelection] = useState<string[]>([])
+  const [caregiverReqsSearch, setCaregiverReqsSearch] = useState('')
+  const [caregiverReqsDropdownOpen, setCaregiverReqsDropdownOpen] = useState<string | null>(null)
   const [isSavingCaregiverReqs, setIsSavingCaregiverReqs] = useState(false)
   const [caregiverReqsError, setCaregiverReqsError] = useState<string | null>(null)
   const [localIncidents, setLocalIncidents] = useState<PatientIncident[]>(initialIncidents ?? [])
@@ -162,9 +242,12 @@ export default function ClientDetailContent({ client, allClients, representative
   const [isSavingAddAdl, setIsSavingAddAdl] = useState(false)
   const [addAdlError, setAddAdlError] = useState<string | null>(null)
   const [selectTimeModalOpen, setSelectTimeModalOpen] = useState(false)
-  const [selectTimeAdl, setSelectTimeAdl] = useState<{ name: string; type: string } | null>(null)
+  const [selectTimeAdl, setSelectTimeAdl] = useState<{ name: string; group: string } | null>(null)
   const [selectTimeDay, setSelectTimeDay] = useState<number>(1)
   const [selectTimeDayLabel, setSelectTimeDayLabel] = useState<string>('Monday')
+  const [adlNoteModalOpen, setAdlNoteModalOpen] = useState(false)
+  const [adlNoteTarget, setAdlNoteTarget] = useState<{ name: string; group: string } | null>(null)
+  const [adlNoteDraft, setAdlNoteDraft] = useState('')
   const [selectTimeForm, setSelectTimeForm] = useState({
     timesPerDay: 1 as 1 | 2 | 3 | 4,
     morning: false,
@@ -215,7 +298,7 @@ export default function ClientDetailContent({ client, allClients, representative
   const [isSavingVisit, setIsSavingVisit] = useState(false)
   const [visitError, setVisitError] = useState<string | null>(null)
   const [manageLimitModalOpen, setManageLimitModalOpen] = useState(false)
-  const [limitForm, setLimitForm] = useState({ totalHours: '', effectiveDate: '', endDate: '', note: '' })
+  const [limitForm, setLimitForm] = useState({ totalHours: '', effectiveDate: '', note: '' })
   const [localContractedHours, setLocalContractedHours] = useState<PatientContractedHoursRow[]>(initialContractedHours ?? [])
   const [isSavingLimit, setIsSavingLimit] = useState(false)
   const [limitError, setLimitError] = useState<string | null>(null)
@@ -694,6 +777,8 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const openCaregiverReqsModal = () => {
     setCaregiverReqsSelection([...caregiverRequirements])
+    setCaregiverReqsSearch('')
+    setCaregiverReqsDropdownOpen(null)
     setCaregiverReqsError(null)
     setCaregiverReqsModalOpen(true)
   }
@@ -701,6 +786,7 @@ export default function ClientDetailContent({ client, allClients, representative
   const closeCaregiverReqsModal = () => {
     if (!isSavingCaregiverReqs) {
       setCaregiverReqsModalOpen(false)
+      setCaregiverReqsDropdownOpen(null)
       setCaregiverReqsError(null)
     }
   }
@@ -709,6 +795,15 @@ export default function ClientDetailContent({ client, allClients, representative
     setCaregiverReqsSelection((prev) =>
       prev.includes(name) ? prev.filter((s) => s !== name) : [...prev, name]
     )
+  }
+
+  const setCategorySkillSelection = (skills: { type: string; name: string }[], shouldSelect: boolean) => {
+    const names = skills.map((s) => s.name)
+    setCaregiverReqsSelection((prev) => {
+      if (shouldSelect) return Array.from(new Set([...prev, ...names]))
+      const remove = new Set(names)
+      return prev.filter((name) => !remove.has(name))
+    })
   }
 
   const handleSaveCaregiverReqs = async () => {
@@ -878,6 +973,11 @@ export default function ClientDetailContent({ client, allClients, representative
   ] as const
   const getSchedule = (adlCode: string, dayOfWeek: number) =>
     localAdlSchedules.find((s) => s.adl_code === adlCode && s.day_of_week === dayOfWeek)
+  const getAdlNote = (adlCode: string): string => {
+    const row = localAdlSchedules.find((s) => s.adl_code === adlCode && (s.adl_note ?? '').trim() !== '')
+      ?? localAdlSchedules.find((s) => s.adl_code === adlCode && s.day_of_week === 1)
+    return (row?.adl_note ?? '').trim()
+  }
 
   const openAddAdlModal = () => {
     setAddAdlSearch('')
@@ -912,7 +1012,7 @@ export default function ClientDetailContent({ client, allClients, representative
     }
   }
 
-  const openSelectTimeModal = (adl: { name: string; type: string }, dayOfWeek: number, dayLabel: string) => {
+  const openSelectTimeModal = (adl: { name: string; group: string }, dayOfWeek: number, dayLabel: string) => {
     const existing = getSchedule(adl.name, dayOfWeek)
     setSelectTimeAdl(adl)
     setSelectTimeDay(dayOfWeek)
@@ -953,6 +1053,43 @@ export default function ClientDetailContent({ client, allClients, representative
   const closeSelectTimeModal = () => {
     setSelectTimeModalOpen(false)
   }
+  const openAdlNoteModal = (adl: { name: string; group: string }) => {
+    setAdlNoteTarget(adl)
+    setAdlNoteDraft(getAdlNote(adl.name))
+    setAdlNoteModalOpen(true)
+  }
+  const closeAdlNoteModal = () => {
+    setAdlNoteModalOpen(false)
+    setAdlNoteTarget(null)
+  }
+  const applyAdlNoteToLocalSchedule = (adlCode: string, note: string) => {
+    const normalized = note.trim()
+    const now = new Date().toISOString()
+    setLocalAdlSchedules((prev) => {
+      const forAdl = prev.filter((s) => s.adl_code === adlCode)
+      if (forAdl.length === 0) return prev
+      return prev.map((s) =>
+        s.adl_code !== adlCode
+          ? s
+          : {
+              ...s,
+              adl_note: normalized || null,
+              updated_at: now,
+            }
+      )
+    })
+    setAdlNoteModalOpen(false)
+    setAdlNoteTarget(null)
+  }
+  const handleSaveAdlNote = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!adlNoteTarget) return
+    applyAdlNoteToLocalSchedule(adlNoteTarget.name, adlNoteDraft)
+  }
+  const handleRemoveAdlNote = () => {
+    if (!adlNoteTarget) return
+    applyAdlNoteToLocalSchedule(adlNoteTarget.name, '')
+  }
   /** Updates local ADL day schedule only; DB is updated on Save ADL Plan. */
   const applySelectTimeSchedule = (
     scheduleType: 'never' | 'always' | 'as_needed' | 'specific_times',
@@ -974,6 +1111,7 @@ export default function ClientDetailContent({ client, allClients, representative
       patient_id: localClient.id,
       adl_code: selectTimeAdl.name,
       day_of_week: selectTimeDay,
+      adl_note: existing?.adl_note ?? null,
       display_order: existing?.display_order ?? 0,
       created_at: existing?.created_at || now,
       updated_at: now,
@@ -1048,6 +1186,28 @@ export default function ClientDetailContent({ client, allClients, representative
     }
   }
 
+  const handleAttemptRemoveAdlFromPlan = async (adlCode: string) => {
+    setAdlPlanError(null)
+    try {
+      const supabase = createClient()
+      const { data: schedules, error } = await q.getSchedulesByPatientId(supabase, localClient.id)
+      if (error) throw error
+      const scheduleRows = (schedules ?? []) as ScheduleRow[]
+      const isUsedInSchedules = scheduleRows.some((s: ScheduleRow) =>
+        (s.adl_codes ?? []).some((token: string) => token === adlCode || token.endsWith(`::${adlCode}`))
+      )
+      if (isUsedInSchedules) {
+        setAdlPlanError('This ADL is already used in scheduled visits. Remove it from Schedule first before deleting from ADL plan.')
+        return
+      }
+      setPendingAdlDeletes((prev) => (prev.includes(adlCode) ? prev : [...prev, adlCode]))
+      setLocalAdls((prev) => prev.filter((a) => a.adl_code !== adlCode))
+      setLocalAdlSchedules((prev) => prev.filter((s) => s.adl_code !== adlCode))
+    } catch (err: unknown) {
+      setAdlPlanError(err instanceof Error ? err.message : 'Failed to validate ADL usage in schedules.')
+    }
+  }
+
   const handleSaveAdlPlan = async () => {
     setIsSavingAdlPlan(true)
     setAdlPlanError(null)
@@ -1063,6 +1223,7 @@ export default function ClientDetailContent({ client, allClients, representative
           patient_id: s.patient_id,
           adl_code: s.adl_code,
           day_of_week: s.day_of_week,
+          adl_note: s.adl_note,
           schedule_type: s.schedule_type,
           times_per_day: s.times_per_day,
           slot_morning: s.slot_morning,
@@ -1095,6 +1256,7 @@ export default function ClientDetailContent({ client, allClients, representative
       slot_afternoon: s.slot_afternoon,
       slot_evening: s.slot_evening,
       slot_night: s.slot_night,
+      adl_note: s.adl_note,
       display_order: s.display_order,
     })
     const sortSched = (a: PatientAdlDaySchedule, b: PatientAdlDaySchedule) =>
@@ -1142,6 +1304,7 @@ export default function ClientDetailContent({ client, allClients, representative
         patient_id: localClient.id,
         adl_code: adlRow.adl_code,
         day_of_week: dow,
+        adl_note: existing?.adl_note ?? null,
         display_order: displayOrder,
         created_at: existing?.created_at ?? '',
         updated_at: existing?.updated_at ?? '',
@@ -1348,6 +1511,155 @@ export default function ClientDetailContent({ client, allClients, representative
     return Math.max(0, expectedSlots - assignedSlots)
   }
 
+  /** Add/Edit Visit modal — ADLs tab: selections are per (time slot × ADL), stored as `slotKey::adlCode` in visitAdlSelected. */
+  const renderVisitAdlSelectionList = (dayOfWeekDb: number | null, assignedSlots: Set<string>) => {
+    const dow = dayOfWeekDb ?? 1
+    const candidates = localAdls.filter((a) => {
+      if (!dayOfWeekDb) return true
+      const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
+      return !!(s && s.schedule_type !== 'never')
+    })
+
+    const rowEntries: Array<{ adl: PatientAdl; rowKey: string; periodLabel: string; storageSlot: string; groupName: string }> = []
+    for (const a of candidates) {
+      const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dow)
+      const info = ADL_LISTS.find((x) => x.name === a.adl_code)
+      const groupName = info?.group ?? 'General'
+      if (s?.schedule_type === 'always') {
+        const token = encodeVisitAdlSlotKey('any', a.adl_code)
+        if (!assignedSlots.has(token)) {
+          rowEntries.push({ adl: a, rowKey: `always-${a.adl_code}`, periodLabel: 'Any time', storageSlot: 'any', groupName })
+        }
+      } else if (s?.schedule_type === 'as_needed') {
+        const token = encodeVisitAdlSlotKey('as_needed', a.adl_code)
+        if (!assignedSlots.has(token)) {
+          rowEntries.push({ adl: a, rowKey: `needed-${a.adl_code}`, periodLabel: 'As needed', storageSlot: 'as_needed', groupName })
+        }
+      } else if (s?.schedule_type === 'specific_times') {
+        for (const { key, label } of ADL_VISIT_TIME_SLOTS) {
+          if (!scheduleHasAdlSlot(s, key)) continue
+          const token = encodeVisitAdlSlotKey(key, a.adl_code)
+          if (assignedSlots.has(token)) continue
+          rowEntries.push({ adl: a, rowKey: `${key}-${a.adl_code}`, periodLabel: label, storageSlot: key, groupName })
+        }
+      }
+    }
+
+    const periodBadgeClass =
+      'inline-flex items-center gap-0.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 border border-gray-200/80'
+
+    const renderRow = (a: PatientAdl, rowKey: string, periodBadges: string[], storageSlot: string) => {
+      const info = ADL_LISTS.find((x) => x.name === a.adl_code) ?? { name: a.adl_code, group: 'General' }
+      const token = encodeVisitAdlSlotKey(storageSlot, a.adl_code)
+      const isChecked = visitAdlSelected.has(token)
+      return (
+        <label
+          key={rowKey}
+          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
+        >
+          <input
+            type="checkbox"
+            checked={isChecked}
+            onChange={(e) => {
+              setVisitAdlSelected((prev) => {
+                const next = new Set(prev)
+                if (e.target.checked) next.add(token)
+                else next.delete(token)
+                return next
+              })
+            }}
+            className="mt-1 rounded border-gray-300"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-gray-900">{info.name}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{info.group}</div>
+            <div className="flex flex-wrap gap-1 mt-1.5 items-center">
+              <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs text-gray-600 border border-gray-100 ${info.group === 'ADL' ? 'bg-blue-500 text-white' : 'bg-red-500 text-white'}`}>
+                {info.group}
+              </span>
+              {periodBadges.map((b) => (
+                <span key={b} className={periodBadgeClass}>
+                  <Clock className="w-3 h-3 shrink-0 opacity-70" aria-hidden />
+                  {b}
+                </span>
+              ))}
+            </div>
+          </div>
+        </label>
+      )
+    }
+
+    if (rowEntries.length === 0) {
+      return (
+        <p className="text-sm text-gray-500 py-4 text-center">
+          No ADLs available for this day of the week. Add ADLs in the ADLs tab and set them for this day, or all are already assigned to visits on this date.
+        </p>
+      )
+    }
+
+    return (
+      <div className="space-y-4">
+        {(() => {
+          const grouped = rowEntries.reduce<Record<string, typeof rowEntries>>((acc, item) => {
+            if (!acc[item.groupName]) acc[item.groupName] = []
+            acc[item.groupName].push(item)
+            return acc
+          }, {})
+          const groupOrder = ['ADL', 'IADL']
+          const groups = Object.keys(grouped).sort((a, b) => {
+            const ai = groupOrder.indexOf(a.toUpperCase())
+            const bi = groupOrder.indexOf(b.toUpperCase())
+            if (ai === -1 && bi === -1) return a.localeCompare(b)
+            if (ai === -1) return 1
+            if (bi === -1) return -1
+            return ai - bi
+          })
+          return groups.map((groupName) => (
+            <div key={groupName}>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{groupName}</h4>
+              <div className="space-y-2">
+                {grouped[groupName].map((item) => renderRow(item.adl, item.rowKey, [item.periodLabel], item.storageSlot))}
+              </div>
+            </div>
+          ))
+        })()}
+      </div>
+    )
+  }
+
+  /** Pill segmented control for Details / ADLs in visit modals (matches design: grey track, white active segment). */
+  const visitModalHeaderTabs = (
+    <div className="flex w-full rounded-full bg-gray-100 p-1 gap-0.5">
+      <button
+        type="button"
+        onClick={() => setAddVisitTab('details')}
+        className={`flex-1 rounded-full py-2.5 text-sm font-medium transition-all ${
+          addVisitTab === 'details'
+            ? 'bg-white text-gray-900 border border-gray-200 shadow-sm'
+            : 'text-gray-600 hover:text-gray-800'
+        }`}
+      >
+        Details
+      </button>
+      <button
+        type="button"
+        onClick={() => setAddVisitTab('adls')}
+        className={`flex-1 rounded-full py-2.5 text-sm font-medium transition-all inline-flex items-center justify-center gap-1.5 ${
+          addVisitTab === 'adls'
+            ? 'bg-white text-gray-900 border border-gray-200 shadow-sm'
+            : 'text-gray-600 hover:text-gray-800'
+        }`}
+      >
+        ADLs & IADLs
+        {visitAdlSelected.size > 0 && (
+          <span className="rounded-full bg-green-100 text-green-800 text-xs px-1.5 py-0.5 font-semibold tabular-nums">
+            {visitAdlSelected.size}
+          </span>
+        )}
+      </button>
+    </div>
+  )
+
   const getScheduleBlockColors = (type: string | null): { bg: string; border: string; text: string } => {
     const t = (type ?? 'Routine').toLowerCase()
     if (t === 'therapy') return { bg: '#f3e8ff', border: '#ad46ff', text: '#996cbb' }
@@ -1410,7 +1722,14 @@ export default function ClientDetailContent({ client, allClients, representative
       repeatStart: schedule.repeat_start ?? schedule.date,
       repeatEnd: schedule.repeat_end ?? '',
     })
-    setVisitAdlSelected(new Set(schedule.adl_codes ?? []))
+    {
+      const dow = getDayOfWeekDb(schedule.date)
+      const next = new Set<string>()
+      for (const t of schedule.adl_codes ?? []) {
+        next.add(normalizeScheduleAdlToken(t, dow, localAdlSchedules))
+      }
+      setVisitAdlSelected(next)
+    }
     setAddVisitTab('details')
     setVisitError(null)
     setScheduleLimitWarning(null)
@@ -1426,17 +1745,42 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const openManageLimitModal = () => {
     const monday = getMonday(new Date())
-    const sunday = new Date(monday)
-    sunday.setDate(sunday.getDate() + 6)
     const mondayStr = toLocalDateString(monday)
-    const sundayStr = toLocalDateString(sunday)
-    setLimitForm({ totalHours: '', effectiveDate: mondayStr, endDate: sundayStr, note: '' })
+    setLimitForm({ totalHours: '', effectiveDate: mondayStr, note: '' })
     setLimitError(null)
     setManageLimitModalOpen(true)
   }
 
   const closeManageLimitModal = () => {
     if (!isSavingLimit) setManageLimitModalOpen(false)
+  }
+
+  const contractedHoursSortedAsc = useMemo(
+    () => [...localContractedHours].sort((a, b) => a.effective_date.localeCompare(b.effective_date)),
+    [localContractedHours]
+  )
+
+  const normalizeToWeekStart = (dateStr: string) => {
+    const d = new Date(dateStr + 'T12:00:00')
+    return toLocalDateString(getMonday(d))
+  }
+
+  const getActiveLimitForDate = (dateStr: string) => {
+    const weekStart = normalizeToWeekStart(dateStr)
+    for (let i = contractedHoursSortedAsc.length - 1; i >= 0; i--) {
+      if (contractedHoursSortedAsc[i].effective_date <= weekStart) return contractedHoursSortedAsc[i]
+    }
+    return null
+  }
+
+  const getLimitPeriodEnd = (limitId: string): string => {
+    const idx = contractedHoursSortedAsc.findIndex((l) => l.id === limitId)
+    if (idx === -1) return '9999-12-31'
+    const next = contractedHoursSortedAsc[idx + 1]
+    if (!next) return '9999-12-31'
+    const d = new Date(next.effective_date + 'T12:00:00')
+    d.setDate(d.getDate() - 1)
+    return toLocalDateString(d)
   }
 
   const handleAddVisitSubmit = async () => {
@@ -1511,48 +1855,8 @@ export default function ClientDetailContent({ client, allClients, representative
       return
     }
 
-    const toDateOnly = (d: string) => (d == null || d === '') ? '' : d.slice(0, 10)
     const minDate = datesToInsert[0]
     const maxDate = datesToInsert[datesToInsert.length - 1]
-    const limitsInRange = localContractedHours.filter((l) => {
-      const eff = toDateOnly(l.effective_date)
-      const ed = toDateOnly(l.end_date ?? '9999-12-31')
-      const overlaps = eff <= maxDate && ed >= minDate
-      return overlaps
-    })
-    if (limitsInRange.length > 0 && datesToInsert.length > 0) {
-      const supabase = createClient()
-      for (const limit of limitsInRange) {
-        const limitStart = toDateOnly(limit.effective_date)
-        const limitEnd = toDateOnly(limit.end_date ?? '9999-12-31')
-        const { data: periodSchedules } = await q.getSchedulesByPatientIdAndDateRange(
-          supabase,
-          localClient.id,
-          limitStart,
-          limitEnd
-        )
-        let existingMins = 0
-        for (const s of periodSchedules ?? []) {
-          const [sh, sm] = (s.start_time ?? '0:0').split(':').map(Number)
-          const [eh, em] = (s.end_time ?? '0:0').split(':').map(Number)
-          existingMins += (eh * 60 + em) - (sh * 60 + sm)
-        }
-        const newDatesInLimit = datesToInsert.filter(
-          (d) => d >= limitStart && d <= limitEnd
-        )
-        const totalNewMins = newMins * newDatesInLimit.length
-        const limitMins = limit.total_hours * 60
-        if (existingMins + totalNewMins > limitMins) {
-          // setScheduleLimitWarning(
-          //   `Total scheduled hours (${(existingMins / 60).toFixed(1)}h) plus new visit(s) (${(totalNewMins / 60).toFixed(1)}h) would exceed the contracted limit of ${limit.total_hours} hours for this period (${limit.effective_date} to ${limit.end_date ?? 'ongoing'}). Save is blocked.`
-          // )
-        setVisitError(
-          'Cannot save: this update would exceed the contracted hours limit for this period.'
-        )
-          return
-        }
-      }
-    }
     setScheduleLimitWarning(null)
 
     const timeToMins = (t: string) => {
@@ -1662,39 +1966,6 @@ export default function ClientDetailContent({ client, allClients, representative
     const newStartParts = visitForm.startTime.split(':').map(Number)
     const newEndParts = visitForm.endTime.split(':').map(Number)
     const newVisitMins = (newEndParts[0] * 60 + (newEndParts[1] ?? 0)) - (newStartParts[0] * 60 + (newStartParts[1] ?? 0))
-    const limit = localContractedHours.find((l) => {
-      const ed = l.end_date ?? '9999-12-31'
-      return l.effective_date <= dateToSave && ed >= dateToSave
-    })
-    if (limit) {
-      const supabase = createClient()
-      const { data: periodSchedules } = await q.getSchedulesByPatientIdAndDateRange(
-        supabase,
-        localClient.id,
-        limit.effective_date,
-        limit.end_date ?? '9999-12-31'
-      )
-      let existingMins = 0
-      let oldVisitMins = 0
-      for (const s of periodSchedules ?? []) {
-        const [sh, sm] = (s.start_time ?? '0:0').split(':').map(Number)
-        const [eh, em] = (s.end_time ?? '0:0').split(':').map(Number)
-        const dur = (eh * 60 + em) - (sh * 60 + sm)
-        existingMins += dur
-        if (s.id === editingSchedule.id) oldVisitMins = dur
-      }
-      const totalAfterUpdate = existingMins - oldVisitMins + newVisitMins
-      if (totalAfterUpdate > limit.total_hours * 60) {
-        // setScheduleLimitWarning(
-        //   `Total scheduled hours after this update (${(totalAfterUpdate / 60).toFixed(1)}h) would exceed the contracted limit of ${limit.total_hours} hours for this period. Save is blocked.`
-        // )
-        setVisitError(
-          'Cannot save: this update would exceed the contracted hours limit for this period.'
-        )
-        return
-      }
-    }
-
     setIsSavingVisit(true)
     try {
       const supabase = createClient()
@@ -1827,19 +2098,16 @@ export default function ClientDetailContent({ client, allClients, representative
       setLimitError('Effective date is required.')
       return
     }
-    if (limitForm.endDate && limitForm.endDate < limitForm.effectiveDate) {
-      setLimitError('End date must be on or after effective date.')
-      return
-    }
     setLimitError(null)
     setIsSavingLimit(true)
     try {
       const supabase = createClient()
+      const effectiveWeekStart = normalizeToWeekStart(limitForm.effectiveDate)
       const { data, error } = await q.insertPatientContractedHours(supabase, {
         patient_id: localClient.id,
         total_hours: total,
-        effective_date: limitForm.effectiveDate,
-        end_date: limitForm.endDate || null,
+        effective_date: effectiveWeekStart,
+        end_date: null,
         note: limitForm.note || null,
       })
       if (error) {
@@ -1865,13 +2133,7 @@ export default function ClientDetailContent({ client, allClients, representative
     } catch (_) {}
   }
 
-  const currentLimitForWeek = localContractedHours.find((l) => {
-    const start = scheduleWeekStartStr
-    const end = scheduleWeekEndStr
-    const eff = l.effective_date
-    const ed = l.end_date ?? '9999-12-31'
-    return eff <= end && ed >= start
-  })
+  const currentLimitForWeek = getActiveLimitForDate(scheduleWeekStartStr)
 
   const scheduledHoursForWeek = useMemo(() => {
     return weekSchedules.reduce((acc, s) => {
@@ -1881,11 +2143,16 @@ export default function ClientDetailContent({ client, allClients, representative
     }, 0)
   }, [weekSchedules])
 
-  const currentEffectiveLimit = localContractedHours.find((l) => {
-    const today = toLocalDateString(new Date())
-    const ed = l.end_date ?? '9999-12-31'
-    return l.effective_date <= today && ed >= today
-  })
+  const currentEffectiveLimit = getActiveLimitForDate(toLocalDateString(new Date()))
+  const limitHistoryRows = useMemo(
+    () =>
+      [...localContractedHours].sort((a, b) => {
+        const byEffective = b.effective_date.localeCompare(a.effective_date)
+        if (byEffective !== 0) return byEffective
+        return (b.created_at ?? '').localeCompare(a.created_at ?? '')
+      }),
+    [localContractedHours]
+  )
 
   const skillsByType = CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
     if (!acc[s.type]) acc[s.type] = []
@@ -2415,7 +2682,7 @@ export default function ClientDetailContent({ client, allClients, representative
           {activeTab === 'representatives' && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {repListError && (
-                <div className="md:col-span-2 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                <div className="md:col-span-2 p-3 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-lg text-sm">
                   {repListError}
                 </div>
               )}
@@ -2503,7 +2770,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 <h3 className="text-lg font-semibold text-gray-900 mb-1">Document Management</h3>
                 <p className="text-sm text-gray-500 mb-6">Upload and manage client documents and files. You can select multiple files at once.</p>
                 {documentUploadError && (
-                  <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                  <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-lg text-sm">
                     {documentUploadError}
                   </div>
                 )}
@@ -2691,7 +2958,7 @@ export default function ClientDetailContent({ client, allClients, representative
               </div>
 
               {incidentListError && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                <div className="p-3 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-lg text-sm">
                   {incidentListError}
                     </div>
                   )}
@@ -2767,10 +3034,32 @@ export default function ClientDetailContent({ client, allClients, representative
           {activeTab === 'schedule' && (
             <div className="w-full space-y-4">
               {/* Weekly Contracted Hours card (when limit set) or simple header + message */}
-              <div className="rounded-lg border border-gray-200 bg-blue-50/50 p-4">
+              {(() => {
+                const contracted = currentLimitForWeek ? Number(currentLimitForWeek.total_hours) : 0
+                const overBy = currentLimitForWeek ? Math.max(0, scheduledHoursForWeek - contracted) : 0
+                const remaining = currentLimitForWeek ? Math.max(0, contracted - scheduledHoursForWeek) : 0
+                const isOverLimit = currentLimitForWeek ? scheduledHoursForWeek > contracted : false
+                const isAtLimit = currentLimitForWeek ? Math.abs(scheduledHoursForWeek - contracted) < 0.0001 : false
+                const usedPct = currentLimitForWeek && contracted > 0
+                  ? Math.min(100, (scheduledHoursForWeek / contracted) * 100)
+                  : 0
+                const cardTone = isOverLimit
+                  ? 'rounded-lg border border-red-300 bg-red-50/40 p-4'
+                  : isAtLimit
+                    ? 'rounded-lg border border-amber-300 bg-amber-50/40 p-4'
+                    : 'rounded-lg border border-blue-200 bg-blue-50/50 p-4'
+                const accentBg = isOverLimit
+                  ? 'bg-red-100 text-red-500'
+                  : isAtLimit
+                    ? 'bg-amber-100 text-amber-500'
+                    : 'bg-blue-100 text-blue-500'
+                const progressBg = isOverLimit ? 'bg-red-200' : isAtLimit ? 'bg-amber-200' : 'bg-blue-200'
+                const progressFill = isOverLimit ? 'bg-red-500' : isAtLimit ? 'bg-amber-500' : 'bg-blue-500'
+                return (
+              <div className={cardTone}>
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded bg-blue-100 text-blue-600">
+                    <div className={`flex h-8 w-8 items-center justify-center rounded ${accentBg}`}>
                       <TrendingUp className="h-4 w-4" />
                     </div>
                     <div>
@@ -2792,53 +3081,67 @@ export default function ClientDetailContent({ client, allClients, representative
                 {currentLimitForWeek ? (
                   <>
                     <div className="mt-4 grid grid-cols-3 gap-3">
-                      <div className="rounded-lg border border-gray-200 bg-white p-3 text-center">
+                      <div className={`rounded-lg border p-3 text-center ${isOverLimit ? 'border-gray-200 bg-white' : 'border-gray-200 bg-white'}`}>
                         <p className="text-2xl font-bold text-gray-900">{Number(currentLimitForWeek.total_hours)}</p>
                         <p className="text-xs text-gray-500">Contracted hrs</p>
                       </div>
-                      <div className="rounded-lg border border-gray-200 bg-white p-3 text-center">
-                        <p className="text-2xl font-bold text-gray-900">{scheduledHoursForWeek.toFixed(1)}</p>
+                      <div className={`rounded-lg border p-3 text-center ${isOverLimit ? 'border-red-300 bg-red-50/40' : 'border-gray-200 bg-white'}`}>
+                        <p className={`text-2xl font-bold ${isOverLimit ? 'text-red-600' : 'text-gray-900'}`}>{scheduledHoursForWeek.toFixed(1)}</p>
                         <p className="text-xs text-gray-500">Scheduled hrs</p>
                       </div>
-                      <div className="rounded-lg border border-gray-200 bg-white p-3 text-center">
-                        <p className="text-2xl font-bold text-gray-900">
-                          {Math.max(0, Number(currentLimitForWeek.total_hours) - scheduledHoursForWeek).toFixed(1)}
+                      <div className={`rounded-lg border p-3 text-center ${isOverLimit ? 'border-red-300 bg-red-50/40' : isAtLimit ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200 bg-white'}`}>
+                        <p className={`text-2xl font-bold ${isOverLimit ? 'text-red-600' : isAtLimit ? 'text-amber-600' : 'text-gray-900'}`}>
+                          {isOverLimit ? `+${overBy.toFixed(1)}` : remaining.toFixed(1)}
                         </p>
-                        <p className="text-xs text-gray-500">Remaining hrs</p>
+                        <p className="text-xs text-gray-500">{isOverLimit ? 'Over limit' : 'Remaining hrs'}</p>
                       </div>
                     </div>
-                    {(() => {
-                      const contracted = Number(currentLimitForWeek.total_hours)
-                      const usedPct = contracted > 0 ? Math.min(100, (scheduledHoursForWeek / contracted) * 100) : 0
-                      const withinLimit = scheduledHoursForWeek <= contracted
-                      return (
-                        <div className="mt-4">
-                          <div className="flex items-center justify-between text-sm">
-                            <span className="text-gray-500">
-                              {usedPct.toFixed(0)}% of contracted hours used
-                            </span>
-                            <span className={withinLimit ? 'inline-flex items-center gap-1 font-medium text-green-600' : 'inline-flex items-center gap-1 font-medium text-amber-600'}>
-                              {withinLimit ? (
-                                <>
-                                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-green-100 text-green-600">
-                                    <Check className="h-3 w-3" />
-                                  </span>
-                                  Within limit
-                                </>
-                              ) : (
-                                <>Over limit</>
-                              )}
-                            </span>
-                          </div>
-                          <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-gray-200">
+                    <div className="mt-4">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className={isOverLimit ? 'text-red-600' : 'text-gray-500'}>
+                          {usedPct.toFixed(0)}% of contracted hours used
+                        </span>
+                        {isOverLimit ? (
+                          <span className="inline-flex items-center gap-1 font-medium text-red-600">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            Over contracted limit!
+                          </span>
+                        ) : isAtLimit ? (
+                          <span className="inline-flex items-center gap-1 font-medium text-amber-600">
+                            <AlertCircle className="h-3.5 w-3.5" />
+                            Approaching limit
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 font-medium text-green-600">
+                            <Check className="h-3.5 w-3.5" />
+                            Within limit
+                          </span>
+                        )}
+                      </div>
+                      {isOverLimit ? (
+                        <div className="mt-1.5 w-full">
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-red-200">
                             <div
-                              className="h-full rounded-full bg-blue-500 transition-all"
+                              className="h-full rounded-full bg-red-500 transition-all"
                               style={{ width: `${usedPct}%` }}
                             />
                           </div>
+                          <div className="mt-0.5 h-0.5 w-full overflow-hidden rounded-full bg-red-200">
+                            <div
+                              className="h-full rounded-full bg-red-500 transition-all"
+                              style={{ width: `${Math.min(100, usedPct * 0.67)}%` }}
+                            />
+                          </div>
                         </div>
-                      )
-                    })()}
+                      ) : (
+                        <div className={`mt-1.5 h-2 w-full overflow-hidden rounded-full ${progressBg}`}>
+                          <div
+                            className={`h-full rounded-full ${progressFill} transition-all`}
+                            style={{ width: `${usedPct}%` }}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </>
                 ) : (
                   <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
@@ -2846,6 +3149,8 @@ export default function ClientDetailContent({ client, allClients, representative
                   </div>
                 )}
               </div>
+                )
+              })()}
 
               {/* Weekly Care Schedule */}
               <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -3093,7 +3398,7 @@ export default function ClientDetailContent({ client, allClients, representative
                     Activities of Daily Living ({localAdls.length})
                   </h3>
                   <p className="text-sm text-gray-500 mt-1">Manage client care tasks and schedules.</p>
-        </div>
+                </div>
                 <button
                   type="button"
                   onClick={openAddAdlModal}
@@ -3102,12 +3407,12 @@ export default function ClientDetailContent({ client, allClients, representative
                   <Plus className="w-4 h-4" />
                   ADD ADL
                 </button>
-      </div>
+              </div>
 
               {adlPlanError && (
-                <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                <div className="p-3 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-lg text-sm">
                   {adlPlanError}
-    </div>
+                </div>
               )}
 
               <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
@@ -3136,15 +3441,42 @@ export default function ClientDetailContent({ client, allClients, representative
                       </thead>
                       <tbody className="divide-y divide-gray-200">
                         {localAdls.map((adlRow) => {
-                          const adlInfo = ADL_LISTS.find((a) => a.name === adlRow.adl_code) ?? { name: adlRow.adl_code, type: 'General' }
+                          const adlInfo = ADL_LISTS.find((a) => a.name === adlRow.adl_code) ?? { name: adlRow.adl_code, group: 'General' }
+                          const adlNote = getAdlNote(adlRow.adl_code)
                           return (
                             <tr key={adlRow.id} className="bg-white hover:bg-gray-50">
-                              <td className="px-4 py-3">
+                              <td className="px-4 py-3 w-[15rem] max-w-full">
                                 <div className="font-semibold text-gray-900">{adlInfo.name}</div>
-                                <div className="text-xs text-gray-500">{adlInfo.type}</div>
-                                <button type="button" className="text-xs text-gray-500 hover:text-blue-600 mt-0.5">
-                                  Add client note...
-                                </button>
+                                <div className={`text-xs text-gray-500 py-1 px-2 rounded-full w-[3rem] flex justify-center items-center ${adlInfo.group === 'ADL' ? 'bg-blue-500 text-white' : 'bg-red-500 text-white'}`}>{adlInfo.group}</div>
+                                <div className="mt-2">
+                                  {adlNote ? (
+                                    <div className="w-[240px] max-w-full rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex min-w-0 items-start gap-1.5">
+                                          <FileText className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" />
+                                          <p className="leading-snug break-words">{adlNote}</p>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => openAdlNoteModal(adlInfo)}
+                                          className="p-0.5 text-amber-500 hover:text-amber-700 rounded"
+                                          aria-label={`Edit note for ${adlInfo.name}`}
+                                        >
+                                          <Edit className="h-3.5 w-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => openAdlNoteModal(adlInfo)}
+                                      className="text-xs text-amber-700 hover:text-amber-900 inline-flex items-center gap-1"
+                                    >
+                                      <FileText className="h-3 w-3" />
+                                      Add client note...
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                               {ADL_DAYS.map((d) => {
                                 const s = getSchedule(adlRow.adl_code, d.value)
@@ -3152,7 +3484,7 @@ export default function ClientDetailContent({ client, allClients, representative
                                 const specificSlots = getSpecificTimesSlots(s)
                                 const type = s?.schedule_type ?? 'never'
                                 return (
-                                  <td key={d.value} className="px-2 py-3 text-center align-top">
+                                  <td key={d.value} className="px-2 py-3 text-left align-center">
                                     <button
                                       type="button"
                                       onClick={() => openSelectTimeModal(adlInfo, d.value, DAY_LABELS[d.value])}
@@ -3219,12 +3551,7 @@ export default function ClientDetailContent({ client, allClients, representative
                               <td className="px-2 py-3 text-center align-middle">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    setAdlPlanError(null)
-                                    setPendingAdlDeletes((prev) => (prev.includes(adlRow.adl_code) ? prev : [...prev, adlRow.adl_code]))
-                                    setLocalAdls((prev) => prev.filter((a) => a.adl_code !== adlRow.adl_code))
-                                    setLocalAdlSchedules((prev) => prev.filter((s) => s.adl_code !== adlRow.adl_code))
-                                  }}
+                                  onClick={() => { void handleAttemptRemoveAdlFromPlan(adlRow.adl_code) }}
                                   className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex items-center justify-center"
                                   aria-label={`Remove ${adlInfo.name}`}
                                 >
@@ -3491,44 +3818,137 @@ export default function ClientDetailContent({ client, allClients, representative
               {caregiverReqsError}
             </div>
           )}
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              value={caregiverReqsSearch}
+              onChange={(e) => setCaregiverReqsSearch(e.target.value)}
+              placeholder="Search caregiver skills..."
+              className="block w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              disabled={isSavingCaregiverReqs}
+            />
+          </div>
           <div className="max-h-[60vh] overflow-y-auto space-y-6 pr-2">
             {CAREGIVER_REQUIREMENTS_TYPE_ORDER.map((type) => {
-              const skills = skillsByType[type]
+              const skills = (skillsByType[type] ?? []).filter((s) => {
+                const q = caregiverReqsSearch.trim().toLowerCase()
+                if (!q) return true
+                return s.name.toLowerCase().includes(q) || s.type.toLowerCase().includes(q)
+              })
               if (!skills?.length) return null
+              const selectedCount = skills.filter((s) => caregiverReqsSelection.includes(s.name)).length
+              const allSelected = selectedCount > 0 && selectedCount === skills.length
               return (
                 <div key={type}>
-                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                    {type.toUpperCase()}
-                  </h4>
-                  <div className="flex flex-wrap gap-2 pl-2">
-                    {skills.map((s) => {
-                      const selected = caregiverReqsSelection.includes(s.name)
-                      const colorClass = categoryColors[type] ?? 'ring-gray-400 bg-gray-400 text-white'
-                      return (
-                        <button
-                          key={s.name}
-                          type="button"
-                          onClick={() => toggleCaregiverSkill(s.name)}
-                          className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium transition-all ${
-                            selected
-                              ? `ring-2 ${colorClass}`
-                              : 'border border-gray-300 bg-white text-gray-700 hover:border-gray-400'
-                          }`}
-                          style={{
-                            borderRadius: '9999px',
-                          }}
-                        >
-                          {selected && (
-                            <span className="w-4 h-4 rounded-full bg-white/20 flex items-center justify-center text-xs">✓</span>
-                          )}
-                          {s.name}
-                        </button>
-                      )
-                    })}
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                      {type.toUpperCase()}
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => setCategorySkillSelection(skills, !allSelected)}
+                      className="text-xs px-2 py-1 rounded border border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+                      disabled={isSavingCaregiverReqs}
+                    >
+                      {allSelected ? 'Clear All' : 'Select All'}
+                    </button>
+                  </div>
+                  <div className="pl-2 space-y-2">
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setCaregiverReqsDropdownOpen((prev) => (prev === type ? null : type))}
+                        className="w-full inline-flex items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 hover:bg-gray-50"
+                        disabled={isSavingCaregiverReqs}
+                      >
+                        <span className="font-medium">
+                          {caregiverReqsSelection.filter((n) => skills.some((s) => s.name === n)).length > 0
+                            ? `Selected (${caregiverReqsSelection.filter((n) => skills.some((s) => s.name === n)).length})`
+                            : `Select skills in ${type}...`}
+                        </span>
+                        <span className="text-gray-400">{caregiverReqsDropdownOpen === type ? '▲' : '▼'}</span>
+                      </button>
+                      {caregiverReqsDropdownOpen === type && (
+                        <div className="mt-2 rounded-lg border border-gray-200 bg-white shadow-sm max-h-56 overflow-y-auto">
+                          {skills.map((s) => {
+                            const selected = caregiverReqsSelection.includes(s.name)
+                            const colorClass = categoryColors[type] ?? 'ring-gray-400 bg-gray-400 text-white'
+                            return (
+                              <div
+                                key={s.name}
+                                className={`px-3 py-2 flex items-center justify-between gap-2 cursor-pointer hover:bg-gray-50 ${
+                                  selected ? 'bg-gray-50' : ''
+                                }`}
+                                onClick={() => {
+                                  if (!selected) toggleCaregiverSkill(s.name)
+                                }}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault()
+                                    if (!selected) toggleCaregiverSkill(s.name)
+                                  }
+                                }}
+                              >
+                                <div className="min-w-0">
+                                  <div className="text-sm font-medium text-gray-900 truncate">{s.name}</div>
+                                </div>
+                                {selected ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      toggleCaregiverSkill(s.name)
+                                    }}
+                                    aria-label={`Remove ${s.name}`}
+                                    className={`inline-flex items-center justify-center rounded-full ${colorClass} p-1`}
+                                  >
+                                    <X className="h-3.5 w-3.5 text-white" />
+                                  </button>
+                                ) : (
+                                  <span className="w-7" />
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {skills
+                        .filter((s) => caregiverReqsSelection.includes(s.name))
+                        .map((s) => {
+                          const colorClass = categoryColors[type] ?? 'ring-gray-400 bg-gray-400 text-white'
+                          return (
+                            <button
+                              key={s.name}
+                              type="button"
+                              onClick={() => toggleCaregiverSkill(s.name)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full ring-2 ${colorClass}`}
+                            >
+                              <span className="w-3.5 h-3.5 rounded-full bg-white/20 flex items-center justify-center text-[10px]">
+                                <X className="h-3 w-3 text-white" />
+                              </span>
+                              {s.name}
+                            </button>
+                          )
+                        })}
+                    </div>
                   </div>
                 </div>
               )
             })}
+            {CAREGIVER_REQUIREMENTS_TYPE_ORDER.every((type) => {
+              const q = caregiverReqsSearch.trim().toLowerCase()
+              const skills = skillsByType[type] ?? []
+              return !skills.some((s) => !q || s.name.toLowerCase().includes(q) || s.type.toLowerCase().includes(q))
+            }) && (
+              <div className="py-8 text-center text-sm text-gray-500">
+                No caregiver skills match your search.
+              </div>
+            )}
           </div>
           <div className="flex items-center justify-between pt-4 border-t border-gray-200">
             <p className="text-sm text-gray-500">
@@ -3741,47 +4161,59 @@ export default function ClientDetailContent({ client, allClients, representative
             />
           </div>
           <div className="border border-gray-200 rounded-lg max-h-64 overflow-y-auto">
-            {ADL_LISTS.filter(
-              (a) =>
-                !localAdls.some((x) => x.adl_code === a.name) &&
-                (addAdlSearch.trim() === '' ||
-                  a.name.toLowerCase().includes(addAdlSearch.toLowerCase()) ||
-                  a.type.toLowerCase().includes(addAdlSearch.toLowerCase()))
-            ).map((a) => (
-              <label
-                key={a.name}
-                className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-0"
-              >
-                <input
-                  type="checkbox"
-                  checked={addAdlSelected.has(a.name)}
-                  onChange={(e) => {
-                    setAddAdlSelected((prev) => {
-                      const next = new Set(prev)
-                      if (e.target.checked) next.add(a.name)
-                      else next.delete(a.name)
-                      return next
-                    })
-                  }}
-                  className="mt-1 rounded border-gray-300 text-gray-900 focus:ring-blue-500"
-                />
-                <div>
-                  <div className="font-medium text-gray-900">{a.name}</div>
-                  <div className="text-sm text-gray-500">{a.type}</div>
+            {(() => {
+              const query = addAdlSearch.toLowerCase().trim()
+              const available = ADL_LISTS.filter(
+                (a) =>
+                  !localAdls.some((x) => x.adl_code === a.name) &&
+                  (query === '' ||
+                    a.name.toLowerCase().includes(query) ||
+                    a.group.toLowerCase().includes(query))
+              )
+              if (available.length === 0) {
+                return (
+                  <div className="px-4 py-6 text-center text-sm text-gray-500">
+                    No ADLs to add. Already added or no match.
+                  </div>
+                )
+              }
+              const grouped = available.reduce<Record<string, typeof available>>((acc, item) => {
+                if (!acc[item.group]) acc[item.group] = []
+                acc[item.group].push(item)
+                return acc
+              }, {})
+              return Object.keys(grouped).sort().map((groupName) => (
+                <div key={groupName} className="border-b border-gray-100 last:border-0">
+                  <div className={`text-lg italic py-2 px-2 ${groupName === 'ADL' ? 'text-blue-500' : 'text-red-500'}`}>
+                    {groupName === 'ADL' ? 'ADL' : 'IADL'}
+                  </div>
+                  {grouped[groupName].map((a) => (
+                    <label
+                      key={a.name}
+                      className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer border-t border-gray-100 first:border-t-0"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={addAdlSelected.has(a.name)}
+                        onChange={(e) => {
+                          setAddAdlSelected((prev) => {
+                            const next = new Set(prev)
+                            if (e.target.checked) next.add(a.name)
+                            else next.delete(a.name)
+                            return next
+                          })
+                        }}
+                        className="mt-1 rounded border-gray-300 text-gray-900 focus:ring-blue-500"
+                      />
+                      <div className='relative w-full flex items-center'>
+                        <div className="text-lg text-gray-900 w-[80%] truncate">{a.name}</div>
+                        <div className={`absolute right-2 top-0 mt-1 text-xs text-gray-500 py-0.5 px-2 rounded-full w-[3rem] flex justify-center items-center ${a.group === 'ADL' ? 'bg-blue-500 text-white' : 'bg-red-500 text-white'}`}>{a.group}</div>
+                      </div>
+                    </label>
+                  ))}
                 </div>
-              </label>
-            ))}
-            {ADL_LISTS.filter(
-              (a) =>
-                !localAdls.some((x) => x.adl_code === a.name) &&
-                (addAdlSearch.trim() === '' ||
-                  a.name.toLowerCase().includes(addAdlSearch.toLowerCase()) ||
-                  a.type.toLowerCase().includes(addAdlSearch.toLowerCase()))
-            ).length === 0 && (
-              <div className="px-4 py-6 text-center text-sm text-gray-500">
-                No ADLs to add. Already added or no match.
-              </div>
-            )}
+              ))
+            })()}
           </div>
           {addAdlError && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
@@ -3940,38 +4372,55 @@ export default function ClientDetailContent({ client, allClients, representative
         </form>
       </Modal>
 
+      <Modal
+        isOpen={adlNoteModalOpen}
+        onClose={closeAdlNoteModal}
+        title={`Note — ${adlNoteTarget?.name ?? ''}`}
+        subtitle="Add client-specific instructions for this ADL. Caregivers will see this note during the visit."
+        size="md"
+      >
+        <form onSubmit={handleSaveAdlNote} className="space-y-4">
+          <textarea
+            value={adlNoteDraft}
+            onChange={(e) => setAdlNoteDraft(e.target.value)}
+            rows={4}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-[inset_0_1px_2px_rgba(0,0,0,0.08)] focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+            placeholder="Add note for caregivers..."
+          />
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeAdlNoteModal}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleRemoveAdlNote}
+              className="px-4 py-2 text-sm font-medium text-red-500 hover:text-red-600"
+            >
+              Remove
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800"
+            >
+              Save Note
+            </button>
+          </div>
+        </form>
+      </Modal>
+
       {/* Add Visit Modal */}
       <Modal
         isOpen={addVisitModalOpen}
         onClose={closeAddVisitModal}
         title="Add Visit"
+        subtitle={`Add a new visit for ${localClient.full_name}.`}
+        headerAccessory={visitModalHeaderTabs}
         size="lg"
       >
-        <p className="text-sm text-gray-500 -mt-2 mb-4">
-          Add a new visit for {localClient.full_name}.
-        </p>
-        <div className="flex gap-2 border-b border-gray-200 mb-4">
-          <button
-            type="button"
-            onClick={() => setAddVisitTab('details')}
-            className={`px-4 py-2 text-sm font-medium rounded-t ${addVisitTab === 'details' ? 'bg-white border border-b-0 border-gray-200 shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            Details
-          </button>
-          <button
-            type="button"
-            onClick={() => setAddVisitTab('adls')}
-            className={`px-4 py-2 text-sm font-medium rounded-t flex items-center gap-1 ${addVisitTab === 'adls' ? 'bg-white border border-b-0 border-gray-200 shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            ADLs
-            {visitAdlSelected.size > 0 && (
-              <span className="rounded-full bg-green-100 text-green-800 text-xs px-1.5 py-0.5">
-                {visitAdlSelected.size}
-              </span>
-            )}
-          </button>
-        </div>
-
         {addVisitTab === 'details' && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -4102,14 +4551,15 @@ export default function ClientDetailContent({ client, allClients, representative
                           const sun = getSundayFromMonday(mon)
                           next.repeatStart = toLocalDateString(mon)
                           next.repeatEnd = toLocalDateString(sun)
-                        } else if (v === 'monthly') {
-                          const d = new Date()
-                          const y = d.getFullYear()
-                          const m = d.getMonth()
-                          next.repeatStart = `${y}-${String(m + 1).padStart(2, '0')}-01`
-                          const lastDay = new Date(y, m + 1, 0).getDate()
-                          next.repeatEnd = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
-                        }
+                        } 
+                        // else if (v === 'monthly') {
+                        //   const d = new Date()
+                        //   const y = d.getFullYear()
+                        //   const m = d.getMonth()
+                        //   next.repeatStart = `${y}-${String(m + 1).padStart(2, '0')}-01`
+                        //   const lastDay = new Date(y, m + 1, 0).getDate()
+                        //   next.repeatEnd = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+                        // }
                         return next
                       })
                     }}
@@ -4118,7 +4568,7 @@ export default function ClientDetailContent({ client, allClients, representative
                     <option value="">Select...</option>
                     <option value="daily">Daily</option>
                     <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
+                    {/* <option value="monthly">Monthly</option> */}
                   </select>
                 </div>
                 {visitForm.repeatFrequency === 'weekly' && (
@@ -4248,84 +4698,26 @@ export default function ClientDetailContent({ client, allClients, representative
         {addVisitTab === 'adls' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="font-medium text-gray-700">Select ADL Tasks *</span>
+              <span className="font-medium text-gray-700">
+                Select ADL Tasks <span className="text-red-500">*</span>
+              </span>
               {visitAdlSelected.size > 0 && (
                 <span className="text-green-600 font-medium">✓ {visitAdlSelected.size} tasks selected</span>
               )}
             </div>
-            {(() => {
-              const visitDate = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
-              const dayOfWeekDb = visitDate
-                ? (() => {
-                    const d = new Date(visitDate + 'T12:00:00').getDay()
-                    return d === 0 ? 7 : d
-                  })()
-                : null
-              const assignedOnDate = new Set(
-                (visitDateSchedules ?? []).flatMap((s) => s.adl_codes ?? [])
-              )
-              const available = localAdls.filter((a) => {
-                if (assignedOnDate.has(a.adl_code)) return false
-                if (!dayOfWeekDb) return true
-                const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
-                return !!(s && s.schedule_type !== 'never')
-              })
-              return (
-                <div className="max-h-64 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
-                  {available.length === 0 ? (
-                    <p className="text-sm text-gray-500 py-4 text-center">
-                      No ADLs available for this day of the week. Add ADLs in the ADLs tab and set them for this day, or all are already assigned to visits on this date.
-                    </p>
-                  ) : (
-                    available.map((a) => {
-                      const info = ADL_LISTS.find((x) => x.name === a.adl_code) ?? { name: a.adl_code, type: 'General' }
-                      const schedule = localAdlSchedules.find((s) => s.adl_code === a.adl_code && s.day_of_week === (dayOfWeekDb ?? 1))
-                      const slotLabels: string[] = []
-                      if (schedule?.slot_morning) slotLabels.push('Morning')
-                      if (schedule?.slot_afternoon) slotLabels.push('Afternoon')
-                      if (schedule?.slot_evening) slotLabels.push('Evening')
-                      if (schedule?.slot_night) slotLabels.push('Night')
-                      const isChecked = visitAdlSelected.has(a.adl_code)
-                      return (
-                        <label
-                          key={a.id}
-                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={(e) => {
-                              setVisitAdlSelected((prev) => {
-                                const next = new Set(prev)
-                                if (e.target.checked) next.add(a.adl_code)
-                                else next.delete(a.adl_code)
-                                return next
-                              })
-                            }}
-                            className="mt-1 rounded border-gray-300"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="font-medium text-gray-900">{info.name}</div>
-                            <div className="text-xs text-gray-500 mt-0.5">{info.type}</div>
-                            <div className="flex gap-1 mt-1 flex-wrap">
-                              <span className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                                {info.type}
-                              </span>
-                              {slotLabels.slice(0, 2).map((l) => (
-                                <span key={l} className="inline-flex items-center gap-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                                  <Clock className="w-3 h-3" />
-                                  {l}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        </label>
-                      )
-                    })
-                  )}
-                </div>
-              )
-            })()}
+            <div className="max-h-160 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
+              {(() => {
+                const visitDate = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
+                const dayOfWeekDb = visitDate
+                  ? (() => {
+                      const d = new Date(visitDate + 'T12:00:00').getDay()
+                      return d === 0 ? 7 : d
+                    })()
+                  : null
+                const assignedSlots = buildAssignedVisitAdlSlotSet(visitDateSchedules ?? [], localAdlSchedules)
+                return renderVisitAdlSelectionList(dayOfWeekDb, assignedSlots)
+              })()}
+            </div>
             {(visitForm.isRecurring ? visitForm.repeatStart : visitForm.date) && (
               <p className="text-xs text-gray-500">
                 Only showing ADLs that are not already assigned to other visits on{' '}
@@ -4367,33 +4759,10 @@ export default function ClientDetailContent({ client, allClients, representative
         isOpen={editVisitModalOpen}
         onClose={closeEditVisitModal}
         title="Edit Visit"
+        subtitle={`Edit visit for ${localClient.full_name}.`}
+        headerAccessory={visitModalHeaderTabs}
         size="lg"
       >
-        <p className="text-sm text-gray-500 -mt-2 mb-4">
-          Edit visit for {localClient.full_name}.
-        </p>
-        <div className="flex gap-2 border-b border-gray-200 mb-4">
-          <button
-            type="button"
-            onClick={() => setAddVisitTab('details')}
-            className={`px-4 py-2 text-sm font-medium rounded-t ${addVisitTab === 'details' ? 'bg-white border border-b-0 border-gray-200 shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            Details
-          </button>
-          <button
-            type="button"
-            onClick={() => setAddVisitTab('adls')}
-            className={`px-4 py-2 text-sm font-medium rounded-t flex items-center gap-1 ${addVisitTab === 'adls' ? 'bg-white border border-b-0 border-gray-200 shadow-sm' : 'text-gray-600 hover:bg-gray-50'}`}
-          >
-            ADLs
-            {visitAdlSelected.size > 0 && (
-              <span className="rounded-full bg-green-100 text-green-800 text-xs px-1.5 py-0.5">
-                {visitAdlSelected.size}
-              </span>
-            )}
-          </button>
-        </div>
-
         {addVisitTab === 'details' && (
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -4524,14 +4893,15 @@ export default function ClientDetailContent({ client, allClients, representative
                           const sun = getSundayFromMonday(mon)
                           next.repeatStart = toLocalDateString(mon)
                           next.repeatEnd = toLocalDateString(sun)
-                        } else if (v === 'monthly') {
-                          const d = new Date()
-                          const y = d.getFullYear()
-                          const m = d.getMonth()
-                          next.repeatStart = `${y}-${String(m + 1).padStart(2, '0')}-01`
-                          const lastDay = new Date(y, m + 1, 0).getDate()
-                          next.repeatEnd = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
-                        }
+                        } 
+                        // else if (v === 'monthly') {
+                        //   const d = new Date()
+                        //   const y = d.getFullYear()
+                        //   const m = d.getMonth()
+                        //   next.repeatStart = `${y}-${String(m + 1).padStart(2, '0')}-01`
+                        //   const lastDay = new Date(y, m + 1, 0).getDate()
+                        //   next.repeatEnd = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+                        // }
                         return next
                       })
                     }}
@@ -4540,7 +4910,7 @@ export default function ClientDetailContent({ client, allClients, representative
                     <option value="">Select...</option>
                     <option value="daily">Daily</option>
                     <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
+                    {/* <option value="monthly">Monthly</option> */}
                   </select>
                 </div>
                 {visitForm.repeatFrequency === 'weekly' && (
@@ -4670,83 +5040,27 @@ export default function ClientDetailContent({ client, allClients, representative
         {addVisitTab === 'adls' && (
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm">
-              <span className="font-medium text-gray-700">Select ADL Tasks *</span>
+              <span className="font-medium text-gray-700">
+                Select ADL Tasks <span className="text-red-500">*</span>
+              </span>
               {visitAdlSelected.size > 0 && (
                 <span className="text-green-600 font-medium">✓ {visitAdlSelected.size} tasks selected</span>
               )}
             </div>
-            {(() => {
-              const visitDate = visitForm.date
-              const dayOfWeekDb = visitDate
-                ? (() => {
-                    const d = new Date(visitDate + 'T12:00:00').getDay()
-                    return d === 0 ? 7 : d
-                  })()
-                : null
-              const otherVisitsOnDate = (visitDateSchedules ?? []).filter((s) => s.id !== editingSchedule?.id)
-              const assignedOnDate = new Set(otherVisitsOnDate.flatMap((s) => s.adl_codes ?? []))
-              const available = localAdls.filter((a) => {
-                if (assignedOnDate.has(a.adl_code)) return false
-                if (!dayOfWeekDb) return true
-                const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
-                return !!(s && s.schedule_type !== 'never')
-              })
-              return (
-                <div className="max-h-64 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
-                  {available.length === 0 ? (
-                    <p className="text-sm text-gray-500 py-4 text-center">
-                      No ADLs available for this day of the week. Add ADLs in the ADLs tab and set them for this day, or all are already assigned to other visits on this date.
-                    </p>
-                  ) : (
-                    available.map((a) => {
-                      const info = ADL_LISTS.find((x) => x.name === a.adl_code) ?? { name: a.adl_code, type: 'General' }
-                      const schedule = localAdlSchedules.find((s) => s.adl_code === a.adl_code && s.day_of_week === (dayOfWeekDb ?? 1))
-                      const slotLabels: string[] = []
-                      if (schedule?.slot_morning) slotLabels.push('Morning')
-                      if (schedule?.slot_afternoon) slotLabels.push('Afternoon')
-                      if (schedule?.slot_evening) slotLabels.push('Evening')
-                      if (schedule?.slot_night) slotLabels.push('Night')
-                      const isChecked = visitAdlSelected.has(a.adl_code)
-                      return (
-                        <label
-                          key={a.id}
-                          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={(e) => {
-                              setVisitAdlSelected((prev) => {
-                                const next = new Set(prev)
-                                if (e.target.checked) next.add(a.adl_code)
-                                else next.delete(a.adl_code)
-                                return next
-                              })
-                            }}
-                            className="mt-1 rounded border-gray-300"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="font-medium text-gray-900">{info.name}</div>
-                            <div className="text-xs text-gray-500 mt-0.5">{info.type}</div>
-                            <div className="flex gap-1 mt-1 flex-wrap">
-                              <span className="inline-flex items-center rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                                {info.type}
-                              </span>
-                              {slotLabels.slice(0, 2).map((l) => (
-                                <span key={l} className="inline-flex items-center gap-0.5 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-600">
-                                  <Clock className="w-3 h-3" />
-                                  {l}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        </label>
-                      )
-                    })
-                  )}
-                </div>
-              )
-            })()}
+            <div className="max-h-160 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
+              {(() => {
+                const visitDate = visitForm.date
+                const dayOfWeekDb = visitDate
+                  ? (() => {
+                      const d = new Date(visitDate + 'T12:00:00').getDay()
+                      return d === 0 ? 7 : d
+                    })()
+                  : null
+                const otherVisitsOnDate = (visitDateSchedules ?? []).filter((s) => s.id !== editingSchedule?.id)
+                const assignedSlots = buildAssignedVisitAdlSlotSet(otherVisitsOnDate, localAdlSchedules)
+                return renderVisitAdlSelectionList(dayOfWeekDb, assignedSlots)
+              })()}
+            </div>
             {(visitForm.isRecurring ? visitForm.repeatStart : visitForm.date) && (
               <p className="text-xs text-gray-500">
                 Only showing ADLs that are not already assigned to other visits on{' '}
@@ -4819,11 +5133,11 @@ export default function ClientDetailContent({ client, allClients, representative
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-500 -mt-2">
-            Set the total contracted caregiver hours for a period (effective date to end date). You can schedule within that total for the period.
+            Set total contracted caregiver hours. The limit takes effect from the week that contains the effective date.
           </p>
           <div className="rounded-lg border border-gray-200 p-4 space-y-4">
             <h4 className="text-sm font-semibold text-gray-900">Add New Hours Limit</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Hours Per Week *</label>
                 <input
@@ -4846,16 +5160,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                   disabled={isSavingLimit}
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-                <input
-                  type="date"
-                  value={limitForm.endDate}
-                  onChange={(e) => setLimitForm((p) => ({ ...p, endDate: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  disabled={isSavingLimit}
-                />
+                <p className="mt-1 text-xs text-gray-500">This will apply from that week&apos;s Monday.</p>
               </div>
             </div>
             <div>
@@ -4891,23 +5196,24 @@ export default function ClientDetailContent({ client, allClients, representative
                   <tr>
                     <th className="text-left p-2 font-medium text-gray-700">Total hrs</th>
                     <th className="text-left p-2 font-medium text-gray-700">Effective Date</th>
-                    <th className="text-left p-2 font-medium text-gray-700">End Date</th>
                     <th className="text-left p-2 font-medium text-gray-700">Note</th>
                     <th className="text-left p-2 font-medium text-gray-700">Status</th>
                     <th className="w-10" />
                   </tr>
                 </thead>
                 <tbody>
-                  {localContractedHours.map((row) => {
-                    const today = toLocalDateString(new Date())
-                    const isCurrent = row.effective_date <= today && (row.end_date == null || row.end_date >= today)
+                  {limitHistoryRows.map((row) => {
+                    const isCurrent = currentEffectiveLimit?.id === row.id
                     return (
                       <tr key={row.id} className={isCurrent ? 'bg-blue-50' : 'bg-white'}>
                         <td className="p-2">{row.total_hours} hrs</td>
                         <td className="p-2">{formatShortDate(row.effective_date)}</td>
-                        <td className="p-2">{row.end_date ? formatShortDate(row.end_date) : '—'}</td>
                         <td className="p-2 text-gray-600">{row.note ?? '—'}</td>
-                        <td className="p-2">{isCurrent ? <span className="text-xs font-medium text-blue-600">Current</span> : '—'}</td>
+                        <td className="p-2">
+                          {isCurrent
+                            ? <span className="text-xs font-medium text-blue-600">Current</span>
+                            : <span className="text-xs font-medium text-gray-500">Inactive</span>}
+                        </td>
                         <td className="p-2">
                           <button
                             type="button"
@@ -4924,7 +5230,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 </tbody>
               </table>
             </div>
-            {localContractedHours.length === 0 && (
+            {limitHistoryRows.length === 0 && (
               <p className="text-sm text-gray-500 py-4 text-center">No limit history yet.</p>
             )}
           </div>
