@@ -139,6 +139,15 @@ export async function upsertPatientAdlDaySchedule(
     .select()
     .single()
 }
+export async function updatePatientAdlDaySchedule(
+  supabase: Supabase,
+  data: {
+    id: string
+    adl_note?: string | null
+  }
+) {
+  return supabase.from('patient_adl_day_schedule').update(data).eq('id', data.id).select().single()
+}
 
 /** Delete all day schedules for one ADL (when removing ADL from plan). Same as deleteAdl. */
 export async function deletePatientAdlDaySchedulesForAdl(

@@ -1,19 +1,19 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { MoreVertical, Eye, Edit, FileText } from 'lucide-react'
+import { MoreVertical, Eye, Pencil, Home } from 'lucide-react'
 
 interface StaffActionsDropdownProps {
   staffId: string
-  onViewDetails: () => void
-  onEdit: () => void
-  onManageLicenses: () => void
+  onViewProfile: () => void
+  onEditSkills: () => void
+  onEditHomeAddress: () => void
 }
 
 export default function StaffActionsDropdown({
-  onViewDetails,
-  onEdit,
-  onManageLicenses,
+  onViewProfile,
+  onEditSkills,
+  onEditHomeAddress,
 }: StaffActionsDropdownProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, right: 0 })
@@ -103,25 +103,25 @@ export default function StaffActionsDropdown({
           }}
         >
           <button
-            onClick={() => handleAction(onViewDetails)}
+            onClick={() => handleAction(onViewProfile)}
             className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center gap-3 transition-colors"
           >
             <Eye className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">View details</span>
+            <span className="text-sm font-medium text-gray-700">View Profile</span>
           </button>
           <button
-            onClick={() => handleAction(onEdit)}
+            onClick={() => handleAction(onEditSkills)}
             className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center gap-3 transition-colors"
           >
-            <Edit className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Edit information</span>
+            <Pencil className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">Edit Skills</span>
           </button>
           <button
-            onClick={() => handleAction(onManageLicenses)}
+            onClick={() => handleAction(onEditHomeAddress)}
             className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center gap-3 transition-colors"
           >
-            <FileText className="w-4 h-4 text-gray-500" />
-            <span className="text-sm font-medium text-gray-700">Manage Licenses</span>
+            <Home className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">Edit Home Address</span>
           </button>
         </div>
       )}

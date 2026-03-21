@@ -24,7 +24,11 @@ export default async function ClientDetailPage({
   if (profile?.role === 'expert') redirect('/pages/expert/clients')
 
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
+  
   const { data: client } = await q.getPatientByIdAndOwnerId(supabase, id, session.user.id)
+
+  
+
 
   if (!client) {
     redirect('/pages/agency/clients')

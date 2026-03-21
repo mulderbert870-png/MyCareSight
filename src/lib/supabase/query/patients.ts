@@ -11,8 +11,17 @@ export async function insertPatient(
 /** Get patients by owner_id. */
 export async function getPatientsByOwnerId(supabase: Supabase, ownerId: string) {
   return supabase
-    .from('patients')
-    .select('*')
+  .from('patients')
+  .select(`
+    *,
+    patients_representatives (
+      id,
+      name,
+      relationship,
+      phone_number,
+      email_address
+    )
+  `)
     .eq('owner_id', ownerId)
     .order('created_at', { ascending: false })
 }
@@ -84,10 +93,20 @@ export async function getPatientByIdAndOwnerId(
   ownerId: string
 ) {
   return supabase
-    .from('patients')
-    .select('*')
+  .from('patients')
+  .select(`
+    *,
+    patients_representatives (
+      id,
+      name,
+      relationship,
+      phone_number,
+      email_address
+    )
+  `)
     .eq('id', patientId)
     .eq('owner_id', ownerId)
+    
     .single()
 }
 

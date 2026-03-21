@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useTransition } from 'react'
+import { createPortal } from 'react-dom'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { 
   ArrowLeft, 
@@ -32,7 +33,9 @@ import {
   Clock,
   TrendingUp,
   X,
-  Timer
+  Timer,
+  SquareArrowOutUpRight,
+  History
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
@@ -46,8 +49,15 @@ import type { ScheduleRow } from '@/lib/supabase/query/schedules'
 import type { PatientContractedHoursRow } from '@/lib/supabase/query/patient-contracted-hours'
 import { CAREGIVER_SKILL_POINTS, ADL_LISTS } from '@/lib/constants'
 import Modal from '@/components/Modal'
+import zipcodes from 'zipcodes'
 
 const VISIT_TYPES = ['Routine', 'Medical', 'Therapy', 'Social', 'Other'] as const
+
+/** Safe filename for the browser download attribute (original name minus illegal characters). */
+function sanitizeDownloadFilename(name: string): string {
+  const base = name.trim() || 'document'
+  return base.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 255)
+}
 
 /** Order used in Add/Edit Visit → ADLs tab when ADL plan uses specific times (morning…night). */
 const ADL_VISIT_TIME_SLOTS = [
@@ -171,10 +181,15 @@ interface ClientDetailContentProps {
   contractedHours?: PatientContractedHoursRow[] | null
 }
 
-export default function ClientDetailContent({ client, allClients, representatives = [], caregiverRequirements: initialCaregiverRequirements = null, incidents: initialIncidents = [], adls: initialAdls = [], adlSchedules: initialAdlSchedules = [], staff: staffList = [], contractedHours: initialContractedHours = [] }: ClientDetailContentProps) {
+export default function ClientDetailContent({ client, allClients, representatives = [], caregiverRequirements: initialCaregiverRequirements = null, 
+  incidents: initialIncidents = [], adls: initialAdls = [], adlSchedules: initialAdlSchedules = [], staff: staffList = [], 
+  contractedHours: initialContractedHours = [] }: ClientDetailContentProps) {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const tab = searchParams.get('tab')
+  const [isClientSwitching, setIsClientSwitching] = useState(false)
   const [localClient, setLocalClient] = useState<SmallClient>(client)
-  const [activeTab, setActiveTab] = useState('overview')
+  const [activeTab, setActiveTab] = useState(tab ?? 'overview')
   const [clientStatus, setClientStatus] = useState(client.status)
   const [loginAccess, setLoginAccess] = useState(client.login_access ?? true)
   const [isEditingPersonal, setIsEditingPersonal] = useState(false)
@@ -211,6 +226,7 @@ export default function ClientDetailContent({ client, allClients, representative
   const [documentUploadError, setDocumentUploadError] = useState<string | null>(null)
   const [isUploadingDocument, setIsUploadingDocument] = useState(false)
   const [isDeletingDocId, setIsDeletingDocId] = useState<string | null>(null)
+  const [downloadingDocId, setDownloadingDocId] = useState<string | null>(null)
   const documentFileInputRef = useRef<HTMLInputElement>(null)
   const primaryDiagnosisInputRef = useRef<HTMLInputElement>(null)
   const [caregiverRequirements, setCaregiverRequirements] = useState<string[]>(initialCaregiverRequirements?.skill_codes ?? [])
@@ -234,6 +250,7 @@ export default function ClientDetailContent({ client, allClients, representative
   const [incidentFormError, setIncidentFormError] = useState<string | null>(null)
   const [incidentListError, setIncidentListError] = useState<string | null>(null)
   const [deletingIncidentId, setDeletingIncidentId] = useState<string | null>(null)
+  const [downloadingIncidentId, setDownloadingIncidentId] = useState<string | null>(null)
   const [localAdls, setLocalAdls] = useState<PatientAdl[]>(initialAdls ?? [])
   const [localAdlSchedules, setLocalAdlSchedules] = useState<PatientAdlDaySchedule[]>(initialAdlSchedules ?? [])
   const [addAdlModalOpen, setAddAdlModalOpen] = useState(false)
@@ -307,9 +324,81 @@ export default function ClientDetailContent({ client, allClients, representative
   const [editVisitModalOpen, setEditVisitModalOpen] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState<ScheduleRow | null>(null)
 
+  // Caregiver dropdown (Add/Edit Visit modal, Schedule tab).
+  const [caregiverPickerOpen, setCaregiverPickerOpen] = useState(false)
+  const [isCaregiverProfileNavPending, startCaregiverProfileNav] = useTransition()
+  const [caregiverProfileNavLoadingId, setCaregiverProfileNavLoadingId] = useState<string | null>(null)
+  const [caregiverPickerFilter, setCaregiverPickerFilter] = useState<'all' | 'available' | 'booked' | 'blocked'>('all')
+  const caregiverPickerWrapRef = useRef<HTMLDivElement | null>(null)
+  const caregiverPickerTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const caregiverPickerDropdownRef = useRef<HTMLDivElement | null>(null)
+  /** Fixed position for portaled menu (above trigger), so it can extend past the modal without clipping. */
+  const [caregiverPickerMenuFixed, setCaregiverPickerMenuFixed] = useState<{
+    left: number
+    bottom: number
+    width: number
+  } | null>(null)
+
+  useLayoutEffect(() => {
+    if (!caregiverPickerOpen) {
+      setCaregiverPickerMenuFixed(null)
+      return
+    }
+    const update = () => {
+      const btn = caregiverPickerTriggerRef.current
+      if (!btn || typeof window === 'undefined') return
+      const r = btn.getBoundingClientRect()
+      const margin = 8
+      const minMenuWidth = 400
+      let width = Math.max(r.width, minMenuWidth)
+      width = Math.min(width, window.innerWidth - margin * 2)
+      let left = r.left
+      if (left + width > window.innerWidth - margin) {
+        left = Math.max(margin, window.innerWidth - width - margin)
+      }
+      setCaregiverPickerMenuFixed({
+        left,
+        width,
+        bottom: window.innerHeight - r.top + margin,
+      })
+    }
+    update()
+    window.addEventListener('resize', update)
+    window.addEventListener('scroll', update, true)
+    return () => {
+      window.removeEventListener('resize', update)
+      window.removeEventListener('scroll', update, true)
+    }
+  }, [caregiverPickerOpen])
+
+  useEffect(() => {
+    if (!caregiverPickerOpen) return
+    const onMouseDown = (e: MouseEvent) => {
+      const t = e.target
+      if (!(t instanceof Node)) return
+      const wrap = caregiverPickerWrapRef.current
+      const menu = caregiverPickerDropdownRef.current
+      if (wrap?.contains(t) || menu?.contains(t)) return
+      setCaregiverPickerOpen(false)
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [caregiverPickerOpen])
+
+  /** Clear “opening profile” spinner when the transition ends (navigation failed, aborted, or completed). */
+  useEffect(() => {
+    if (!isCaregiverProfileNavPending) {
+      setCaregiverProfileNavLoadingId(null)
+    }
+  }, [isCaregiverProfileNavPending])
+
   // Sync local client when switching to a different client (by id)
   useEffect(() => {
     setLocalClient(client)
+  }, [client.id])
+
+  useEffect(() => {
+    setIsClientSwitching(false)
   }, [client.id])
 
   // Sync local representatives when prop changes (e.g. after router.refresh or navigation)
@@ -337,6 +426,10 @@ export default function ClientDetailContent({ client, allClients, representative
   useEffect(() => {
     setPendingAdlDeletes([])
   }, [client.id])
+
+  useEffect(() => {
+    setActiveTab(tab ?? 'overview')
+  }, [tab])
 
   const scheduleWeekEnd = new Date(scheduleWeekStart)
   scheduleWeekEnd.setDate(scheduleWeekEnd.getDate() + 6)
@@ -670,17 +763,21 @@ export default function ClientDetailContent({ client, allClients, representative
   }
 
   const handleClientChange = (clientId: string) => {
+    if (clientId === client.id) return
+    setIsClientSwitching(true)
     router.push(`/pages/agency/clients/${clientId}`)
   }
 
   const handlePrevious = () => {
-    if (previousClient) {
+    if (previousClient && previousClient.id !== client.id) {
+      setIsClientSwitching(true)
       router.push(`/pages/agency/clients/${previousClient.id}`)
     }
   }
 
   const handleNext = () => {
-    if (nextClient) {
+    if (nextClient && nextClient.id !== client.id) {
+      setIsClientSwitching(true)
       router.push(`/pages/agency/clients/${nextClient.id}`)
     }
   }
@@ -772,6 +869,34 @@ export default function ClientDetailContent({ client, allClients, representative
       setDocumentUploadError(err instanceof Error ? err.message : 'Delete failed')
     } finally {
       setIsDeletingDocId(null)
+    }
+  }
+
+  const downloadPatientDocument = async (doc: PatientDocument) => {
+    if (!doc.url) return
+    setDownloadingDocId(doc.id)
+    setDocumentUploadError(null)
+    try {
+      const res = await fetch(doc.url)
+      if (!res.ok) throw new Error(`Download failed (${res.status})`)
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = sanitizeDownloadFilename(doc.name)
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      try {
+        window.open(doc.url, '_blank', 'noopener,noreferrer')
+      } catch {
+        setDocumentUploadError('Could not download this document. Try opening it in a new tab from your browser.')
+      }
+    } finally {
+      setDownloadingDocId(null)
     }
   }
 
@@ -932,6 +1057,36 @@ export default function ClientDetailContent({ client, allClients, representative
     return publicUrl
   }
 
+  const downloadIncidentFile = async (incident: PatientIncident) => {
+    const url = getIncidentFileUrl(incident)
+    if (!url) return
+    const displayName = incident.file_name?.trim() || 'incident-report'
+    setDownloadingIncidentId(incident.id)
+    setIncidentListError(null)
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`Download failed (${res.status})`)
+      const blob = await res.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objectUrl
+      a.download = sanitizeDownloadFilename(displayName)
+      a.style.display = 'none'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objectUrl)
+    } catch {
+      try {
+        window.open(url, '_blank', 'noopener,noreferrer')
+      } catch {
+        setIncidentListError('Could not download this file. Try again or open it in a new tab.')
+      }
+    } finally {
+      setDownloadingIncidentId(null)
+    }
+  }
+
   const handleDeleteIncident = async (incident: PatientIncident) => {
     setDeletingIncidentId(incident.id)
     setIncidentListError(null)
@@ -1081,10 +1236,20 @@ export default function ClientDetailContent({ client, allClients, representative
     setAdlNoteModalOpen(false)
     setAdlNoteTarget(null)
   }
-  const handleSaveAdlNote = (e: React.FormEvent) => {
+  const handleSaveAdlNote = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!adlNoteTarget) return
+    // applyAdlNoteToLocalSchedule(adlNoteTarget.name, adlNoteDraft)
+    const id = localAdlSchedules.find((s) => s.adl_code === adlNoteTarget.name && s.day_of_week === selectTimeDay)?.id ?? ''
+    
     applyAdlNoteToLocalSchedule(adlNoteTarget.name, adlNoteDraft)
+    if (id === '') return
+    const supabase = createClient()
+    const { error } = await q.updatePatientAdlDaySchedule(supabase, {
+      id,
+      adl_note: adlNoteDraft,
+    })
+
   }
   const handleRemoveAdlNote = () => {
     if (!adlNoteTarget) return
@@ -1223,7 +1388,7 @@ export default function ClientDetailContent({ client, allClients, representative
           patient_id: s.patient_id,
           adl_code: s.adl_code,
           day_of_week: s.day_of_week,
-          adl_note: s.adl_note,
+          // adl_note: s.adl_note,
           schedule_type: s.schedule_type,
           times_per_day: s.times_per_day,
           slot_morning: s.slot_morning,
@@ -1660,6 +1825,310 @@ export default function ClientDetailContent({ client, allClients, representative
     </div>
   )
 
+  type CaregiverAvailabilityStatus = 'available' | 'booked' | 'blocked'
+
+  const parseTimeToMinutes = (t: string) => {
+    const [h, m] = (t ?? '0:0').split(':').map(Number)
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return null
+    return h * 60 + m
+  }
+
+  /** US ZIP: first 5 digits for `zipcodes` lookup (strips ZIP+4). */
+  const normalizeUsZipForLookup = (zip: unknown): string | null => {
+    if (zip === null || zip === undefined) return null
+    const s = String(zip).trim()
+    if (!s) return null
+    const digits = s.replace(/\D/g, '')
+    if (digits.length < 5) return null
+    return digits.slice(0, 5)
+  }
+
+  const formatDistanceMiles = (miles: number) => {
+    if (!Number.isFinite(miles)) return '—'
+    if (miles === 0) return '0 mi'
+    return `${miles} mi`
+  }
+
+  const caregiverOptions = useMemo(() => {
+    const staff = staffList ?? []
+    const requiredSkills = caregiverRequirements ?? []
+
+    const clientZip = normalizeUsZipForLookup(localClient.zip_code)
+
+    const startMins = parseTimeToMinutes(visitForm.startTime)
+    const endMins = parseTimeToMinutes(visitForm.endTime)
+    const hasTime = startMins !== null && endMins !== null && (endMins as number) > (startMins as number)
+    const excludedScheduleId = editingSchedule?.id ?? null
+
+    const options = staff.map((s) => {
+      const caregiverSkills = Array.isArray((s as any).skills) ? ((s as any).skills as string[]) : []
+
+      const requiredLen = requiredSkills.length
+      const matchCount = requiredLen === 0 ? 0 : requiredSkills.filter((sk) => caregiverSkills.includes(sk)).length
+      const skillMatchScore = requiredLen === 0 ? 1 : matchCount / requiredLen
+      const blocked: boolean = requiredLen === 0 ? false : matchCount < requiredLen
+
+      let booked = false
+      if (hasTime) {
+        booked = (visitDateSchedules ?? [])
+          .filter((v) => v.id !== excludedScheduleId)
+          .some((v) => {
+            if (!v.caregiver_id) return false
+            if (v.caregiver_id !== s.id) return false
+            const vStart = parseTimeToMinutes(v.start_time ?? '0:00')
+            const vEnd = parseTimeToMinutes(v.end_time ?? '0:00')
+            if (vStart === null || vEnd === null) return false
+            const aStart = startMins as number
+            const aEnd = endMins as number
+            return aStart < vEnd && aEnd > vStart
+          })
+      }
+
+      const staffZip = normalizeUsZipForLookup((s as any).zip_code ?? (s as any).zipCode)
+      let distanceMiles: number
+      let distanceLabel: string
+      // console.log("clientZip: ",clientZip)
+      // console.log("staffZip: ",staffZip)
+      if (clientZip && staffZip) {
+        const d = zipcodes.distance(clientZip, staffZip)
+        if (d != null && Number.isFinite(d)) {
+          distanceMiles = d
+          distanceLabel = formatDistanceMiles(d)
+        } else {
+          distanceMiles = Number.POSITIVE_INFINITY
+          distanceLabel = '—'
+        }
+      } else {
+        distanceMiles = Number.POSITIVE_INFINITY
+        distanceLabel = '—'
+      }
+
+      const status: CaregiverAvailabilityStatus = blocked ? 'blocked' : booked ? 'booked' : 'available'
+
+      return {
+        caregiver: s,
+        status,
+        distanceMiles,
+        distanceLabel,
+        skillMatchScore,
+      }
+    })
+
+    options.sort((a, b) => {
+      // Closest first, then best skill match.
+      if (a.distanceMiles !== b.distanceMiles) return a.distanceMiles - b.distanceMiles
+      return b.skillMatchScore - a.skillMatchScore
+    })
+
+    return options
+  }, [
+    staffList,
+    caregiverRequirements,
+    localClient.zip_code,
+    visitForm.startTime,
+    visitForm.endTime,
+    visitDateSchedules,
+    editingSchedule?.id,
+  ])
+
+  const renderCaregiverPicker = () => {
+    const selected = caregiverOptions.find((o) => o.caregiver.id === visitForm.caregiverId) ?? null
+    const selectedName = selected
+      ? `${selected.caregiver.first_name ?? ''} ${selected.caregiver.last_name ?? ''}`.trim()
+      : ''
+
+    const filtered = caregiverOptions.filter((o) => (caregiverPickerFilter === 'all' ? true : o.status === caregiverPickerFilter))
+
+    const pillForStatus = (status: CaregiverAvailabilityStatus) => {
+      if (status === 'available') {
+        return (
+          <span className="inline-flex items-center gap-1 border border-green-200 bg-green-50 text-green-700 rounded-md px-2 py-0.5 text-xs font-semibold">
+            <Check className="w-3 h-3" />
+            Available
+          </span>
+        )
+      }
+      if (status === 'booked') {
+        return (
+          <span className="inline-flex items-center gap-1 border border-amber-200 bg-amber-50 text-amber-700 rounded-md px-2 py-0.5 text-xs font-semibold">
+            <Clock className="w-3 h-3" />
+            Booked
+          </span>
+        )
+      }
+      return (
+        <span className="inline-flex items-center gap-1 border border-red-200 bg-red-50 text-red-700 rounded-md px-2 py-0.5 text-xs font-semibold">
+          <X className="w-3 h-3" />
+          Blocked
+        </span>
+      )
+    }
+
+    const menuPanel = (
+      <div
+        ref={caregiverPickerDropdownRef}
+        className="fixed z-[10050] bg-white border border-gray-200 rounded-xl shadow-lg overflow-x-hidden"
+        style={
+          caregiverPickerMenuFixed
+            ? {
+                left: caregiverPickerMenuFixed.left,
+                bottom: caregiverPickerMenuFixed.bottom,
+                width: caregiverPickerMenuFixed.width,
+              }
+            : undefined
+        }
+      >
+        <div className="px-4 py-2 border-b border-gray-100 bg-white">
+          <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">SORTED BY: CLOSEST - BEST SKILL MATCH</div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
+            <button
+              type="button"
+              className={`inline-flex items-center gap-2 border-0 bg-transparent p-0 ${
+                caregiverPickerFilter === 'available' ? 'font-semibold text-green-700' : 'text-green-700'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-green-500" />
+              Available
+            </button>
+            <span className="text-gray-300">|</span>
+            <button
+              type="button"
+              className={`inline-flex items-center gap-2 border-0 bg-transparent p-0 ${
+                caregiverPickerFilter === 'booked' ? 'font-semibold text-amber-700' : 'text-amber-700'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-500" />
+              Booked
+            </button>
+            <span className="text-gray-300">|</span>
+            <button
+              type="button"
+              className={`inline-flex items-center gap-2 border-0 bg-transparent p-0 ${
+                caregiverPickerFilter === 'blocked' ? 'font-semibold text-red-700' : 'text-red-700'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-red-500" />
+              Not Available
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[240px] overflow-y-auto overflow-x-hidden">
+          {filtered.length === 0 ? (
+            <div className="px-4 py-6 text-center text-sm text-gray-500">No caregivers found.</div>
+          ) : (
+            filtered.map((o, idx) => {
+              const c = o.caregiver
+              const name = `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()
+              const role = String((c as any).role ?? '')
+              const phone = String((c as any).phone ?? '')
+              const isBest = idx === 0
+
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setVisitForm((p) => ({ ...p, caregiverId: c.id }))
+                    setCaregiverPickerOpen(false)
+                  }}
+                  className={`w-full px-4 py-2 border-b border-gray-50 hover:bg-gray-50 text-left ${visitForm.caregiverId === c.id ? 'bg-blue-50/60' : 'bg-white'}`}
+                >
+                  <div className="flex items-start justify-between gap-4 min-w-0">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <div
+                        className={`w-6 h-6 rounded-full border flex items-center justify-center text-[12px] font-semibold flex-shrink-0 ${
+                          isBest ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-200 text-gray-500'
+                        }`}
+                      >
+                        {idx + 1}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="text-sm font-semibold text-gray-900 truncate">{name}</div>
+                          {isBest && (
+                            <span className="inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 flex-shrink-0">
+                              Best
+                            </span>
+                          )}
+                          {caregiverProfileNavLoadingId === c.id ? (
+                            <span
+                              className="inline-flex shrink-0"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              <Loader2
+                                className="w-4 h-4 text-blue-600 animate-spin"
+                                aria-label="Opening caregiver profile…"
+                              />
+                            </span>
+                          ) : (
+                            <SquareArrowOutUpRight
+                              className={`w-4 h-4 shrink-0 ${
+                                caregiverProfileNavLoadingId
+                                  ? 'text-gray-300 cursor-not-allowed'
+                                  : 'text-gray-400 cursor-pointer hover:text-blue-700'
+                              }`}
+                              aria-label="Open caregiver profile"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (caregiverProfileNavLoadingId) return
+                                setCaregiverPickerOpen(false)
+                                setCaregiverProfileNavLoadingId(c.id)
+                                startCaregiverProfileNav(() => {
+                                  router.push(
+                                    `/pages/agency/caregiver/${c.id}?clientId=${localClient.id}`
+                                  )
+                                })
+                              }}
+                            />
+                          )}
+                        </div>
+                        {role ? <div className="text-[11px] text-gray-500 mt-0.5 truncate">{role}</div> : null}
+                        {phone ? (
+                          <div className="flex items-center gap-1 text-[11px] text-gray-500 mt-1 truncate">
+                            <Phone className="w-3 h-3 text-gray-400 shrink-0" />
+                            <span className="truncate">{phone}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0">
+                      {pillForStatus('available')}
+                      <div className="flex items-center gap-1 text-[12px] text-gray-500 mt-2 justify-end whitespace-nowrap">
+                        <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
+                        <span>{o.distanceLabel}</span>
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              )
+            })
+          )}
+        </div>
+      </div>
+    )
+
+    return (
+      <div ref={caregiverPickerWrapRef} className="relative">
+        <button
+          ref={caregiverPickerTriggerRef}
+          type="button"
+          onClick={() => setCaregiverPickerOpen((p) => !p)}
+          className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-500"
+          disabled={isSavingVisit}
+        >
+          <span className="block truncate">{selectedName || 'Select caregiver...'}</span>
+        </button>
+
+        {caregiverPickerOpen &&
+          caregiverPickerMenuFixed &&
+          typeof document !== 'undefined' &&
+          createPortal(menuPanel, document.body)}
+      </div>
+    )
+  }
+
   const getScheduleBlockColors = (type: string | null): { bg: string; border: string; text: string } => {
     const t = (type ?? 'Routine').toLowerCase()
     if (t === 'therapy') return { bg: '#f3e8ff', border: '#ad46ff', text: '#996cbb' }
@@ -1671,6 +2140,8 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const openAddVisitModal = () => {
     const today = toLocalDateString(new Date())
+    setCaregiverPickerOpen(false)
+    setCaregiverPickerFilter('all')
     setVisitForm({
       date: today,
       startTime: '09:00',
@@ -1694,12 +2165,18 @@ export default function ClientDetailContent({ client, allClients, representative
   }
 
   const closeAddVisitModal = () => {
-    if (!isSavingVisit) setAddVisitModalOpen(false)
+    if (!isSavingVisit) {
+      setAddVisitModalOpen(false)
+      setCaregiverPickerOpen(false)
+      setCaregiverPickerFilter('all')
+    }
   }
 
   const openEditVisitModal = (schedule: ScheduleRow) => {
     const start = (schedule.start_time ?? '09:00').slice(0, 5)
     const end = (schedule.end_time ?? '10:00').slice(0, 5)
+    setCaregiverPickerOpen(false)
+    setCaregiverPickerFilter('all')
     setEditingSchedule(schedule)
     setVisitForm({
       date: schedule.date,
@@ -1740,6 +2217,8 @@ export default function ClientDetailContent({ client, allClients, representative
     if (!isSavingVisit) {
       setEditVisitModalOpen(false)
       setEditingSchedule(null)
+      setCaregiverPickerOpen(false)
+      setCaregiverPickerFilter('all')
     }
   }
 
@@ -1755,32 +2234,9 @@ export default function ClientDetailContent({ client, allClients, representative
     if (!isSavingLimit) setManageLimitModalOpen(false)
   }
 
-  const contractedHoursSortedAsc = useMemo(
-    () => [...localContractedHours].sort((a, b) => a.effective_date.localeCompare(b.effective_date)),
-    [localContractedHours]
-  )
-
   const normalizeToWeekStart = (dateStr: string) => {
     const d = new Date(dateStr + 'T12:00:00')
     return toLocalDateString(getMonday(d))
-  }
-
-  const getActiveLimitForDate = (dateStr: string) => {
-    const weekStart = normalizeToWeekStart(dateStr)
-    for (let i = contractedHoursSortedAsc.length - 1; i >= 0; i--) {
-      if (contractedHoursSortedAsc[i].effective_date <= weekStart) return contractedHoursSortedAsc[i]
-    }
-    return null
-  }
-
-  const getLimitPeriodEnd = (limitId: string): string => {
-    const idx = contractedHoursSortedAsc.findIndex((l) => l.id === limitId)
-    if (idx === -1) return '9999-12-31'
-    const next = contractedHoursSortedAsc[idx + 1]
-    if (!next) return '9999-12-31'
-    const d = new Date(next.effective_date + 'T12:00:00')
-    d.setDate(d.getDate() - 1)
-    return toLocalDateString(d)
   }
 
   const handleAddVisitSubmit = async () => {
@@ -2133,7 +2589,20 @@ export default function ClientDetailContent({ client, allClients, representative
     } catch (_) {}
   }
 
-  const currentLimitForWeek = getActiveLimitForDate(scheduleWeekStartStr)
+  /** Schedule + overview: most recently added limit (matches top row in Limit History). */
+  const latestAddedContractLimit = useMemo((): PatientContractedHoursRow | null => {
+    const rows = localContractedHours
+    if (rows.length === 0) return null
+    let best = rows[0]
+    for (let i = 1; i < rows.length; i++) {
+      const L = rows[i]
+      const cmp = (L.created_at ?? '').localeCompare(best.created_at ?? '')
+      if (cmp > 0 || (cmp === 0 && L.id.localeCompare(best.id) > 0)) best = L
+    }
+    return best
+  }, [localContractedHours])
+
+  const currentLimitForWeek = latestAddedContractLimit
 
   const scheduledHoursForWeek = useMemo(() => {
     return weekSchedules.reduce((acc, s) => {
@@ -2143,7 +2612,7 @@ export default function ClientDetailContent({ client, allClients, representative
     }, 0)
   }, [weekSchedules])
 
-  const currentEffectiveLimit = getActiveLimitForDate(toLocalDateString(new Date()))
+  const currentEffectiveLimit = latestAddedContractLimit
   const limitHistoryRows = useMemo(
     () =>
       [...localContractedHours].sort((a, b) => {
@@ -2153,6 +2622,12 @@ export default function ClientDetailContent({ client, allClients, representative
       }),
     [localContractedHours]
   )
+
+  /** Overview card: older limits (same order as history table, excluding current row). */
+  const contractedHoursPreviousRows = useMemo(() => {
+    if (!currentEffectiveLimit) return []
+    return limitHistoryRows.filter((r) => r.id !== currentEffectiveLimit.id)
+  }, [limitHistoryRows, currentEffectiveLimit])
 
   const skillsByType = CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
     if (!acc[s.type]) acc[s.type] = []
@@ -2201,20 +2676,34 @@ export default function ClientDetailContent({ client, allClients, representative
           </Link>
 
           {/* Previous/Next Navigation */}
-          <div className="flex items-center gap-2 border border-gray-300 rounded-lg">
+          <div
+            className="relative flex items-stretch gap-0 border border-gray-300 rounded-lg min-h-[42px]"
+            aria-busy={isClientSwitching}
+          >
+            {isClientSwitching ? (
+              <div
+                className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-lg bg-white/80 backdrop-blur-[1px]"
+                aria-live="polite"
+              >
+                <Loader2 className="w-5 h-5 animate-spin text-gray-700 shrink-0" aria-hidden />
+                <span className="text-sm font-medium text-gray-700">Loading client…</span>
+              </div>
+            ) : null}
             <button
+              type="button"
               onClick={handlePrevious}
-              disabled={!previousClient}
-              className="p-2 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              disabled={!previousClient || isClientSwitching}
+              className="p-2 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors rounded-l-lg"
               aria-label="Previous client"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
-            
+
             <select
               value={localClient.id}
               onChange={(e) => handleClientChange(e.target.value)}
-              className="px-4 py-2 border-0 focus:ring-0 focus:outline-none bg-transparent cursor-pointer"
+              disabled={isClientSwitching}
+              className="min-w-0 flex-1 px-4 py-2 border-0 border-l border-r border-gray-200 focus:ring-0 focus:outline-none bg-transparent cursor-pointer disabled:cursor-wait disabled:opacity-70"
             >
               {allClients.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -2224,9 +2713,10 @@ export default function ClientDetailContent({ client, allClients, representative
             </select>
 
             <button
+              type="button"
               onClick={handleNext}
-              disabled={!nextClient}
-              className="p-2 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              disabled={!nextClient || isClientSwitching}
+              className="p-2 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors rounded-r-lg"
               aria-label="Next client"
             >
               <ChevronRight className="w-5 h-5" />
@@ -2512,6 +3002,33 @@ export default function ClientDetailContent({ client, allClients, representative
                     <p className="text-xs text-gray-500 mt-1">
                       Effective {parseDateOnly(currentEffectiveLimit.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </p>
+                    {contractedHoursPreviousRows.length > 0 && (
+                      <>
+                        <div className="my-4 border-t border-gray-200" aria-hidden />
+                        <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500 mb-2.5">
+                          <History className="w-3.5 h-3.5 shrink-0 text-gray-400" aria-hidden />
+                          <span>Previous limits</span>
+                        </div>
+                        <ul className="space-y-2">
+                          {contractedHoursPreviousRows.map((row) => (
+                            <li
+                              key={row.id}
+                              className="flex items-center justify-between gap-3 text-xs text-gray-500"
+                            >
+                              <span>{row.total_hours} hrs</span>
+                              <span className="shrink-0 tabular-nums">
+                                from{' '}
+                                {parseDateOnly(row.effective_date).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                })}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -2813,15 +3330,19 @@ export default function ClientDetailContent({ client, allClients, representative
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         {doc.url && (
-                          <a
-                            href={doc.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors"
-                            aria-label="Open document"
+                          <button
+                            type="button"
+                            onClick={() => downloadPatientDocument(doc)}
+                            disabled={downloadingDocId === doc.id}
+                            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
+                            aria-label={`Download ${doc.name}`}
                           >
-                            <Download className="w-4 h-4" />
-                          </a>
+                            {downloadingDocId === doc.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Download className="w-4 h-4" />
+                            )}
+                          </button>
                         )}
                         <button
                           type="button"
@@ -3000,9 +3521,19 @@ export default function ClientDetailContent({ client, allClients, representative
                               <td className="px-4 py-3 text-gray-600">{formatIncidentUploadedAt(incident.created_at)}</td>
                               <td className="px-4 py-3 text-right">
                                 {fileUrl ? (
-                                  <a href={fileUrl} download={incident.file_name ?? undefined} className="inline-flex p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" aria-label="Download file">
-                                    <Download className="w-4 h-4" />
-                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadIncidentFile(incident)}
+                                    disabled={downloadingIncidentId === incident.id}
+                                    className="inline-flex p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors disabled:opacity-50"
+                                    aria-label={incident.file_name ? `Download ${incident.file_name}` : 'Download file'}
+                                  >
+                                    {downloadingIncidentId === incident.id ? (
+                                      <Loader2 className="w-4 h-4 animate-spin" />
+                                    ) : (
+                                      <Download className="w-4 h-4" />
+                                    )}
+                                  </button>
                                 ) : (
                                   <span className="text-gray-300">—</span>
                                 )}
@@ -4487,19 +5018,7 @@ export default function ClientDetailContent({ client, allClients, representative
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Caregiver</label>
-                <select
-                  value={visitForm.caregiverId}
-                  onChange={(e) => setVisitForm((p) => ({ ...p, caregiverId: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
-                  disabled={isSavingVisit}
-                >
-                  <option value="">Select caregiver...</option>
-                  {(staffList ?? []).map((s: StaffMember) => (
-                    <option key={s.id} value={s.id}>
-                      {s.first_name} {s.last_name}
-                    </option>
-                  ))}
-                </select>
+                {renderCaregiverPicker()}
               </div>
             </div>
             <div>
@@ -4829,19 +5348,7 @@ export default function ClientDetailContent({ client, allClients, representative
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Caregiver</label>
-                <select
-                  value={visitForm.caregiverId}
-                  onChange={(e) => setVisitForm((p) => ({ ...p, caregiverId: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
-                  disabled={isSavingVisit}
-                >
-                  <option value="">Select caregiver...</option>
-                  {(staffList ?? []).map((s: StaffMember) => (
-                    <option key={s.id} value={s.id}>
-                      {s.first_name} {s.last_name}
-                    </option>
-                  ))}
-                </select>
+                {renderCaregiverPicker()}
               </div>
             </div>
             <div>

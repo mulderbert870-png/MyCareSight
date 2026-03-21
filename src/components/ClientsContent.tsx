@@ -6,6 +6,8 @@ import { Users, CheckCircle2, FileText, Plus, Search, Eye, Loader2 } from 'lucid
 import AddNewClientModal from './AddNewClientModal'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
+import { init } from 'next/dist/compiled/webpack/webpack'
+import { arrayOutputType } from 'zod/v3'
 
 interface SmallClient {
   id: string
@@ -26,6 +28,15 @@ interface SmallClient {
   representative_2_phone: string | null
   status: 'active' | 'inactive'
   created_at: string
+  patients_representatives: Representative[]
+}
+
+interface Representative {
+  id: string
+  name: string
+  relationship: string | null
+  phone_number: string | null
+  email_address: string | null
 }
 
 interface ClientsContentProps {
@@ -41,9 +52,6 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
   const [navigatingClientId, setNavigatingClientId] = useState<string | null>(null)
 
 // Sync state with props when data refreshes
-  useEffect(() => {
-    setClients(initialClients)
-  }, [initialClients])
 
   // Calculate statistics
   const totalClients = clients.length
@@ -242,11 +250,11 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {client.representative_1_name ? (
+                      {client.patients_representatives.length > 0 ? (
                         <div>
-                          <div>{client.representative_1_name}</div>
+                          <div>{client.patients_representatives[0].name}</div>
                           <div className="text-xs text-gray-500">
-                            {client.representative_1_relationship} {client.representative_1_phone && `(${client.representative_1_phone})`}
+                            {client.patients_representatives[0].relationship} {client.patients_representatives[0].phone_number && `(${client.patients_representatives[0].phone_number})`}
                           </div>
                         </div>
                       ) : (
@@ -254,11 +262,11 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {client.representative_2_name ? (
+                      {client.patients_representatives.length > 1 ? (
                         <div>
-                          <div>{client.representative_2_name}</div>
+                          <div>{client.patients_representatives[1].name}</div>
                           <div className="text-xs text-gray-500">
-                            {client.representative_2_relationship} {client.representative_2_phone && `(${client.representative_2_phone})`}
+                            {client.patients_representatives[1].relationship} {client.patients_representatives[1].phone_number && `(${client.patients_representatives[1].phone_number})`}
                           </div>
                         </div>
                       ) : (

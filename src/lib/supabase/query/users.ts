@@ -1,4 +1,5 @@
 import type { Supabase } from '../types'
+import type { PatientDocument } from './patients'
 
 export async function updateUserProfileUpdatedAt(supabase: Supabase, userId: string) {
   return supabase.from('user_profiles').update({ updated_at: new Date().toISOString() }).eq('id', userId)
@@ -187,4 +188,22 @@ export async function getFirstAdminUserId(supabase: Supabase) {
 /** Get all staff_roles (for caregiver dashboard). */
 export async function getStaffRoles(supabase: Supabase) {
   return supabase.from('staff_roles').select('*')
+}
+
+/**
+ * Update staff_members.documents JSONB.
+ * Must use .select().single() so PostgREST returns an error when RLS blocks the update (0 rows);
+ * without SELECT, update() returns { error: null } even when nothing was saved.
+ */
+export async function updateStaffMemberDocuments(
+  supabase: Supabase,
+  staffMemberId: string,
+  documents: PatientDocument[]
+) {
+  return supabase
+    .from('staff_members')
+    .update({ documents })
+    .eq('id', staffMemberId)
+    .select('id, documents')
+    .single()
 }

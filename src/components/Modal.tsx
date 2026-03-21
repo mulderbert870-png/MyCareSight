@@ -6,7 +6,7 @@ import { X } from 'lucide-react'
 interface ModalProps {
   isOpen: boolean
   onClose: () => void
-  title: string
+  title: ReactNode
   /** Shown under the title in muted text (e.g. visit modals). */
   subtitle?: string
   /** Rendered below the subtitle — e.g. pill tab switcher in the sticky header. */
@@ -56,7 +56,7 @@ export default function Modal({ isOpen, onClose, title, subtitle, headerAccessor
       onClick={onClose}
     >
       <div
-        className={`bg-white rounded-xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-y-auto`}
+        className={`bg-white rounded-xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-y-auto overflow-x-hidden`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-10 bg-white border-b border-gray-200 rounded-t-xl">
