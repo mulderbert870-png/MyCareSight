@@ -2583,17 +2583,24 @@ export default function ClientDetailContent({ client, allClients, representative
   }, [localContractedHours])
 
   /**
-   * Schedule tab only: limit applies to the selected calendar week if its effective week (Monday)
-   * is on or before that week, and the row is still active (no end_date before week Monday).
-   * Limits with an effective date in a future week are ignored for the current view.
+   * Schedule tab: for the selected week, use the limit that actually governs that week.
+   * - If the latest-added row (Limit History "Current") applies to this week, use it — so new limits
+   *   match the modal as soon as their effective week is this week or earlier.
+   * - If the selected week is before that row's effective date, fall back to the newest limit that
+   *   does apply (by effective_date), so past weeks don't show a future-dated limit.
    */
-  const contractedHoursLimitForScheduleWeek = useMemo((): PatientContractedHoursRow | null => {
+  const limitAppliesToWeekStart = (row: PatientContractedHoursRow, weekStart: string) =>
+    row.effective_date <= weekStart && (row.end_date == null || row.end_date >= weekStart)
+
+  const currentLimitForWeek = useMemo((): PatientContractedHoursRow | null => {
     const weekStart = scheduleWeekStartStr
-    const applicable = localContractedHours.filter((row) => {
-      if (row.effective_date > weekStart) return false
-      if (row.end_date != null && row.end_date < weekStart) return false
-      return true
-    })
+    if (
+      latestAddedContractLimit &&
+      limitAppliesToWeekStart(latestAddedContractLimit, weekStart)
+    ) {
+      return latestAddedContractLimit
+    }
+    const applicable = localContractedHours.filter((row) => limitAppliesToWeekStart(row, weekStart))
     if (applicable.length === 0) return null
     let best = applicable[0]
     for (let i = 1; i < applicable.length; i++) {
@@ -2602,9 +2609,7 @@ export default function ClientDetailContent({ client, allClients, representative
       if (cmp > 0 || (cmp === 0 && L.id.localeCompare(best.id) > 0)) best = L
     }
     return best
-  }, [localContractedHours, scheduleWeekStartStr])
-
-  const currentLimitForWeek = contractedHoursLimitForScheduleWeek
+  }, [latestAddedContractLimit, localContractedHours, scheduleWeekStartStr])
 
   const scheduledHoursForWeek = useMemo(() => {
     return weekSchedules.reduce((acc, s) => {
@@ -3680,8 +3685,10 @@ export default function ClientDetailContent({ client, allClients, representative
                   <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
                     {localContractedHours.length > 0 ? (
                       <>
-                        No contracted limit applies to this calendar week. Limits only apply when their effective
-                        week is this week or earlier
+                        No limit applies to this calendar week — the selected week is before your newest
+                        limit&apos;s effective week, or older limits have ended. Use week navigation to view a
+                        week on or after the effective date, or add a limit whose effective week includes this
+                        week.
                       </>
                     ) : (
                       <>No weekly hours limit set for this client. Click &apos;Manage Limit&apos; to configure.</>
