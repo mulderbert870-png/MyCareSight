@@ -15,7 +15,7 @@ export interface PatientAdlDaySchedule {
   patient_id: string
   adl_code: string
   day_of_week: number
-  // adl_note: string | null
+  adl_note: string | null
   schedule_type: 'never' | 'always' | 'as_needed' | 'specific_times'
   times_per_day: number | null
   slot_morning: string | null
