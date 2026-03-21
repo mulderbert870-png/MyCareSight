@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -23,6 +23,12 @@ const staffMemberSchema = z.object({
 })
 
 type StaffMemberFormData = z.infer<typeof staffMemberSchema>
+
+function normalizeStaffStatus(status: string): 'active' | 'inactive' | 'pending' {
+  const s = status.toLowerCase()
+  if (s === 'active' || s === 'inactive' || s === 'pending') return s
+  return 'pending'
+}
 
 const ROLE_OPTIONS = [
   'Registered Nurse',
@@ -53,13 +59,30 @@ interface EditStaffModalProps {
   isOpen: boolean
   onClose: () => void
   staff: StaffMember
+  /** When set (e.g. from agency page), role dropdown uses these names from `staff_roles`. */
+  staffRoleNames?: string[]
   onSuccess?: () => void
 }
 
-export default function EditStaffModal({ isOpen, onClose, staff, onSuccess }: EditStaffModalProps) {
+export default function EditStaffModal({
+  isOpen,
+  onClose,
+  staff,
+  staffRoleNames,
+  onSuccess,
+}: EditStaffModalProps) {
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const roleSelectOptions = useMemo(() => {
+    const base =
+      staffRoleNames && staffRoleNames.length > 0 ? [...staffRoleNames] : [...ROLE_OPTIONS]
+    if (staff.role && !base.includes(staff.role)) {
+      return [staff.role, ...base]
+    }
+    return base
+  }, [staffRoleNames, staff.role])
 
   const {
     register,
@@ -75,7 +98,7 @@ export default function EditStaffModal({ isOpen, onClose, staff, onSuccess }: Ed
       phone: staff.phone || '',
       role: staff.role,
       job_title: staff.job_title || '',
-      status: staff.status as 'active' | 'inactive' | 'pending',
+      status: normalizeStaffStatus(staff.status),
       employee_id: staff.employee_id || '',
       start_date: staff.start_date ? staff.start_date.split('T')[0] : '',
     },
@@ -90,7 +113,7 @@ export default function EditStaffModal({ isOpen, onClose, staff, onSuccess }: Ed
         phone: staff.phone || '',
         role: staff.role,
         job_title: staff.job_title || '',
-        status: staff.status as 'active' | 'inactive' | 'pending',
+        status: normalizeStaffStatus(staff.status),
         employee_id: staff.employee_id || '',
         start_date: staff.start_date ? staff.start_date.split('T')[0] : '',
       })
@@ -234,7 +257,7 @@ export default function EditStaffModal({ isOpen, onClose, staff, onSuccess }: Ed
               disabled={isLoading}
             >
               <option value="">Select a role</option>
-              {ROLE_OPTIONS.map((role) => (
+              {roleSelectOptions.map((role) => (
                 <option key={role} value={role}>
                   {role}
                 </option>

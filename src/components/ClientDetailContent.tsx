@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useTransition } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
@@ -326,8 +326,6 @@ export default function ClientDetailContent({ client, allClients, representative
 
   // Caregiver dropdown (Add/Edit Visit modal, Schedule tab).
   const [caregiverPickerOpen, setCaregiverPickerOpen] = useState(false)
-  const [isCaregiverProfileNavPending, startCaregiverProfileNav] = useTransition()
-  const [caregiverProfileNavLoadingId, setCaregiverProfileNavLoadingId] = useState<string | null>(null)
   const [caregiverPickerFilter, setCaregiverPickerFilter] = useState<'all' | 'available' | 'booked' | 'blocked'>('all')
   const caregiverPickerWrapRef = useRef<HTMLDivElement | null>(null)
   const caregiverPickerTriggerRef = useRef<HTMLButtonElement | null>(null)
@@ -384,13 +382,6 @@ export default function ClientDetailContent({ client, allClients, representative
     document.addEventListener('mousedown', onMouseDown)
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [caregiverPickerOpen])
-
-  /** Clear “opening profile” spinner when the transition ends (navigation failed, aborted, or completed). */
-  useEffect(() => {
-    if (!isCaregiverProfileNavPending) {
-      setCaregiverProfileNavLoadingId(null)
-    }
-  }, [isCaregiverProfileNavPending])
 
   // Sync local client when switching to a different client (by id)
   useEffect(() => {
@@ -1421,7 +1412,7 @@ export default function ClientDetailContent({ client, allClients, representative
       slot_afternoon: s.slot_afternoon,
       slot_evening: s.slot_evening,
       slot_night: s.slot_night,
-      adl_note: s.adl_note,
+      // adl_note: s.adl_note,
       display_order: s.display_order,
     })
     const sortSched = (a: PatientAdlDaySchedule, b: PatientAdlDaySchedule) =>
@@ -2025,14 +2016,22 @@ export default function ClientDetailContent({ client, allClients, representative
               const isBest = idx === 0
 
               return (
-                <button
+                <div
                   key={c.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => {
                     setVisitForm((p) => ({ ...p, caregiverId: c.id }))
                     setCaregiverPickerOpen(false)
                   }}
-                  className={`w-full px-4 py-2 border-b border-gray-50 hover:bg-gray-50 text-left ${visitForm.caregiverId === c.id ? 'bg-blue-50/60' : 'bg-white'}`}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      setVisitForm((p) => ({ ...p, caregiverId: c.id }))
+                      setCaregiverPickerOpen(false)
+                    }
+                  }}
+                  className={`w-full px-4 py-2 border-b border-gray-50 hover:bg-gray-50 text-left cursor-pointer ${visitForm.caregiverId === c.id ? 'bg-blue-50/60' : 'bg-white'}`}
                 >
                   <div className="flex items-start justify-between gap-4 min-w-0">
                     <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -2051,38 +2050,19 @@ export default function ClientDetailContent({ client, allClients, representative
                               Best
                             </span>
                           )}
-                          {caregiverProfileNavLoadingId === c.id ? (
-                            <span
-                              className="inline-flex shrink-0"
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => e.stopPropagation()}
-                            >
-                              <Loader2
-                                className="w-4 h-4 text-blue-600 animate-spin"
-                                aria-label="Opening caregiver profile…"
-                              />
-                            </span>
-                          ) : (
-                            <SquareArrowOutUpRight
-                              className={`w-4 h-4 shrink-0 ${
-                                caregiverProfileNavLoadingId
-                                  ? 'text-gray-300 cursor-not-allowed'
-                                  : 'text-gray-400 cursor-pointer hover:text-blue-700'
-                              }`}
-                              aria-label="Open caregiver profile"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                if (caregiverProfileNavLoadingId) return
-                                setCaregiverPickerOpen(false)
-                                setCaregiverProfileNavLoadingId(c.id)
-                                startCaregiverProfileNav(() => {
-                                  router.push(
-                                    `/pages/agency/caregiver/${c.id}?clientId=${localClient.id}`
-                                  )
-                                })
-                              }}
-                            />
-                          )}
+                          <Link
+                            href={`/pages/agency/caregiver/${c.id}?clientId=${localClient.id}&embed=1`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex shrink-0 text-gray-400 hover:text-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+                            aria-label="Open caregiver profile in new tab"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setCaregiverPickerOpen(false)
+                            }}
+                          >
+                            <SquareArrowOutUpRight className="w-4 h-4" aria-hidden />
+                          </Link>
                         </div>
                         {role ? <div className="text-[11px] text-gray-500 mt-0.5 truncate">{role}</div> : null}
                         {phone ? (
@@ -2101,7 +2081,7 @@ export default function ClientDetailContent({ client, allClients, representative
                       </div>
                     </div>
                   </div>
-                </button>
+                </div>
               )
             })
           )}

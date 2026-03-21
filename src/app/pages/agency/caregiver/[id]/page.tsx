@@ -10,18 +10,16 @@ export default async function CaregiverProfilePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ clientId?: string }>
+  searchParams: Promise<{ clientId?: string; embed?: string }>
 }) {
   const session = await getSession()
   if (!session) redirect('/pages/auth/login')
 
   const { id: staffId } = await params
-  const { clientId } = await searchParams
+  const { clientId, embed } = await searchParams
+  const isEmbed = embed === '1' || embed === 'true'
 
   const supabase = await createClient()
-
-  const { data: profile } = await q.getUserProfileFull(supabase, session.user.id)
-  const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
 
   const { data: client } = await q.getClientByCompanyOwnerId(supabase, session.user.id)
   if (!client?.id) redirect('/pages/agency/caregiver')
@@ -47,17 +45,40 @@ export default async function CaregiverProfilePage({
     days_until_expiry: app.days_until_expiry,
   }))
 
+  const profileCard = (
+    <div className="max-w-4xl mx-auto mt-20">
+      <div
+        className={`bg-white rounded-xl shadow-md border border-gray-100 p-6 ${isEmbed ? '' : 'mt-6'}`}
+      >
+        <CaregiverProfileContent
+          staff={staff as any}
+          licenses={allStaffLicenses as any}
+          backHref={
+            isEmbed
+              ? undefined
+              : clientId
+                ? `/pages/agency/clients/${clientId}`
+                : '/pages/agency/clients'
+          }
+        />
+      </div>
+    </div>
+  )
+
+  if (isEmbed) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-4 md:p-6 print:bg-white print:p-0">
+        <div className="print:shadow-none print:rounded-none">{profileCard}</div>
+      </div>
+    )
+  }
+
+  const { data: profile } = await q.getUserProfileFull(supabase, session.user.id)
+  const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
+
   return (
     <DashboardLayout user={session.user} profile={profile} unreadNotifications={unreadNotifications || 0}>
-      <div className="max-w-3xl mx-auto">
-        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-6 mt-6">
-          <CaregiverProfileContent
-            staff={staff as any}
-            licenses={allStaffLicenses as any}
-            backHref={clientId ? `/pages/agency/clients/${clientId}` : '/pages/agency/clients'}
-          />
-        </div>
-      </div>
+      {profileCard}
     </DashboardLayout>
   )
 }

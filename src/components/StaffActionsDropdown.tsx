@@ -1,19 +1,23 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { MoreVertical, Eye, Pencil, Home } from 'lucide-react'
+import { MoreVertical, Eye, Pencil, Home, FileText, UserPen } from 'lucide-react'
 
 interface StaffActionsDropdownProps {
   staffId: string
   onViewProfile: () => void
+  onEditInformation: () => void
   onEditSkills: () => void
   onEditHomeAddress: () => void
+  onManageDocuments: () => void
 }
 
 export default function StaffActionsDropdown({
   onViewProfile,
+  onEditInformation,
   onEditSkills,
   onEditHomeAddress,
+  onManageDocuments,
 }: StaffActionsDropdownProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, right: 0 })
@@ -110,6 +114,13 @@ export default function StaffActionsDropdown({
             <span className="text-sm font-medium text-gray-700">View Profile</span>
           </button>
           <button
+            onClick={() => handleAction(onEditInformation)}
+            className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center gap-3 transition-colors"
+          >
+            <UserPen className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">Edit information</span>
+          </button>
+          <button
             onClick={() => handleAction(onEditSkills)}
             className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center gap-3 transition-colors"
           >
@@ -123,6 +134,13 @@ export default function StaffActionsDropdown({
             <Home className="w-4 h-4 text-gray-500" />
             <span className="text-sm font-medium text-gray-700">Edit Home Address</span>
           </button>
+          {/* <button
+            onClick={() => handleAction(onManageDocuments)}
+            className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center gap-3 transition-colors"
+          >
+            <FileText className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">Manage Documents</span>
+          </button> */}
         </div>
       )}
     </>
