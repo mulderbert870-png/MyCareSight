@@ -2602,7 +2602,29 @@ export default function ClientDetailContent({ client, allClients, representative
     return best
   }, [localContractedHours])
 
-  const currentLimitForWeek = latestAddedContractLimit
+  /**
+   * Schedule tab only: limit applies to the selected calendar week if its effective week (Monday)
+   * is on or before that week, and the row is still active (no end_date before week Monday).
+   * Limits with an effective date in a future week are ignored for the current view.
+   */
+  const contractedHoursLimitForScheduleWeek = useMemo((): PatientContractedHoursRow | null => {
+    const weekStart = scheduleWeekStartStr
+    const applicable = localContractedHours.filter((row) => {
+      if (row.effective_date > weekStart) return false
+      if (row.end_date != null && row.end_date < weekStart) return false
+      return true
+    })
+    if (applicable.length === 0) return null
+    let best = applicable[0]
+    for (let i = 1; i < applicable.length; i++) {
+      const L = applicable[i]
+      const cmp = L.effective_date.localeCompare(best.effective_date)
+      if (cmp > 0 || (cmp === 0 && L.id.localeCompare(best.id) > 0)) best = L
+    }
+    return best
+  }, [localContractedHours, scheduleWeekStartStr])
+
+  const currentLimitForWeek = contractedHoursLimitForScheduleWeek
 
   const scheduledHoursForWeek = useMemo(() => {
     return weekSchedules.reduce((acc, s) => {
@@ -3676,7 +3698,14 @@ export default function ClientDetailContent({ client, allClients, representative
                   </>
                 ) : (
                   <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
-                    No weekly hours limit set for this client. Click &apos;Manage Limit&apos; to configure.
+                    {localContractedHours.length > 0 ? (
+                      <>
+                        No contracted limit applies to this calendar week. Limits only apply when their effective
+                        week is this week or earlier
+                      </>
+                    ) : (
+                      <>No weekly hours limit set for this client. Click &apos;Manage Limit&apos; to configure.</>
+                    )}
                   </div>
                 )}
               </div>
