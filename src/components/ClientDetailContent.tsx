@@ -234,6 +234,8 @@ export default function ClientDetailContent({ client, allClients, representative
   const [caregiverReqsSelection, setCaregiverReqsSelection] = useState<string[]>([])
   const [caregiverReqsSearch, setCaregiverReqsSearch] = useState('')
   const [caregiverReqsDropdownOpen, setCaregiverReqsDropdownOpen] = useState<string | null>(null)
+  /** Only the category row whose dropdown is open (toggle + panel + chips). */
+  const caregiverReqsOpenCategoryRef = useRef<HTMLDivElement>(null)
   const [isSavingCaregiverReqs, setIsSavingCaregiverReqs] = useState(false)
   const [caregiverReqsError, setCaregiverReqsError] = useState<string | null>(null)
   const [localIncidents, setLocalIncidents] = useState<PatientIncident[]>(initialIncidents ?? [])
@@ -347,7 +349,7 @@ export default function ClientDetailContent({ client, allClients, representative
       if (!btn || typeof window === 'undefined') return
       const r = btn.getBoundingClientRect()
       const margin = 8
-      const minMenuWidth = 400
+      const minMenuWidth = 500
       let width = Math.max(r.width, minMenuWidth)
       width = Math.min(width, window.innerWidth - margin * 2)
       let left = r.left
@@ -382,6 +384,21 @@ export default function ClientDetailContent({ client, allClients, representative
     document.addEventListener('mousedown', onMouseDown)
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [caregiverPickerOpen])
+
+  // Required caregiver skills modal: close dropdown when clicking outside that category (not whole scroll list).
+  useEffect(() => {
+    if (!caregiverReqsModalOpen || caregiverReqsDropdownOpen == null) return
+    const onMouseDown = (e: MouseEvent) => {
+      const t = e.target
+      if (!(t instanceof Node)) return
+      const root = caregiverReqsOpenCategoryRef.current
+      if (root && !root.contains(t)) {
+        setCaregiverReqsDropdownOpen(null)
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [caregiverReqsModalOpen, caregiverReqsDropdownOpen])
 
   // Sync local client when switching to a different client (by id)
   useEffect(() => {
@@ -2098,7 +2115,7 @@ export default function ClientDetailContent({ client, allClients, representative
           className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-500"
           disabled={isSavingVisit}
         >
-          <span className="block truncate">{selectedName || 'Select caregiver...'}</span>
+          <span className="block truncate" style={{ textAlign: 'left'}}>{selectedName || 'Select caregiver...'}</span>
         </button>
 
         {caregiverPickerOpen &&
@@ -4401,8 +4418,8 @@ export default function ClientDetailContent({ client, allClients, representative
                       {allSelected ? 'Clear All' : 'Select All'}
                     </button>
                   </div>
-                  <div className="pl-2 space-y-2">
-                    <div>
+                  <div ref={caregiverReqsDropdownOpen === type ? caregiverReqsOpenCategoryRef : undefined}>
+                    <div className="pl-2 space-y-2">
                       <button
                         type="button"
                         onClick={() => setCaregiverReqsDropdownOpen((prev) => (prev === type ? null : type))}
@@ -4463,7 +4480,7 @@ export default function ClientDetailContent({ client, allClients, representative
                         </div>
                       )}
                     </div>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 mt-3 pl-2">
                       {skills
                         .filter((s) => caregiverReqsSelection.includes(s.name))
                         .map((s) => {

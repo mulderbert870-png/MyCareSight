@@ -13,10 +13,28 @@ interface ModalProps {
   headerAccessory?: ReactNode
   children: React.ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
+  /** e.g. z-[100] when stacking a second modal above another. */
+  overlayClassName?: string
+  /** Set false for a stacked inner modal so the outer modal keeps body scroll locked. */
+  lockBodyScroll?: boolean
+  /** Set false so only the top stacked modal reacts to Escape. */
+  closeOnEscape?: boolean
 }
 
-export default function Modal({ isOpen, onClose, title, subtitle, headerAccessory, children, size = 'md' }: ModalProps) {
+export default function Modal({
+  isOpen,
+  onClose,
+  title,
+  subtitle,
+  headerAccessory,
+  children,
+  size = 'md',
+  overlayClassName,
+  lockBodyScroll = true,
+  closeOnEscape = true,
+}: ModalProps) {
   useEffect(() => {
+    if (!lockBodyScroll) return
     if (isOpen) {
       document.body.style.overflow = 'hidden'
     } else {
@@ -25,7 +43,7 @@ export default function Modal({ isOpen, onClose, title, subtitle, headerAccessor
     return () => {
       document.body.style.overflow = 'unset'
     }
-  }, [isOpen])
+  }, [isOpen, lockBodyScroll])
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -33,13 +51,13 @@ export default function Modal({ isOpen, onClose, title, subtitle, headerAccessor
         onClose()
       }
     }
-    if (isOpen) {
+    if (isOpen && closeOnEscape) {
       window.addEventListener('keydown', handleEscape)
     }
     return () => {
       window.removeEventListener('keydown', handleEscape)
     }
-  }, [isOpen, onClose])
+  }, [isOpen, onClose, closeOnEscape])
 
   if (!isOpen) return null
 
@@ -52,7 +70,7 @@ export default function Modal({ isOpen, onClose, title, subtitle, headerAccessor
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      className={`fixed inset-0 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm ${overlayClassName ?? 'z-50'}`}
       onClick={onClose}
     >
       <div

@@ -47,13 +47,17 @@ export async function insertStaffMemberReturning(
   return supabase.from('staff_members').insert(data).select().single()
 }
 
-/** Update staff member by id. */
+/**
+ * Update staff member by id.
+ * Must use .select().single() so PostgREST returns an error when RLS blocks the update (0 rows);
+ * without SELECT, update() returns { error: null } even when nothing was saved.
+ */
 export async function updateStaffMember(
   supabase: Supabase,
   staffId: string,
   data: Record<string, unknown>
 ) {
-  return supabase.from('staff_members').update(data).eq('id', staffId)
+  return supabase.from('staff_members').update(data).eq('id', staffId).select('id').single()
 }
 
 /** Update user profile (full_name, role, updated_at). */

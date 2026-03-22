@@ -1,9 +1,11 @@
 'use client'
 
-import { Award, Key, MapPin } from 'lucide-react'
+import { Key, MapPin } from 'lucide-react'
 import { CAREGIVER_SKILL_POINTS } from '@/lib/constants'
 import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
+import type { PatientDocument } from '@/lib/supabase/query/patients'
+import { CaregiverDocumentsPanel } from './CaregiverDocumentsPanel'
 
 interface StaffMember {
   id: string
@@ -19,6 +21,7 @@ interface StaffMember {
   state?: string | null
   zip_code?: string | null
   skills?: string[] | null
+  documents?: PatientDocument[] | null
 }
 
 interface StaffLicense {
@@ -36,10 +39,16 @@ export default function CaregiverProfileContent({
   staff,
   licenses,
   backHref,
+  documentsPanelActive = true,
+  onDocumentsBusyChange,
 }: {
   staff: StaffMember
   licenses: StaffLicense[]
   backHref?: string
+  /** When false, document panel does not sync (e.g. parent view hidden). */
+  documentsPanelActive?: boolean
+  /** e.g. block closing a modal while upload/delete is in progress. */
+  onDocumentsBusyChange?: (busy: boolean) => void
 }) {
   const formatDate = (date: string | Date | null) => {
     if (!date) return 'N/A'
@@ -191,6 +200,15 @@ export default function CaregiverProfileContent({
           )}
         </div>
       </div>
+
+      <CaregiverDocumentsPanel
+        active={documentsPanelActive}
+        staffMemberId={staff.id}
+        caregiverName={`${staff.first_name} ${staff.last_name}`.trim()}
+        initialDocuments={staff.documents}
+        readOnly
+        onBusyChange={onDocumentsBusyChange}
+      />
     </div>
   )
 }

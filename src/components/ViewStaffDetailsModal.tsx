@@ -1,7 +1,9 @@
 'use client'
 
+import { useState } from 'react'
 import ModalWrapper from './Modal'
 import CaregiverProfileContent from './CaregiverProfileContent'
+import type { PatientDocument } from '@/lib/supabase/query/patients'
 
 interface StaffMember {
   id: string
@@ -20,6 +22,7 @@ interface StaffMember {
   zip_code?: string | null
   skills?: string[] | null
   created_at?: string
+  documents?: PatientDocument[] | null
 }
 
 interface StaffLicense {
@@ -46,15 +49,26 @@ export default function ViewStaffDetailsModal({
   staff,
   licenses,
 }: ViewStaffDetailsModalProps) {
+  const [documentsBusy, setDocumentsBusy] = useState(false)
+
+  const handleClose = () => {
+    if (!documentsBusy) onClose()
+  }
+
   return (
     <ModalWrapper
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={handleClose}
       title={`Caregiver Profile \u2014 ${staff.first_name} ${staff.last_name}`}
-      subtitle="View detailed information about this caregiver, including their certifications, skills, and contact details."
-      size="lg"
+      subtitle="View detailed information about this caregiver, including their certifications, skills, contact details, and documents."
+      size="xl"
     >
-      <CaregiverProfileContent staff={staff} licenses={licenses} />
+      <CaregiverProfileContent
+        staff={staff}
+        licenses={licenses}
+        documentsPanelActive={isOpen}
+        onDocumentsBusyChange={setDocumentsBusy}
+      />
     </ModalWrapper>
   )
 }

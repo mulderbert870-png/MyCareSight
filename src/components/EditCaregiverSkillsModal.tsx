@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Save, Search, Sparkles, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
@@ -34,6 +34,8 @@ export default function EditCaregiverSkillsModal({
   const [search, setSearch] = useState('')
   const [selectedSkills, setSelectedSkills] = useState<string[]>(caregiver.skills ?? [])
   const [openType, setOpenType] = useState<string | null>(null)
+  /** Only the category row that currently has its dropdown open (toggle + panel + chips). */
+  const openSkillCategoryRef = useRef<HTMLDivElement>(null)
 
   const skillsByType = useMemo(() => {
     return CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
@@ -121,6 +123,19 @@ export default function EditCaregiverSkillsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, caregiver.id])
 
+  // Close category dropdown when clicking outside that category (not the whole scroll list).
+  useEffect(() => {
+    if (!isOpen || !openType) return
+    const onMouseDown = (e: MouseEvent) => {
+      const root = openSkillCategoryRef.current
+      if (root && !root.contains(e.target as Node)) {
+        setOpenType(null)
+      }
+    }
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [isOpen, openType])
+
   if (!isOpen) return null
 
   return (
@@ -190,83 +205,85 @@ export default function EditCaregiverSkillsModal({
                   </button>
                 </div>
 
-                <div className="pl-2 space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => setOpenType((prev) => (prev === type ? null : type))}
-                    className="w-full inline-flex items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 hover:bg-gray-50"
-                    disabled={isSaving}
-                  >
-                    <span className="font-medium">
-                      {selectedCount > 0 ? `Selected (${selectedCount})` : `Select skills in ${type}...`}
-                    </span>
-                    <span className="text-gray-400">{openType === type ? '▲' : '▼'}</span>
-                  </button>
+                <div ref={openType === type ? openSkillCategoryRef : undefined}>
+                  <div className="pl-2 space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => setOpenType((prev) => (prev === type ? null : type))}
+                      className="w-full inline-flex items-center justify-between gap-3 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 hover:bg-gray-50"
+                      disabled={isSaving}
+                    >
+                      <span className="font-medium">
+                        {selectedCount > 0 ? `Selected (${selectedCount})` : `Select skills in ${type}...`}
+                      </span>
+                      <span className="text-gray-400">{openType === type ? '▲' : '▼'}</span>
+                    </button>
 
-                  {openType === type && (
-                    <div className="mt-2 rounded-lg border border-gray-200 bg-white shadow-sm max-h-56 overflow-y-auto">
-                      {skills.map((s) => {
-                        const selected = selectedSkills.includes(s.name)
-                        return (
-                          <div
-                            key={s.name}
-                            className={`px-3 py-2 flex items-center justify-between gap-2 cursor-pointer hover:bg-gray-50 ${
-                              selected ? 'bg-gray-50' : ''
-                            }`}
-                            onClick={() => {
-                              if (!selected) toggleSkill(s.name)
-                            }}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault()
+                    {openType === type && (
+                      <div className="mt-2 rounded-lg border border-gray-200 bg-white shadow-sm max-h-56 overflow-y-auto">
+                        {skills.map((s) => {
+                          const selected = selectedSkills.includes(s.name)
+                          return (
+                            <div
+                              key={s.name}
+                              className={`px-3 py-2 flex items-center justify-between gap-2 cursor-pointer hover:bg-gray-50 ${
+                                selected ? 'bg-gray-50' : ''
+                              }`}
+                              onClick={() => {
                                 if (!selected) toggleSkill(s.name)
-                              }
-                            }}
-                          >
-                            <div className="min-w-0">
-                              <div className="text-sm font-medium text-gray-900 truncate">{s.name}</div>
+                              }}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault()
+                                  if (!selected) toggleSkill(s.name)
+                                }
+                              }}
+                            >
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-gray-900 truncate">{s.name}</div>
+                              </div>
+
+                              {selected ? (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    toggleSkill(s.name)
+                                  }}
+                                  aria-label={`Remove ${s.name}`}
+                                  className={`inline-flex items-center justify-center rounded-full ${colorClass} p-1`}
+                                >
+                                  <X className="h-3.5 w-3.5 text-white" />
+                                </button>
+                              ) : (
+                                <span className="w-7" />
+                              )}
                             </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
 
-                            {selected ? (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  toggleSkill(s.name)
-                                }}
-                                aria-label={`Remove ${s.name}`}
-                                className={`inline-flex items-center justify-center rounded-full ${colorClass} p-1`}
-                              >
-                                <X className="h-3.5 w-3.5 text-white" />
-                              </button>
-                            ) : (
-                              <span className="w-7" />
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap gap-2 mt-3 pl-2">
-                  {skills
-                    .filter((s) => selectedSkills.includes(s.name))
-                    .map((s) => (
-                      <button
-                        key={s.name}
-                        type="button"
-                        onClick={() => toggleSkill(s.name)}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full ring-2 ${colorClass}`}
-                      >
-                        <span className="w-3.5 h-3.5 rounded-full bg-white/20 flex items-center justify-center text-[10px]">
-                          <X className="h-3 w-3 text-white" />
-                        </span>
-                        {s.name}
-                      </button>
-                    ))}
+                  <div className="flex flex-wrap gap-2 mt-3 pl-2">
+                    {skills
+                      .filter((s) => selectedSkills.includes(s.name))
+                      .map((s) => (
+                        <button
+                          key={s.name}
+                          type="button"
+                          onClick={() => toggleSkill(s.name)}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full ring-2 ${colorClass}`}
+                        >
+                          <span className="w-3.5 h-3.5 rounded-full bg-white/20 flex items-center justify-center text-[10px]">
+                            <X className="h-3 w-3 text-white" />
+                          </span>
+                          {s.name}
+                        </button>
+                      ))}
+                  </div>
                 </div>
               </div>
             )

@@ -56,9 +56,9 @@ export async function insertApplication(
   return supabase.from('applications').insert(data as Record<string, unknown>).select().single()
 }
 
-/** Insert application row with arbitrary columns (e.g. staff licenses). */
+/** Insert application row with arbitrary columns (e.g. staff licenses). Returns row so RLS failures are visible. */
 export async function insertApplicationRow(supabase: Supabase, data: Record<string, unknown>) {
-  return supabase.from('applications').insert(data)
+  return supabase.from('applications').insert(data).select('id').single()
 }
 
 /** Delete application by id. */

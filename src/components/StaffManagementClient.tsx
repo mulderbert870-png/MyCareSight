@@ -20,8 +20,8 @@ import StaffActionsDropdown from './StaffActionsDropdown'
 import ViewStaffDetailsModal from './ViewStaffDetailsModal'
 import EditCaregiverSkillsModal from './EditCaregiverSkillsModal'
 import EditCaregiverHomeAddressModal from './EditCaregiverHomeAddressModal'
-import ManageCaregiverDocumentsModal from './ManageCaregiverDocumentsModal'
 import EditStaffModal from './EditStaffModal'
+import ManageLicensesModal from './ManageLicensesModal'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
 
 interface StaffMember {
@@ -80,8 +80,8 @@ export default function StaffManagementClient({
   const [isViewProfileOpen, setIsViewProfileOpen] = useState(false)
   const [isEditSkillsOpen, setIsEditSkillsOpen] = useState(false)
   const [isEditHomeAddressOpen, setIsEditHomeAddressOpen] = useState(false)
-  const [isManageDocumentsOpen, setIsManageDocumentsOpen] = useState(false)
   const [isEditInformationOpen, setIsEditInformationOpen] = useState(false)
+  const [isManageLicensesOpen, setIsManageLicensesOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedRole, setSelectedRole] = useState('all')
   const [selectedStatus, setSelectedStatus] = useState('all')
@@ -196,9 +196,9 @@ export default function StaffManagementClient({
     setIsEditHomeAddressOpen(true)
   }
 
-  const handleManageDocuments = (staff: StaffMember) => {
+  const handleManageLicenses = (staff: StaffMember) => {
     setSelectedStaff(staff)
-    setIsManageDocumentsOpen(true)
+    setIsManageLicensesOpen(true)
   }
 
   return (
@@ -333,13 +333,13 @@ export default function StaffManagementClient({
                       scope="col"
                       className="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 whitespace-nowrap"
                     >
-                      Licenses
+                      Certifications
                     </th>
                     <th
                       scope="col"
                       className="px-5 py-3.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 whitespace-nowrap"
                     >
-                      Expiring licenses
+                      Expiring Certifications
                     </th>
                     <th
                       scope="col"
@@ -477,7 +477,7 @@ export default function StaffManagementClient({
                           <div className="flex items-center gap-2 text-gray-600">
                             <Medal className="w-4 h-4 text-gray-400 shrink-0 stroke-[1.5]" />
                             <span className="text-sm">
-                              {licenseCount} {licenseCount === 1 ? 'License' : 'Licenses'}
+                              {licenseCount} {licenseCount === 1 ? 'Certification' : 'Certifications'}
                             </span>
                           </div>
                         </td>
@@ -491,12 +491,11 @@ export default function StaffManagementClient({
                         <td className="px-5 py-4 align-middle text-right">
                           <div className="inline-flex justify-end" onClick={(e) => e.stopPropagation()}>
                             <StaffActionsDropdown
-                              staffId={staff.id}
                               onViewProfile={() => handleViewProfile(staff)}
                               onEditInformation={() => handleEditInformation(staff)}
                               onEditSkills={() => handleEditSkills(staff)}
                               onEditHomeAddress={() => handleEditHomeAddress(staff)}
-                              onManageDocuments={() => handleManageDocuments(staff)}
+                              onManageLicenses={() => handleManageLicenses(staff)}
                             />
                           </div>
                         </td>
@@ -560,14 +559,18 @@ export default function StaffManagementClient({
               setIsViewProfileOpen(false)
               setSelectedStaff(null)
             }}
-            staff={selectedStaff}
+            staff={
+              (localStaffList.find((s) => s.id === selectedStaff.id) as StaffMember) ?? selectedStaff
+            }
             licenses={licensesByStaff[selectedStaff.id] || []}
           />
 
           <EditStaffModal
             isOpen={isEditInformationOpen}
             onClose={() => setIsEditInformationOpen(false)}
-            staff={selectedStaff}
+            staff={
+              (localStaffList.find((s) => s.id === selectedStaff.id) as StaffMember) ?? selectedStaff
+            }
             staffRoleNames={staffRoleNames}
             onSuccess={() => {
               setIsEditInformationOpen(false)
@@ -602,18 +605,26 @@ export default function StaffManagementClient({
             }}
           />
 
-          <ManageCaregiverDocumentsModal
-            isOpen={isManageDocumentsOpen}
+          <ManageLicensesModal
+            isOpen={isManageLicensesOpen}
             onClose={() => {
-              setIsManageDocumentsOpen(false)
+              setIsManageLicensesOpen(false)
               setSelectedStaff(null)
             }}
-            staffMemberId={selectedStaff.id}
-            caregiverName={`${selectedStaff.first_name} ${selectedStaff.last_name}`.trim()}
-            initialDocuments={
-              staffWithExpiringLicenses.find((s) => s.id === selectedStaff.id)?.documents ??
-              selectedStaff.documents
-            }
+            staffId={selectedStaff.id}
+            staffName={`${selectedStaff.first_name} ${selectedStaff.last_name}`.trim()}
+            existingLicenses={(licensesByStaff[selectedStaff.id] || []).map((l) => ({
+              id: l.id,
+              license_type: l.license_type,
+              license_number: l.license_number,
+              state: l.state,
+              status: l.status,
+              expiry_date: l.expiry_date,
+              days_until_expiry: l.days_until_expiry,
+            }))}
+            onSuccess={() => {
+              router.refresh()
+            }}
           />
         </>
       )}

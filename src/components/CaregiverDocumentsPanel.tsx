@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import Modal from '@/components/Modal'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
@@ -12,7 +11,6 @@ import { sanitizeDownloadFilename } from '@/lib/download-filename'
 const BUCKET = 'staff-member-documents'
 const LOG = '[CaregiverDocs]'
 
-/** Set NEXT_PUBLIC_DEBUG_CAREGIVER_DOCS=true in .env.local to log in production builds while debugging. */
 function caregiverDocsDebugEnabled(): boolean {
   return (
     process.env.NODE_ENV === 'development' ||
@@ -20,10 +18,8 @@ function caregiverDocsDebugEnabled(): boolean {
   )
 }
 
-function logCaregiverDocs(phase: string, data?: Record<string, unknown>): void {
+function logCaregiverDocs(_phase: string, _data?: Record<string, unknown>): void {
   if (!caregiverDocsDebugEnabled()) return
-  // if (data !== undefined) console.log(LOG, phase, data)
-  // else console.log(LOG, phase)
 }
 
 function logCaregiverDocsError(
@@ -32,7 +28,6 @@ function logCaregiverDocsError(
   extra?: Record<string, unknown>
 ): void {
   if (!caregiverDocsDebugEnabled()) return
-  // Log `err` as a separate argument so DevTools shows PostgrestError (code, details, hint, statusCode).
   console.error(LOG, phase, extra ?? {}, err)
 }
 
@@ -57,21 +52,26 @@ function formatFileSize(bytes: number | undefined): string {
   return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${u[i]}`
 }
 
-interface ManageCaregiverDocumentsModalProps {
-  isOpen: boolean
-  onClose: () => void
+export interface CaregiverDocumentsPanelProps {
+  /** When false, panel does not reset/sync from server props. */
+  active: boolean
   staffMemberId: string
   caregiverName: string
   initialDocuments: PatientDocument[] | null | undefined
+  /** List + download only (e.g. profile view). Hides upload and delete. */
+  readOnly?: boolean
+  /** Upload or delete in progress — parent can block modal dismiss. In read-only mode, download in progress. */
+  onBusyChange?: (busy: boolean) => void
 }
 
-export default function ManageCaregiverDocumentsModal({
-  isOpen,
-  onClose,
+export function CaregiverDocumentsPanel({
+  active,
   staffMemberId,
   caregiverName,
   initialDocuments,
-}: ManageCaregiverDocumentsModalProps) {
+  readOnly = false,
+  onBusyChange,
+}: CaregiverDocumentsPanelProps) {
   const router = useRouter()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [docs, setDocs] = useState<PatientDocument[]>([])
@@ -80,22 +80,18 @@ export default function ManageCaregiverDocumentsModal({
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
 
+  const busy = readOnly ? !!downloadingId : isUploading || !!deletingId
   useEffect(() => {
-    if (!isOpen) return
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
+
+  useEffect(() => {
+    if (!active) return
     const raw = initialDocuments
     setDocs(Array.isArray(raw) ? [...raw] : [])
     setError(null)
-  }, [isOpen, staffMemberId, initialDocuments])
+  }, [active, staffMemberId, initialDocuments])
 
-  const safeClose = () => {
-    if (isUploading || deletingId) return
-    onClose()
-  }
-
-  /**
-   * Use updateStaffMemberDocuments (update + select single). Plain .update() without .select()
-   * returns error: null when RLS blocks the row — the UI looked successful but DB never changed.
-   */
   const persist = async (next: PatientDocument[]) => {
     logCaregiverDocs('persist:start', {
       staffMemberId,
@@ -144,8 +140,6 @@ export default function ManageCaregiverDocumentsModal({
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files
     if (!list?.length) return
-    // Snapshot File objects BEFORE clearing the input. Setting `value = ''` mutates/clears the same
-    // FileList on the input in many browsers, so any async gap (e.g. getUser()) would see length 0.
     const filesArray = Array.from(list)
     e.target.value = ''
     setError(null)
@@ -160,7 +154,9 @@ export default function ManageCaregiverDocumentsModal({
       existingDocCount: docs.length,
       bucket: BUCKET,
     })
-    const { data: { user } } = await supabase.auth.getUser()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
     if (!user) {
       logCaregiverDocs('handleFileChange:no auth user', {})
       setError('You must be logged in.')
@@ -203,7 +199,9 @@ export default function ManageCaregiverDocumentsModal({
         }
         uploadedPaths.push(path)
         logCaregiverDocs('storage.upload:ok', { path, uploadedSoFar: uploadedPaths.length })
-        const { data: { publicUrl } } = supabase.storage.from(BUCKET).getPublicUrl(path)
+        const {
+          data: { publicUrl },
+        } = supabase.storage.from(BUCKET).getPublicUrl(path)
         newDocs.push({
           id: docId,
           name: file.name,
@@ -221,9 +219,6 @@ export default function ManageCaregiverDocumentsModal({
         await persist(newDocs)
         logCaregiverDocs('handleFileChange:complete success', { newDocCount: newDocs.length })
       } catch (persistErr: unknown) {
-        // Do NOT delete Storage objects here. Previously we removed files on any error, so when the
-        // DB update failed (RLS, missing `documents` column, etc.) the bucket looked empty even
-        // though upload had succeeded — very confusing. Orphans can be removed from Dashboard → Storage.
         logCaregiverDocsError('handleFileChange:persist threw (files left in Storage)', persistErr, {
           uploadedPaths,
           staffMemberId,
@@ -296,62 +291,68 @@ export default function ManageCaregiverDocumentsModal({
   const count = docs.length
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={safeClose}
-      title={
-        <span className="inline-flex items-center gap-2">
-          <FileText className="w-6 h-6 text-blue-600 shrink-0" aria-hidden />
-          <span>Documents — {caregiverName}</span>
-        </span>
-      }
-      subtitle="Manage documents for this caregiver. Upload new documents or delete existing ones."
-      size="lg"
-    >
-      <div className="space-y-6">
+    <div className="space-y-4">
+      <div className="border-t border-gray-200 pt-6">
+        <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-1">
+          <FileText className="w-4 h-4 text-blue-600 shrink-0" aria-hidden />
+          Documents
+        </h3>
+        <p className="text-xs text-gray-500 mb-4">
+          {readOnly
+            ? `Files on file for ${caregiverName}. Use Edit information to add or remove documents.`
+            : `Upload or remove files for ${caregiverName}. Changes save immediately.`}
+        </p>
+      </div>
 
-        {error ? (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      {error ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      ) : null}
+
+      <div className="max-h-[min(40vh,320px)] overflow-y-auto pr-1 -mr-1">
+        {!readOnly ? (
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
+              <Upload className="w-4 h-4 text-blue-600" aria-hidden />
+              Upload New Documents
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              multiple
+              accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
+              onChange={handleFileChange}
+              disabled={isUploading}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              className="w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed overflow-x-hidden"
+            >
+              {isUploading ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Uploading…
+                </span>
+              ) : (
+                <span>
+                  <span className="font-medium text-gray-900">Choose Files</span>
+                  <span className="text-gray-500"> — No file chosen</span>
+                </span>
+              )}
+            </button>
+          </div>
         ) : null}
 
-        <div>
-          <div className="flex items-center gap-2 text-sm font-semibold text-gray-900 mb-2">
-            <Upload className="w-4 h-4 text-blue-600" aria-hidden />
-            Upload New Documents
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            multiple
-            accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg"
-            onChange={handleFileChange}
-            disabled={isUploading}
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isUploading}
-            className="w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed overflow-x-hidden"
-          >
-            {isUploading ? (
-              <span className="inline-flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Uploading…
-              </span>
-            ) : (
-              <span>
-                <span className="font-medium text-gray-900">Choose Files</span>
-                <span className="text-gray-500"> — No file chosen</span>
-              </span>
-            )}
-          </button>
-        </div>
-
-        <div>
-          <h4 className="text-sm font-semibold text-gray-700 mb-3">Uploaded Documents</h4>
+        <div className={readOnly ? '' : 'mt-4'}>
+          <h4 className="text-sm font-semibold text-gray-700 mb-3">
+            {readOnly ? 'Documents' : 'Uploaded Documents'}
+          </h4>
           {docs.length === 0 ? (
-            <p className="text-sm text-gray-500 italic">No documents uploaded yet.</p>
+            <p className="text-sm text-gray-500 italic">
+              {readOnly ? 'No documents on file.' : 'No documents uploaded yet.'}
+            </p>
           ) : (
             <ul className="space-y-2 overflow-x-hidden">
               {docs.map((doc) => (
@@ -373,7 +374,7 @@ export default function ManageCaregiverDocumentsModal({
                       <button
                         type="button"
                         onClick={() => handleDownload(doc)}
-                        disabled={downloadingId === doc.id || !!deletingId}
+                        disabled={downloadingId === doc.id || (!readOnly && !!deletingId)}
                         className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition-colors disabled:opacity-50"
                         aria-label={`Download ${doc.name}`}
                       >
@@ -384,40 +385,35 @@ export default function ManageCaregiverDocumentsModal({
                         )}
                       </button>
                     ) : null}
-                    <button
-                      type="button"
-                      onClick={() => handleDelete(doc)}
-                      disabled={deletingId === doc.id || isUploading}
-                      className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                      aria-label={`Delete ${doc.name}`}
-                    >
-                      {deletingId === doc.id ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
+                    {!readOnly ? (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(doc)}
+                        disabled={deletingId === doc.id || isUploading}
+                        className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                        aria-label={`Delete ${doc.name}`}
+                      >
+                        {deletingId === doc.id ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    ) : null}
                   </div>
                 </li>
               ))}
             </ul>
           )}
         </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-gray-200">
-          <p className="text-sm text-gray-500">
-            {count} document{count === 1 ? '' : 's'} uploaded
-          </p>
-          <button
-            type="button"
-            onClick={safeClose}
-            disabled={isUploading}
-            className="px-4 py-2 rounded-lg border border-gray-300 bg-white text-sm font-medium text-gray-900 hover:bg-gray-50 disabled:opacity-50"
-          >
-            Close
-          </button>
-        </div>
       </div>
-    </Modal>
+
+      <div className="flex flex-wrap items-center gap-3 pt-2">
+        <p className="text-sm text-gray-500">
+          {count} document{count === 1 ? '' : 's'}
+          {readOnly ? '' : ' uploaded'}
+        </p>
+      </div>
+    </div>
   )
 }
