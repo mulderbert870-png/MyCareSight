@@ -60,6 +60,8 @@ export interface CaregiverDocumentsPanelProps {
   initialDocuments: PatientDocument[] | null | undefined
   /** List + download only (e.g. profile view). Hides upload and delete. */
   readOnly?: boolean
+  /** Top border + padding (e.g. below a form). Omit in a standalone “manage documents” modal. */
+  showTopSeparator?: boolean
   /** Upload or delete in progress — parent can block modal dismiss. In read-only mode, download in progress. */
   onBusyChange?: (busy: boolean) => void
 }
@@ -70,6 +72,7 @@ export function CaregiverDocumentsPanel({
   caregiverName,
   initialDocuments,
   readOnly = false,
+  showTopSeparator = true,
   onBusyChange,
 }: CaregiverDocumentsPanelProps) {
   const router = useRouter()
@@ -292,14 +295,14 @@ export function CaregiverDocumentsPanel({
 
   return (
     <div className="space-y-4">
-      <div className="border-t border-gray-200 pt-6">
+      <div className={showTopSeparator ? 'border-t border-gray-200 pt-6' : ''}>
         <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-1">
           <FileText className="w-4 h-4 text-blue-600 shrink-0" aria-hidden />
           Documents
         </h3>
         <p className="text-xs text-gray-500 mb-4">
           {readOnly
-            ? `Files on file for ${caregiverName}. Use Edit information to add or remove documents.`
+            ? `Files on file for ${caregiverName}. Your agency administrator can add or remove documents from staff management.`
             : `Upload or remove files for ${caregiverName}. Changes save immediately.`}
         </p>
       </div>

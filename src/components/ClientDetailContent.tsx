@@ -5744,11 +5744,23 @@ export default function ClientDetailContent({ client, allClients, representative
                 <tbody>
                   {limitHistoryRows.map((row) => {
                     const isCurrent = currentEffectiveLimit?.id === row.id
+                    const rawNote = row.note?.trim() ?? ''
+                    const notePreview =
+                      rawNote.length === 0
+                        ? '—'
+                        : rawNote.length > 10
+                          ? `${rawNote.slice(0, 10)}…`
+                          : rawNote
                     return (
                       <tr key={row.id} className={isCurrent ? 'bg-blue-50' : 'bg-white'}>
                         <td className="p-2">{row.total_hours} hrs</td>
                         <td className="p-2">{formatShortDate(row.effective_date)}</td>
-                        <td className="p-2 text-gray-600">{row.note ?? '—'}</td>
+                        <td
+                          className="p-2 text-gray-600 max-w-[10rem]"
+                          title={rawNote.length > 10 ? rawNote : undefined}
+                        >
+                          {notePreview}
+                        </td>
                         <td className="p-2">
                           {isCurrent
                             ? <span className="text-xs font-medium text-blue-600">Current</span>

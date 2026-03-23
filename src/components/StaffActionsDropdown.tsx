@@ -1,13 +1,14 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { MoreVertical, Eye, Pencil, Home, UserPen, IdCard } from 'lucide-react'
+import { MoreVertical, Eye, Pencil, Home, UserPen, IdCard, Files } from 'lucide-react'
 
 interface StaffActionsDropdownProps {
   onViewProfile: () => void
   onEditInformation: () => void
   onEditSkills: () => void
   onEditHomeAddress: () => void
+  onManageDocuments: () => void
   onManageLicenses: () => void
 }
 
@@ -16,6 +17,7 @@ export default function StaffActionsDropdown({
   onEditInformation,
   onEditSkills,
   onEditHomeAddress,
+  onManageDocuments,
   onManageLicenses,
 }: StaffActionsDropdownProps) {
   const [isOpen, setIsOpen] = useState(false)
@@ -132,6 +134,13 @@ export default function StaffActionsDropdown({
           >
             <Home className="w-4 h-4 text-gray-500" />
             <span className="text-sm font-medium text-gray-700">Edit Home Address</span>
+          </button>
+          <button
+            onClick={() => handleAction(onManageDocuments)}
+            className="w-full px-4 py-3 text-left hover:bg-gray-50 flex items-center gap-3 transition-colors"
+          >
+            <Files className="w-4 h-4 text-gray-500" />
+            <span className="text-sm font-medium text-gray-700">Manage Documents</span>
           </button>
           <button
             onClick={() => handleAction(onManageLicenses)}

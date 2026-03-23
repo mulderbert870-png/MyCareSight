@@ -9,8 +9,6 @@ import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
 import Modal from './Modal'
 import { Loader2 } from 'lucide-react'
-import type { PatientDocument } from '@/lib/supabase/query/patients'
-import { CaregiverDocumentsPanel } from './CaregiverDocumentsPanel'
 
 const staffMemberSchema = z.object({
   first_name: z.string().min(1, 'First name is required').min(2, 'First name must be at least 2 characters'),
@@ -55,7 +53,6 @@ interface StaffMember {
   status: string
   employee_id?: string | null
   start_date?: string | null
-  documents?: PatientDocument[] | null
 }
 
 interface EditStaffModalProps {
@@ -77,7 +74,6 @@ export default function EditStaffModal({
   const router = useRouter()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [documentsBusy, setDocumentsBusy] = useState(false)
 
   const roleSelectOptions = useMemo(() => {
     const base =
@@ -163,14 +159,12 @@ export default function EditStaffModal({
   }
 
   const handleClose = () => {
-    if (!isLoading && !documentsBusy) {
+    if (!isLoading) {
       reset()
       setError(null)
       onClose()
     }
   }
-
-  const caregiverDisplayName = `${staff.first_name} ${staff.last_name}`.trim()
 
   return (
     <Modal isOpen={isOpen} onClose={handleClose} title="Edit Caregiver" size="xl">
@@ -346,27 +340,19 @@ export default function EditStaffModal({
           )}
         </div>
 
-        <CaregiverDocumentsPanel
-          active={isOpen}
-          staffMemberId={staff.id}
-          caregiverName={caregiverDisplayName}
-          initialDocuments={staff.documents}
-          onBusyChange={setDocumentsBusy}
-        />
-
         {/* Form Actions */}
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200">
           <button
             type="button"
             onClick={handleClose}
-            disabled={isLoading || documentsBusy}
+            disabled={isLoading}
             className="px-6 py-2.5 text-gray-700 font-medium rounded-xl hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
           <button
             type="submit"
-            disabled={isLoading || documentsBusy}
+            disabled={isLoading}
             className="px-6 py-2.5 bg-black text-white font-semibold rounded-xl hover:bg-gray-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {isLoading ? (

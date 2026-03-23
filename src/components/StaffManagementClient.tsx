@@ -22,6 +22,7 @@ import EditCaregiverSkillsModal from './EditCaregiverSkillsModal'
 import EditCaregiverHomeAddressModal from './EditCaregiverHomeAddressModal'
 import EditStaffModal from './EditStaffModal'
 import ManageLicensesModal from './ManageLicensesModal'
+import ManageCaregiverDocumentsModal from './ManageCaregiverDocumentsModal'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
 
 interface StaffMember {
@@ -82,6 +83,7 @@ export default function StaffManagementClient({
   const [isEditHomeAddressOpen, setIsEditHomeAddressOpen] = useState(false)
   const [isEditInformationOpen, setIsEditInformationOpen] = useState(false)
   const [isManageLicensesOpen, setIsManageLicensesOpen] = useState(false)
+  const [isManageDocumentsOpen, setIsManageDocumentsOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedRole, setSelectedRole] = useState('all')
   const [selectedStatus, setSelectedStatus] = useState('all')
@@ -199,6 +201,11 @@ export default function StaffManagementClient({
   const handleManageLicenses = (staff: StaffMember) => {
     setSelectedStaff(staff)
     setIsManageLicensesOpen(true)
+  }
+
+  const handleManageDocuments = (staff: StaffMember) => {
+    setSelectedStaff(staff)
+    setIsManageDocumentsOpen(true)
   }
 
   return (
@@ -495,6 +502,7 @@ export default function StaffManagementClient({
                               onEditInformation={() => handleEditInformation(staff)}
                               onEditSkills={() => handleEditSkills(staff)}
                               onEditHomeAddress={() => handleEditHomeAddress(staff)}
+                              onManageDocuments={() => handleManageDocuments(staff)}
                               onManageLicenses={() => handleManageLicenses(staff)}
                             />
                           </div>
@@ -603,6 +611,20 @@ export default function StaffManagementClient({
               setSelectedStaff(null)
               router.refresh()
             }}
+          />
+
+          <ManageCaregiverDocumentsModal
+            isOpen={isManageDocumentsOpen}
+            onClose={() => {
+              setIsManageDocumentsOpen(false)
+              setSelectedStaff(null)
+            }}
+            staffId={selectedStaff.id}
+            staffName={`${selectedStaff.first_name} ${selectedStaff.last_name}`.trim()}
+            initialDocuments={
+              (localStaffList.find((s) => s.id === selectedStaff.id) as StaffMember | undefined)
+                ?.documents ?? selectedStaff.documents
+            }
           />
 
           <ManageLicensesModal
