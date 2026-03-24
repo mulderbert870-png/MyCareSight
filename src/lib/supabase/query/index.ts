@@ -15,5 +15,3 @@ export * from './patient-contracted-hours'
 export * from './licenses'
 export * from './cases'
 export * from './client-states'
-
-1

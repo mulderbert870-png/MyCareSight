@@ -7,7 +7,7 @@ import * as q from '@/lib/supabase/query'
 import { useRouter } from 'next/navigation'
 import { createAgencyAdminAccount } from '@/app/actions/users'
 import { US_STATES } from '@/lib/constants'
-import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
+import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
 type AddNewClientModalMode = 'agency_admin' | 'care_recipient'
 
@@ -110,7 +110,7 @@ export default function AddNewClientModal({ isOpen, onClose, onSuccess, mode = '
       }
 
       const { data: profile } = await q.getUserProfileFull(supabase, user.id)
-      const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, user.id)
+      const effectiveOwnerId = await resolveEffectiveCompanyOwnerUserId(supabase, profile, user.id)
       if (!effectiveOwnerId) {
         setError('Could not determine your organization scope. Please contact the administrator.')
         setIsLoading(false)

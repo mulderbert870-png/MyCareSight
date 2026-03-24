@@ -1,29 +1,39 @@
-/**
- * Agency admin UI is keyed by the company owner's auth user id (patients.owner_id, clients.company_owner_id).
- * Care coordinators use user_profiles.managed_company_owner_id to reference that same id.
- */
+import * as q from '@/lib/supabase/query'
 
-export type AgencyScopedProfile = {
+type MinimalProfile = {
   role?: string | null
-  managed_company_owner_id?: string | null
-} | null
-
-export function getEffectiveCompanyOwnerUserId(
-  profile: AgencyScopedProfile,
-  sessionUserId: string
-): string | null {
-  if (!profile?.role) return sessionUserId
-  if (profile.role === 'care_coordinator') {
-    return profile.managed_company_owner_id ?? null
-  }
-  return sessionUserId
 }
 
-/** Routes a care coordinator may open (sidebar only shows Clients + Caregivers; profile via header). */
-export function careCoordinatorAllowedPath(pathname: string | null): boolean {
-  if (!pathname) return true
-  if (pathname === '/pages/agency/clients' || pathname.startsWith('/pages/agency/clients/')) return true
-  if (pathname === '/pages/agency/caregiver' || pathname.startsWith('/pages/agency/caregiver/')) return true
-  if (pathname === '/pages/agency/profile') return true
-  return false
+type SupabaseLike = Parameters<typeof q.getUserProfileFull>[0]
+
+export function getEffectiveCompanyOwnerUserId(profile: MinimalProfile | null, userId: string): string | null {
+  if (!profile?.role) return null
+  if (profile.role === 'company_owner') return userId
+  return null
+}
+
+export async function resolveEffectiveCompanyOwnerUserId(
+  supabase: SupabaseLike,
+  profile: MinimalProfile | null,
+  userId: string
+): Promise<string | null> {
+  if (!profile?.role) return null
+
+  if (profile.role === 'company_owner') {
+    return userId
+  }
+
+  if (profile.role === 'care_coordinator') {
+    const { data: coordinator } = await q.getCareCoordinatorByUserId(supabase, userId)
+    if (!coordinator?.agency_id) return null
+
+    const { data: agency } = await q.getAgencyById(supabase, coordinator.agency_id)
+    const adminClientId = ((agency?.agency_admin_ids as string[] | null) ?? [])[0]
+    if (!adminClientId) return null
+
+    const { data: adminClient } = await q.getClientById(supabase, adminClientId)
+    return adminClient?.company_owner_id ?? null
+  }
+
+  return null
 }

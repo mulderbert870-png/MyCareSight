@@ -79,6 +79,9 @@ export default function UserDropdown({
     if (role === 'staff_member') {
       role = 'Caregiver'
     }
+    if (role === 'care_coordinator') {
+      role = 'Care Coordinator'
+    }
     return role;
   }
 

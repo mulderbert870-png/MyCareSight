@@ -102,6 +102,21 @@ export async function getUserProfileByEmail(supabase: Supabase, email: string) {
   return supabase.from('user_profiles').select('id, role').eq('email', email).single()
 }
 
+export async function getCareCoordinatorByUserId(supabase: Supabase, userId: string) {
+  return supabase
+    .from('care_coordinators')
+    .select('id, user_id, agency_id')
+    .eq('user_id', userId)
+    .maybeSingle()
+}
+
+export async function insertCareCoordinator(
+  supabase: Supabase,
+  data: { user_id: string; agency_id: string; first_name: string; last_name: string; email: string; status: string }
+) {
+  return supabase.from('care_coordinators').insert(data)
+}
+
 /** Get user profile by id (id, full_name, email). */
 export async function getUserProfileById(supabase: Supabase, userId: string) {
   return supabase.from('user_profiles').select('id, full_name, email').eq('id', userId).single()
@@ -241,6 +256,15 @@ export async function getStaffMembersByUserIds(
 ) {
   if (userIds.length === 0) return { data: [], error: null }
   return supabase.from('staff_members').select(select).in('user_id', userIds)
+}
+
+export async function getCareCoordinatorsByUserIds(
+  supabase: Supabase,
+  userIds: string[],
+  select = 'user_id, agency_id'
+) {
+  if (userIds.length === 0) return { data: [], error: null }
+  return supabase.from('care_coordinators').select(select).in('user_id', userIds)
 }
 
 /** Get staff members with agency_id not null and status active. */

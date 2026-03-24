@@ -67,12 +67,26 @@ export default async function UsersPage() {
     if (name) companyNameByStaffUserId[s.user_id] = name
   })
 
+  const coordinatorUserIds = profilesList.filter(u => u.role === 'care_coordinator').map(u => u.id)
+  type CareCoordinatorRow = { user_id: string; agency_id: string | null }
+  const { data: coordinatorsData } =
+    coordinatorUserIds.length > 0 ? await q.getCareCoordinatorsByUserIds(supabase, coordinatorUserIds) : { data: [] }
+  const coordinators = (coordinatorsData ?? []) as unknown as CareCoordinatorRow[]
+  const companyNameByCoordinatorUserId: Record<string, string> = {}
+  coordinators.forEach(c => {
+    if (!c.user_id || !c.agency_id) return
+    const name = agencyNameById[c.agency_id]
+    if (name) companyNameByCoordinatorUserId[c.user_id] = name
+  })
+
   const userProfiles = profilesList.map(p => ({
     ...p,
     company_name: p.role === 'company_owner'
       ? (companyNameByUserId[p.id] ?? null)
       : p.role === 'staff_member'
         ? (companyNameByStaffUserId[p.id] ?? null)
+        : p.role === 'care_coordinator'
+          ? (companyNameByCoordinatorUserId[p.id] ?? null)
         : null,
   }))
 

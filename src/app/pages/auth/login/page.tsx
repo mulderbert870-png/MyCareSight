@@ -146,6 +146,8 @@ function LoginPageContent() {
           router.push('/pages/admin')
         } else if (profile?.role === 'staff_member') {
           router.push('/pages/caregiver')
+        } else if (profile?.role === 'care_coordinator') {
+          router.push('/pages/agency/clients')
         } else {
           router.push('/pages/agency')
         }

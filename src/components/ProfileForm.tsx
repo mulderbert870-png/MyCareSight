@@ -14,7 +14,7 @@ import { UserRole } from '@/types/auth'
 const profileSchema = z.object({
   fullName: z.string().min(2, 'Full name must be at least 2 characters'),
   email: z.string().email('Please enter a valid email address'),
-  role: z.enum(['company_owner', 'staff_member', 'admin', 'expert']),
+  role: z.enum(['company_owner', 'staff_member', 'care_coordinator', 'admin', 'expert']),
 })
 
 type ProfileFormData = z.infer<typeof profileSchema>
@@ -34,6 +34,7 @@ interface ProfileFormProps {
 const ROLE_OPTIONS = [
   { value: 'company_owner', label: 'Agency Admin' },
   { value: 'staff_member', label: 'Caregiver' },
+  { value: 'care_coordinator', label: 'Care Coordinator' },
   { value: 'admin', label: 'Admin' },
   { value: 'expert', label: 'Expert' },
 ]

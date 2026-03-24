@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import DashboardLayout from '@/components/DashboardLayout'
 import ClientDetailContent from '@/components/ClientDetailContent'
-import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
+import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
 export default async function ClientDetailPage({
   params
@@ -24,34 +24,17 @@ export default async function ClientDetailPage({
   if (profile?.role === 'admin') redirect('/pages/admin')
   if (profile?.role === 'expert') redirect('/pages/expert/clients')
 
-  const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, session.user.id)
-  if (!effectiveOwnerId) {
-    redirect('/pages/agency/clients')
-  }
-  console.log('[agency/clients/[id]] scope', {
-    sessionUserId: session.user.id,
-    role: profile?.role ?? null,
-    effectiveOwnerId,
-    patientId: id,
-  })
-
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
+  const effectiveOwnerId = await resolveEffectiveCompanyOwnerUserId(supabase, profile, session.user.id)
+  const { data: clientContext } = effectiveOwnerId
+    ? await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
+    : { data: null }
 
-  const { data: viewerClient } = await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
-  console.log('[agency/clients/[id]] viewerClient', {
-    effectiveOwnerId,
-    clientId: viewerClient?.id ?? null,
-    agencyId: viewerClient?.agency_id ?? null,
-  })
-  if (!viewerClient?.agency_id) {
-    redirect('/pages/agency/clients')
-  }
-  const { data: client } = await q.getPatientByIdAndAgencyId(supabase, id, viewerClient.agency_id)
-  console.log('[agency/clients/[id]] patientByAgency', {
-    agencyId: viewerClient.agency_id,
-    found: Boolean(client),
-    foundPatientId: client?.id ?? null,
-  })
+  const { data: client } = clientContext?.agency_id
+    ? await q.getPatientByIdAndAgencyId(supabase, id, clientContext.agency_id)
+    : effectiveOwnerId
+      ? await q.getPatientByIdAndOwnerId(supabase, id, effectiveOwnerId)
+      : { data: null }
 
   
 
@@ -60,12 +43,11 @@ export default async function ClientDetailPage({
     redirect('/pages/agency/clients')
   }
 
-  const { data: allClients } = await q.getPatientsByAgencyIdMinimal(supabase, viewerClient.agency_id)
-  console.log('[agency/clients/[id]] allPatientsByAgency', {
-    agencyId: viewerClient.agency_id,
-    count: allClients?.length ?? 0,
-    patientIds: (allClients ?? []).map((c: { id: string }) => c.id),
-  })
+  const { data: allClients } = clientContext?.agency_id
+    ? await q.getPatientsByAgencyIdMinimal(supabase, clientContext.agency_id)
+    : effectiveOwnerId
+      ? await q.getPatientsByOwnerIdMinimal(supabase, effectiveOwnerId)
+      : { data: [] }
   let representativesList: Awaited<ReturnType<typeof q.getRepresentativesByPatientId>>['data'] = []
   try {
     const res = await q.getRepresentativesByPatientId(supabase, id)
@@ -104,15 +86,15 @@ export default async function ClientDetailPage({
     adlSchedulesList = []
   }
 
-  const { data: staffListData } = await q.getStaffMembersByAgencyId(supabase, viewerClient.agency_id, {
-    status: 'active',
-  })
-  const staffList = staffListData ?? []
-  console.log('[agency/clients/[id]] staffByAgency', {
-    agencyId: viewerClient.agency_id,
-    count: staffList.length,
-    staffIds: staffList.map((s: { id: string }) => s.id),
-  })
+  const agencyClient = clientContext ?? null
+  let staffList: Awaited<ReturnType<typeof q.getStaffMembersByCompanyOwnerId>>['data'] = []
+  if (agencyClient?.agency_id) {
+    const res = await q.getStaffMembersByAgencyId(supabase, agencyClient.agency_id, { status: 'active' })
+    staffList = res.data ?? []
+  } else if (agencyClient?.id) {
+    const res = await q.getStaffMembersByCompanyOwnerId(supabase, agencyClient.id, { status: 'active' })
+    staffList = res.data ?? []
+  }
 
   let contractedHoursList: Awaited<ReturnType<typeof q.getPatientContractedHoursByPatientId>>['data'] = []
   try {

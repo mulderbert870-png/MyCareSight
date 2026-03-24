@@ -26,7 +26,8 @@ export default function AddUserModal({ isOpen, onClose, onSuccess, agencies = []
     agency_id: ''
   })
 
-  const showAgencyField = formData.role === 'company_owner' || formData.role === 'staff_member'
+  const showAgencyField =
+    formData.role === 'company_owner' || formData.role === 'staff_member' || formData.role === 'care_coordinator'
 
   if (!isOpen) return null
 
@@ -153,6 +154,7 @@ export default function AddUserModal({ isOpen, onClose, onSuccess, agencies = []
               <option value="admin">Admin</option>
               <option value="company_owner">Agency Admin</option>
               <option value="staff_member">Caregiver</option>
+              <option value="care_coordinator">Care Coordinator</option>
               <option value="expert">Expert</option>
             </select>
           </div>

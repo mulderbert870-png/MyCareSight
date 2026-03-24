@@ -77,8 +77,7 @@ async function ensureRoleTableRow(
   userId: string,
   fullName: string,
   normalizedEmail: string,
-  role: CreateUserRole,
-  agencyId?: string | null
+  role: CreateUserRole
 ) {
   const { first_name: firstName, last_name: lastName } = parseFullName(fullName)
   if (role === 'company_owner') {
@@ -97,7 +96,6 @@ async function ensureRoleTableRow(
       await q.insertStaffMember(supabaseAdmin, {
         user_id: userId,
         company_owner_id: null,
-        agency_id: agencyId ?? null,
         first_name: firstName,
         last_name: lastName,
         email: normalizedEmail,
@@ -117,31 +115,13 @@ async function ensureRoleTableRow(
         status: 'active',
       })
     }
-  } else if (role === 'care_coordinator' && agencyId?.trim()) {
-    const { data: agency } = await supabaseAdmin.from('agencies').select('agency_admin_ids').eq('id', agencyId.trim()).single()
-    const adminIds = (agency?.agency_admin_ids as string[] | null) || []
-    const firstClientId = adminIds[0]
-    if (firstClientId) {
-      const { data: clientRow } = await supabaseAdmin
-        .from('clients')
-        .select('company_owner_id')
-        .eq('id', firstClientId)
-        .single()
-      const managedOwnerId = clientRow?.company_owner_id as string | undefined
-      if (managedOwnerId) {
-        await supabaseAdmin
-          .from('user_profiles')
-          .update({ role: 'care_coordinator', managed_company_owner_id: managedOwnerId })
-          .eq('id', userId)
-      }
-    }
   }
 }
 
 /**
  * Create a user account from admin User Management. Uses Admin API so the current
  * admin's session is never overwritten (unlike signUp() which would log the admin out).
- * When role is company_owner or staff_member, agencyId is required and the user is assigned to that agency.
+ * When role is company_owner, staff_member, or care_coordinator, agencyId is required and the user is assigned to that agency.
  */
 export async function createUserAccount(
   email: string,
@@ -188,7 +168,7 @@ export async function createUserAccount(
         const { data: existingProfile } = await q.getUserProfileByEmail(supabaseAdmin, normalizedEmail)
         userId = existingProfile?.id || null
         if (userId) {
-          await ensureRoleTableRow(supabaseAdmin, userId, fullName.trim(), normalizedEmail, role, agencyId ?? null)
+          await ensureRoleTableRow(supabaseAdmin, userId, fullName.trim(), normalizedEmail, role)
         }
         const { error: magicLinkError } = await supabaseCookie.auth.signInWithOtp({
           email: normalizedEmail,
@@ -277,45 +257,6 @@ export async function createUserAccount(
           data: null,
         }
       }
-    } else if (role === 'care_coordinator') {
-      if (!agencyId?.trim()) {
-        return { error: 'Agency is required for care coordinator', data: null }
-      }
-      const { data: agencyRow } = await supabaseAdmin
-        .from('agencies')
-        .select('agency_admin_ids')
-        .eq('id', agencyId.trim())
-        .single()
-      const adminIds = (agencyRow?.agency_admin_ids as string[] | null) || []
-      const firstClientId = adminIds[0]
-      if (!firstClientId) {
-        return {
-          error: 'This agency has no agency admin linked. Add an agency admin first.',
-          data: null,
-        }
-      }
-      const { data: clientRow } = await supabaseAdmin
-        .from('clients')
-        .select('company_owner_id')
-        .eq('id', firstClientId)
-        .single()
-      const managedOwnerId = clientRow?.company_owner_id as string | undefined
-      if (!managedOwnerId) {
-        return {
-          error: 'Could not resolve the agency admin account for this agency.',
-          data: null,
-        }
-      }
-      const { error: coordErr } = await supabaseAdmin
-        .from('user_profiles')
-        .update({ role: 'care_coordinator', managed_company_owner_id: managedOwnerId })
-        .eq('id', userId)
-      if (coordErr) {
-        return {
-          error: `User created but failed to assign care coordinator: ${coordErr.message}`,
-          data: null,
-        }
-      }
     } else if (role === 'expert') {
       const { error: expertError } = await supabaseAdmin
         .from('licensing_experts')
@@ -331,6 +272,25 @@ export async function createUserAccount(
         console.error('Failed to create licensing_experts row for expert:', expertError)
         return {
           error: `User created but failed to create expert record: ${expertError.message}`,
+          data: null,
+        }
+      }
+    } else if (role === 'care_coordinator') {
+      if (!agencyId) {
+        return { error: 'Agency is required for care coordinator role.', data: null }
+      }
+      const { error: coordinatorError } = await q.insertCareCoordinator(supabaseAdmin, {
+        user_id: userId,
+        agency_id: agencyId,
+        first_name: firstName,
+        last_name: lastName,
+        email: normalizedEmail,
+        status: 'active',
+      })
+      if (coordinatorError) {
+        console.error('Failed to create care_coordinators row:', coordinatorError)
+        return {
+          error: `User created but failed to create care coordinator record: ${coordinatorError.message}`,
           data: null,
         }
       }

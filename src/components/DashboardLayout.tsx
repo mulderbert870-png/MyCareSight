@@ -69,14 +69,19 @@ export default function DashboardLayout({
     }
   }
 
-  const menuItems = [
-    { href: '/pages/agency', label: 'Home', icon: Home },
-    { href: '/pages/agency/licenses', label: 'Licenses', icon: Medal },
-    { href: '/pages/agency/clients', label: 'Clients', icon: UserCircle },
-    { href: '/pages/agency/caregiver', label: 'Caregivers', icon: Users },
-    { href: '/pages/agency/reports', label: 'Reports', icon: BarChart3 },
-    // { href: '/pages/agency/messages', label: 'Messages', icon: MessageSquare },
-  ]
+  const menuItems = profile?.role === 'care_coordinator'
+    ? [
+        { href: '/pages/agency/clients', label: 'Clients', icon: UserCircle },
+        { href: '/pages/agency/caregiver', label: 'Caregivers', icon: Users },
+      ]
+    : [
+        { href: '/pages/agency', label: 'Home', icon: Home },
+        { href: '/pages/agency/licenses', label: 'Licenses', icon: Medal },
+        { href: '/pages/agency/clients', label: 'Clients', icon: UserCircle },
+        { href: '/pages/agency/caregiver', label: 'Caregivers', icon: Users },
+        { href: '/pages/agency/reports', label: 'Reports', icon: BarChart3 },
+        // { href: '/pages/agency/messages', label: 'Messages', icon: MessageSquare },
+      ]
 
   const getInitials = (name: string | null | undefined, email: string | null | undefined) => {
     if (name) {

@@ -4,7 +4,7 @@ import { getSession } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
+import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
 export type InsertCaregiverLicenseInput = {
   staffMemberId: string
@@ -31,7 +31,7 @@ export async function insertCaregiverLicenseApplicationAction(
   const supabase = await createClient()
 
   const { data: profile } = await q.getUserProfileFull(supabase, userId)
-  const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, userId)
+  const effectiveOwnerId = await resolveEffectiveCompanyOwnerUserId(supabase, profile, userId)
   if (!effectiveOwnerId) {
     return { ok: false, error: 'No organization scope found for this user.' }
   }

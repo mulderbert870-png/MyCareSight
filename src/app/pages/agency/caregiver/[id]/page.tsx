@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import DashboardLayout from '@/components/DashboardLayout'
 import CaregiverProfileContent from '@/components/CaregiverProfileContent'
-import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
+import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
 export default async function CaregiverProfilePage({
   params,
@@ -21,36 +21,16 @@ export default async function CaregiverProfilePage({
   const isEmbed = embed === '1' || embed === 'true'
 
   const supabase = await createClient()
-
   const { data: profile } = await q.getUserProfileFull(supabase, session.user.id)
-  const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, session.user.id)
-  if (!effectiveOwnerId) redirect('/pages/agency/caregiver')
-  console.log('[agency/caregiver/[id]] scope', {
-    sessionUserId: session.user.id,
-    role: profile?.role ?? null,
-    effectiveOwnerId,
-    staffId,
-  })
+  const effectiveOwnerId = await resolveEffectiveCompanyOwnerUserId(supabase, profile, session.user.id)
+  const { data: client } = effectiveOwnerId
+    ? await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
+    : { data: null }
+  if (!client?.id) redirect('/pages/agency/caregiver')
 
-  const { data: client } = await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
-  if (!client?.agency_id) redirect('/pages/agency/caregiver')
-  console.log('[agency/caregiver/[id]] clientContext', {
-    effectiveOwnerId,
-    clientId: client?.id ?? null,
-    agencyId: client?.agency_id ?? null,
-  })
-
-  const { data: staff, error: staffError } = await q.getStaffMemberByIdAndAgencyId(
-    supabase,
-    staffId,
-    client.agency_id
-  )
-  console.log('[agency/caregiver/[id]] staffByAgencyAndId', {
-    agencyId: client.agency_id,
-    staffId,
-    found: Boolean(staff),
-    error: staffError?.message ?? null,
-  })
+  const { data: staff, error: staffError } = client.agency_id
+    ? await q.getStaffMemberByIdAndAgencyId(supabase, staffId, client.agency_id)
+    : await q.getStaffMemberByIdWithAgencyOrCompanyOwner(supabase, staffId, client.id, null)
 
   if (staffError || !staff) redirect('/pages/agency/caregiver')
 

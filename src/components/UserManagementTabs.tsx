@@ -119,6 +119,7 @@ export default function UserManagementTabs({
       case 'company_owner': return 'Agency admin'
       case 'expert': return 'Expert'
       case 'staff_member': return 'Caregiver'
+      case 'care_coordinator': return 'Care Coordinator'
       default: return role || '—'
     }
   }
@@ -150,6 +151,13 @@ export default function UserManagementTabs({
     if (role === 'staff_member') {
       return (
         <span className="px-2 py-1 bg-gray-100 text-gray-700 text-xs font-semibold rounded-full flex items-center justify-center">
+          {label}
+        </span>
+      )
+    }
+    if (role === 'care_coordinator') {
+      return (
+        <span className="px-2 py-1 bg-teal-100 text-teal-800 text-xs font-semibold rounded-full flex items-center justify-center">
           {label}
         </span>
       )
@@ -247,6 +255,7 @@ export default function UserManagementTabs({
           'Agency admin': 'company_owner',
           'Expert': 'expert',
           'Caregiver': 'staff_member',
+          'Care Coordinator': 'care_coordinator',
         }
         const wantedDbRole = roleToDb[selectedRole]
         if (profile.role !== wantedDbRole) return false
@@ -407,6 +416,7 @@ export default function UserManagementTabs({
                   <option>Agency admin</option>
                   <option>Expert</option>
                   <option>Caregiver</option>
+                  <option>Care Coordinator</option>
                 </select>
                 {/* Status Dropdown */}
                 <select 
