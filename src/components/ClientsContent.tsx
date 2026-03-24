@@ -60,6 +60,7 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
 
   // Filter clients
   const filteredClients = useMemo(() => {
+    console.log('clients', clients)
     return clients.filter(client => {
       // Search filter
       if (searchQuery) {

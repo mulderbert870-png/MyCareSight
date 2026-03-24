@@ -26,6 +26,43 @@ export async function getPatientsByOwnerId(supabase: Supabase, ownerId: string) 
     .order('created_at', { ascending: false })
 }
 
+/** Get patients by owner_id list (agency-wide), ordered by created_at desc. */
+export async function getPatientsByOwnerIds(supabase: Supabase, ownerIds: string[]) {
+  if (ownerIds.length === 0) return { data: [], error: null }
+  return supabase
+    .from('patients')
+    .select(`
+    *,
+    patients_representatives (
+      id,
+      name,
+      relationship,
+      phone_number,
+      email_address
+    )
+  `)
+    .in('owner_id', ownerIds)
+    .order('created_at', { ascending: false })
+}
+
+/** Get patients by agency_id, ordered by created_at desc. */
+export async function getPatientsByAgencyId(supabase: Supabase, agencyId: string) {
+  return supabase
+    .from('patients')
+    .select(`
+    *,
+    patients_representatives (
+      id,
+      name,
+      relationship,
+      phone_number,
+      email_address
+    )
+  `)
+    .eq('agency_id', agencyId)
+    .order('created_at', { ascending: false })
+}
+
 /** Update patient status by id. */
 export async function updatePatientStatus(
   supabase: Supabase,
@@ -110,11 +147,77 @@ export async function getPatientByIdAndOwnerId(
     .single()
 }
 
+/** Get patient by id and owner_id list (agency-wide detail page access). */
+export async function getPatientByIdAndOwnerIds(
+  supabase: Supabase,
+  patientId: string,
+  ownerIds: string[]
+) {
+  if (ownerIds.length === 0) return { data: null, error: null }
+  return supabase
+    .from('patients')
+    .select(`
+    *,
+    patients_representatives (
+      id,
+      name,
+      relationship,
+      phone_number,
+      email_address
+    )
+  `)
+    .eq('id', patientId)
+    .in('owner_id', ownerIds)
+    .maybeSingle()
+}
+
+/** Get patient by id and agency_id (agency-wide detail page access). */
+export async function getPatientByIdAndAgencyId(
+  supabase: Supabase,
+  patientId: string,
+  agencyId: string
+) {
+  return supabase
+    .from('patients')
+    .select(`
+    *,
+    patients_representatives (
+      id,
+      name,
+      relationship,
+      phone_number,
+      email_address
+    )
+  `)
+    .eq('id', patientId)
+    .eq('agency_id', agencyId)
+    .maybeSingle()
+}
+
 /** Get patients by owner_id (id, full_name) for lists/navigation, ordered by full_name. */
 export async function getPatientsByOwnerIdMinimal(supabase: Supabase, ownerId: string) {
   return supabase
     .from('patients')
     .select('id, full_name')
     .eq('owner_id', ownerId)
+    .order('full_name', { ascending: true })
+}
+
+/** Get patients by owner_id list (id, full_name), ordered by full_name. */
+export async function getPatientsByOwnerIdsMinimal(supabase: Supabase, ownerIds: string[]) {
+  if (ownerIds.length === 0) return { data: [], error: null }
+  return supabase
+    .from('patients')
+    .select('id, full_name')
+    .in('owner_id', ownerIds)
+    .order('full_name', { ascending: true })
+}
+
+/** Get patients by agency_id (id, full_name), ordered by full_name. */
+export async function getPatientsByAgencyIdMinimal(supabase: Supabase, agencyId: string) {
+  return supabase
+    .from('patients')
+    .select('id, full_name')
+    .eq('agency_id', agencyId)
     .order('full_name', { ascending: true })
 }

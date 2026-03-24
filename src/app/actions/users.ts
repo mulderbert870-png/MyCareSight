@@ -58,7 +58,7 @@ export async function setUserPassword(userId: string, newPassword: string) {
 }
 
 /** Role value for new users created from admin User Management */
-export type CreateUserRole = 'admin' | 'company_owner' | 'staff_member' | 'expert'
+export type CreateUserRole = 'admin' | 'company_owner' | 'staff_member' | 'expert' | 'care_coordinator'
 
 function parseFullName(fullName: string): { first_name: string; last_name: string } {
   const trimmed = fullName.trim()
@@ -77,7 +77,8 @@ async function ensureRoleTableRow(
   userId: string,
   fullName: string,
   normalizedEmail: string,
-  role: CreateUserRole
+  role: CreateUserRole,
+  agencyId?: string | null
 ) {
   const { first_name: firstName, last_name: lastName } = parseFullName(fullName)
   if (role === 'company_owner') {
@@ -96,6 +97,7 @@ async function ensureRoleTableRow(
       await q.insertStaffMember(supabaseAdmin, {
         user_id: userId,
         company_owner_id: null,
+        agency_id: agencyId ?? null,
         first_name: firstName,
         last_name: lastName,
         email: normalizedEmail,
@@ -114,6 +116,24 @@ async function ensureRoleTableRow(
         role: 'Licensing Specialist',
         status: 'active',
       })
+    }
+  } else if (role === 'care_coordinator' && agencyId?.trim()) {
+    const { data: agency } = await supabaseAdmin.from('agencies').select('agency_admin_ids').eq('id', agencyId.trim()).single()
+    const adminIds = (agency?.agency_admin_ids as string[] | null) || []
+    const firstClientId = adminIds[0]
+    if (firstClientId) {
+      const { data: clientRow } = await supabaseAdmin
+        .from('clients')
+        .select('company_owner_id')
+        .eq('id', firstClientId)
+        .single()
+      const managedOwnerId = clientRow?.company_owner_id as string | undefined
+      if (managedOwnerId) {
+        await supabaseAdmin
+          .from('user_profiles')
+          .update({ role: 'care_coordinator', managed_company_owner_id: managedOwnerId })
+          .eq('id', userId)
+      }
     }
   }
 }
@@ -168,7 +188,7 @@ export async function createUserAccount(
         const { data: existingProfile } = await q.getUserProfileByEmail(supabaseAdmin, normalizedEmail)
         userId = existingProfile?.id || null
         if (userId) {
-          await ensureRoleTableRow(supabaseAdmin, userId, fullName.trim(), normalizedEmail, role)
+          await ensureRoleTableRow(supabaseAdmin, userId, fullName.trim(), normalizedEmail, role, agencyId ?? null)
         }
         const { error: magicLinkError } = await supabaseCookie.auth.signInWithOtp({
           email: normalizedEmail,
@@ -254,6 +274,45 @@ export async function createUserAccount(
         console.error('Failed to create staff_members row for caregiver:', staffError)
         return {
           error: `User created but failed to create staff record: ${staffError.message}`,
+          data: null,
+        }
+      }
+    } else if (role === 'care_coordinator') {
+      if (!agencyId?.trim()) {
+        return { error: 'Agency is required for care coordinator', data: null }
+      }
+      const { data: agencyRow } = await supabaseAdmin
+        .from('agencies')
+        .select('agency_admin_ids')
+        .eq('id', agencyId.trim())
+        .single()
+      const adminIds = (agencyRow?.agency_admin_ids as string[] | null) || []
+      const firstClientId = adminIds[0]
+      if (!firstClientId) {
+        return {
+          error: 'This agency has no agency admin linked. Add an agency admin first.',
+          data: null,
+        }
+      }
+      const { data: clientRow } = await supabaseAdmin
+        .from('clients')
+        .select('company_owner_id')
+        .eq('id', firstClientId)
+        .single()
+      const managedOwnerId = clientRow?.company_owner_id as string | undefined
+      if (!managedOwnerId) {
+        return {
+          error: 'Could not resolve the agency admin account for this agency.',
+          data: null,
+        }
+      }
+      const { error: coordErr } = await supabaseAdmin
+        .from('user_profiles')
+        .update({ role: 'care_coordinator', managed_company_owner_id: managedOwnerId })
+        .eq('id', userId)
+      if (coordErr) {
+        return {
+          error: `User created but failed to assign care coordinator: ${coordErr.message}`,
           data: null,
         }
       }

@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import DashboardLayout from '@/components/DashboardLayout'
 import StaffManagementClient from '@/components/StaffManagementClient'
+import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
 export default async function StaffPage() {
   const session = await getSession()
@@ -12,12 +13,30 @@ export default async function StaffPage() {
   const supabase = await createClient()
   const { data: profile } = await q.getUserProfileFull(supabase, session.user.id)
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
-  const { data: client } = await q.getClientByCompanyOwnerId(supabase, session.user.id)
+  const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, session.user.id)
+  console.log('[agency/caregiver] scope', {
+    sessionUserId: session.user.id,
+    role: profile?.role ?? null,
+    effectiveOwnerId,
+  })
+  const { data: client } = effectiveOwnerId
+    ? await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
+    : { data: null }
+  console.log('[agency/caregiver] clientContext', {
+    effectiveOwnerId,
+    clientId: client?.id ?? null,
+    agencyId: client?.agency_id ?? null,
+  })
 
-  const { data: staffMembersData } = client?.id
-    ? await q.getStaffMembersByCompanyOwnerId(supabase, client.id)
+  const { data: staffMembersData } = client?.agency_id
+    ? await q.getStaffMembersByAgencyId(supabase, client.agency_id)
     : { data: [] }
   const staffMembers = staffMembersData ?? []
+  console.log('[agency/caregiver] staffByAgency', {
+    agencyId: client?.agency_id ?? null,
+    count: staffMembers.length,
+    staffIds: staffMembers.map((s: { id: string }) => s.id),
+  })
 
   const { data: staffRolesData } = await q.getStaffRoles(supabase)
   const staffRoleNames = (staffRolesData ?? []).map((role: { name?: string }) => role.name).filter(Boolean) as string[]

@@ -8,6 +8,7 @@ import * as z from 'zod'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
 import { createStaffUserAccount } from '@/app/actions/users'
+import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 import Modal from './Modal'
 import { Loader2 } from 'lucide-react'
 
@@ -66,7 +67,15 @@ export default function AddStaffMemberModal({ isOpen, onClose, onSuccess, staffR
         return
       }
 
-      const { data: client, error: clientError } = await q.getClientByCompanyOwnerIdWithAgency(supabase, user.id)
+      const { data: profile } = await q.getUserProfileFull(supabase, user.id)
+      const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, user.id)
+      if (!effectiveOwnerId) {
+        setError('Could not determine your organization scope. Please contact the administrator.')
+        setIsLoading(false)
+        return
+      }
+
+      const { data: client, error: clientError } = await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
 
       if (clientError || !client) {
         setError('Client record not found. Please contact the administrator.')

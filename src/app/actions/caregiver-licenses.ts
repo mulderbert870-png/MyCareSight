@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
 export type InsertCaregiverLicenseInput = {
   staffMemberId: string
@@ -29,7 +30,13 @@ export async function insertCaregiverLicenseApplicationAction(
   const userId = session.user.id
   const supabase = await createClient()
 
-  const { data: client, error: clientErr } = await q.getClientByCompanyOwnerId(supabase, userId)
+  const { data: profile } = await q.getUserProfileFull(supabase, userId)
+  const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, userId)
+  if (!effectiveOwnerId) {
+    return { ok: false, error: 'No organization scope found for this user.' }
+  }
+
+  const { data: client, error: clientErr } = await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
   if (clientErr || !client?.id) {
     return { ok: false, error: 'No client account found for this user.' }
   }
@@ -44,21 +51,11 @@ export async function insertCaregiverLicenseApplicationAction(
     return { ok: false, error: 'Caregiver not found or you do not have access.' }
   }
 
-  const { data: clientRow, error: crErr } = await supabase
-    .from('clients')
-    .select('id, agency_id')
-    .eq('id', client.id)
-    .maybeSingle()
-
-  if (crErr || !clientRow) {
-    return { ok: false, error: 'Could not verify your organization.' }
-  }
-
   const sameClient = staff.company_owner_id === client.id
   const sameAgency =
-    Boolean(clientRow.agency_id) &&
+    Boolean(client.agency_id) &&
     Boolean(staff.agency_id) &&
-    clientRow.agency_id === staff.agency_id
+    client.agency_id === staff.agency_id
 
   if (!sameClient && !sameAgency) {
     return {

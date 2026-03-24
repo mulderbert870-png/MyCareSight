@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import DashboardLayout from '@/components/DashboardLayout'
 import CaregiverProfileContent from '@/components/CaregiverProfileContent'
+import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
 export default async function CaregiverProfilePage({
   params,
@@ -21,15 +22,35 @@ export default async function CaregiverProfilePage({
 
   const supabase = await createClient()
 
-  const { data: client } = await q.getClientByCompanyOwnerId(supabase, session.user.id)
-  if (!client?.id) redirect('/pages/agency/caregiver')
+  const { data: profile } = await q.getUserProfileFull(supabase, session.user.id)
+  const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, session.user.id)
+  if (!effectiveOwnerId) redirect('/pages/agency/caregiver')
+  console.log('[agency/caregiver/[id]] scope', {
+    sessionUserId: session.user.id,
+    role: profile?.role ?? null,
+    effectiveOwnerId,
+    staffId,
+  })
 
-  const { data: staff, error: staffError } = await supabase
-    .from('staff_members')
-    .select('*')
-    .eq('company_owner_id', client.id)
-    .eq('id', staffId)
-    .maybeSingle()
+  const { data: client } = await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
+  if (!client?.agency_id) redirect('/pages/agency/caregiver')
+  console.log('[agency/caregiver/[id]] clientContext', {
+    effectiveOwnerId,
+    clientId: client?.id ?? null,
+    agencyId: client?.agency_id ?? null,
+  })
+
+  const { data: staff, error: staffError } = await q.getStaffMemberByIdAndAgencyId(
+    supabase,
+    staffId,
+    client.agency_id
+  )
+  console.log('[agency/caregiver/[id]] staffByAgencyAndId', {
+    agencyId: client.agency_id,
+    staffId,
+    found: Boolean(staff),
+    error: staffError?.message ?? null,
+  })
 
   if (staffError || !staff) redirect('/pages/agency/caregiver')
 
@@ -73,7 +94,6 @@ export default async function CaregiverProfilePage({
     )
   }
 
-  const { data: profile } = await q.getUserProfileFull(supabase, session.user.id)
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
 
   return (

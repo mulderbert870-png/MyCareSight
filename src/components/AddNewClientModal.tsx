@@ -7,6 +7,7 @@ import * as q from '@/lib/supabase/query'
 import { useRouter } from 'next/navigation'
 import { createAgencyAdminAccount } from '@/app/actions/users'
 import { US_STATES } from '@/lib/constants'
+import { getEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
 type AddNewClientModalMode = 'agency_admin' | 'care_recipient'
 
@@ -108,8 +109,22 @@ export default function AddNewClientModal({ isOpen, onClose, onSuccess, mode = '
         return
       }
 
+      const { data: profile } = await q.getUserProfileFull(supabase, user.id)
+      const effectiveOwnerId = getEffectiveCompanyOwnerUserId(profile, user.id)
+      if (!effectiveOwnerId) {
+        setError('Could not determine your organization scope. Please contact the administrator.')
+        setIsLoading(false)
+        return
+      }
+      const { data: clientContext } = await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
+      if (!clientContext?.agency_id) {
+        setError('Your account is not linked to an agency. Please contact the administrator.')
+        setIsLoading(false)
+        return
+      }
+
       const { error: insertError } = await q.insertPatient(supabase, {
-        owner_id: user.id,
+        agency_id: clientContext.agency_id,
         full_name: formData.full_name,
         date_of_birth: formData.date_of_birth,
         street_address: formData.street_address,

@@ -29,6 +29,7 @@ export async function insertStaffMember(
   data: {
     user_id: string
     company_owner_id: string | null
+    agency_id?: string | null
     first_name: string
     last_name: string
     email: string
@@ -124,6 +125,78 @@ export async function getStaffMembersByCompanyOwnerId(
     .order('created_at', { ascending: false })
   if (options?.status) query = query.eq('status', options.status)
   return query
+}
+
+/** Get staff members visible to an agency client (agency-wide with owner fallback). */
+export async function getStaffMembersByAgencyOrCompanyOwner(
+  supabase: Supabase,
+  clientId: string,
+  agencyId: string | null,
+  options?: { status?: string }
+) {
+  let query = supabase
+    .from('staff_members')
+    .select('*')
+    .order('created_at', { ascending: false })
+
+  if (agencyId) {
+    query = query.or(`company_owner_id.eq.${clientId},agency_id.eq.${agencyId}`)
+  } else {
+    query = query.eq('company_owner_id', clientId)
+  }
+
+  if (options?.status) query = query.eq('status', options.status)
+  return query
+}
+
+/** Get one staff member visible to an agency client (agency-wide with owner fallback). */
+export async function getStaffMemberByIdWithAgencyOrCompanyOwner(
+  supabase: Supabase,
+  staffId: string,
+  clientId: string,
+  agencyId: string | null
+) {
+  let query = supabase
+    .from('staff_members')
+    .select('*')
+    .eq('id', staffId)
+
+  if (agencyId) {
+    query = query.or(`company_owner_id.eq.${clientId},agency_id.eq.${agencyId}`)
+  } else {
+    query = query.eq('company_owner_id', clientId)
+  }
+
+  return query.maybeSingle()
+}
+
+/** Get staff members by agency_id (optional status filter), ordered by created_at desc. */
+export async function getStaffMembersByAgencyId(
+  supabase: Supabase,
+  agencyId: string,
+  options?: { status?: string }
+) {
+  let query = supabase
+    .from('staff_members')
+    .select('*')
+    .eq('agency_id', agencyId)
+    .order('created_at', { ascending: false })
+  if (options?.status) query = query.eq('status', options.status)
+  return query
+}
+
+/** Get one staff member by id scoped to agency_id. */
+export async function getStaffMemberByIdAndAgencyId(
+  supabase: Supabase,
+  staffId: string,
+  agencyId: string
+) {
+  return supabase
+    .from('staff_members')
+    .select('*')
+    .eq('id', staffId)
+    .eq('agency_id', agencyId)
+    .maybeSingle()
 }
 
 /** Get user profile role by id. */
