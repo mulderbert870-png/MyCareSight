@@ -30,19 +30,18 @@ export default async function StaffPage() {
 
   const staffMemberIds = staffMembers.map(s => s.id)
   const { data: allStaffLicensesData } = staffMemberIds.length > 0
-    ? await q.getApplicationsByStaffMemberIdsAll(supabase, staffMemberIds)
+    ? await q.getStaffLicensesByStaffMemberIds(supabase, staffMemberIds)
     : { data: [] }
 
-  // Map applications to match the expected license structure
-  const allStaffLicenses = allStaffLicensesData?.map(app => ({
-    id: app.id,
-    staff_member_id: app.staff_member_id,
-    license_type: app.application_name,
-    license_number: app.license_number || 'N/A',
-    state: app.state,
-    status: app.status === 'approved' ? 'active' : app.status === 'rejected' ? 'expired' : 'active',
-    expiry_date: app.expiry_date,
-    days_until_expiry: app.days_until_expiry,
+  const allStaffLicenses = allStaffLicensesData?.map(license => ({
+    id: license.id,
+    staff_member_id: license.staff_member_id,
+    license_type: license.license_type,
+    license_number: license.license_number || 'N/A',
+    state: license.state,
+    status: license.status,
+    expiry_date: license.expiry_date,
+    days_until_expiry: license.days_until_expiry,
   })) || []
 
   // Group licenses by staff member

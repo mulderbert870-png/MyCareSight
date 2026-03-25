@@ -34,16 +34,16 @@ export default async function CaregiverProfilePage({
 
   if (staffError || !staff) redirect('/pages/agency/caregiver')
 
-  const { data: applicationsData } = await q.getApplicationsByStaffMemberIdsAll(supabase, [staffId])
-  const allStaffLicenses = (applicationsData ?? []).map((app: any) => ({
-    id: app.id,
-    staff_member_id: app.staff_member_id,
-    license_type: app.application_name,
-    license_number: app.license_number || 'N/A',
-    state: app.state,
-    status: app.status === 'approved' ? 'active' : app.status === 'rejected' ? 'expired' : 'active',
-    expiry_date: app.expiry_date,
-    days_until_expiry: app.days_until_expiry,
+  const { data: staffLicensesData } = await q.getStaffLicensesByStaffMemberIds(supabase, [staffId])
+  const allStaffLicenses = (staffLicensesData ?? []).map((license: any) => ({
+    id: license.id,
+    staff_member_id: license.staff_member_id,
+    license_type: license.license_type,
+    license_number: license.license_number || 'N/A',
+    state: license.state,
+    status: license.status,
+    expiry_date: license.expiry_date,
+    days_until_expiry: license.days_until_expiry,
   }))
 
   const profileCard = (

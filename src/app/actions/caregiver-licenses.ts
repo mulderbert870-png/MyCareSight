@@ -12,12 +12,13 @@ export type InsertCaregiverLicenseInput = {
   licenseNumber: string
   state: string
   expiryDate: string | null
+  issueDate?: string | null
 }
 
 /**
- * Inserts a staff-linked applications row (caregiver license).
+ * Inserts a staff_licenses row for caregiver certifications.
  * Uses the service role after verifying the signed-in user may manage this caregiver,
- * so inserts work even when RLS on `applications` has not been extended for client owners.
+ * so inserts work even when RLS has not been extended yet in the target environment.
  */
 export async function insertCaregiverLicenseApplicationAction(
   input: InsertCaregiverLicenseInput
@@ -66,39 +67,37 @@ export async function insertCaregiverLicenseApplicationAction(
 
   const today = new Date()
   const todayStr = today.toISOString().split('T')[0]
+  const issueDate = input.issueDate || todayStr
+  const expiryDate = input.expiryDate || todayStr
 
   let daysUntilExpiry: number | null = null
-  if (input.expiryDate) {
-    const expiryDate = new Date(input.expiryDate)
-    const diffTime = expiryDate.getTime() - today.getTime()
+  if (expiryDate) {
+    const expiryDateObj = new Date(expiryDate)
+    const diffTime = expiryDateObj.getTime() - today.getTime()
     daysUntilExpiry = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
   }
 
-  let status = 'approved'
-  if (daysUntilExpiry !== null && daysUntilExpiry < 0) {
-    status = 'rejected'
+  let status: 'active' | 'expiring' | 'expired' = 'active'
+  if (daysUntilExpiry !== null && daysUntilExpiry <= 0) {
+    status = 'expired'
+  } else if (daysUntilExpiry !== null && daysUntilExpiry <= 30) {
+    status = 'expiring'
   }
 
   const row = {
     staff_member_id: input.staffMemberId,
-    company_owner_id: null,
-    application_name: input.licenseType.trim(),
+    license_type: input.licenseType.trim(),
     license_number: input.licenseNumber.trim(),
     state: input.state.trim() || '—',
     status,
-    progress_percentage: 100,
-    started_date: todayStr,
-    last_updated_date: todayStr,
-    submitted_date: todayStr,
-    issue_date: null,
-    expiry_date: input.expiryDate || null,
+    issue_date: issueDate,
+    expiry_date: expiryDate,
     days_until_expiry: daysUntilExpiry,
-    issuing_authority: null,
   }
 
   try {
     const admin = createAdminClient()
-    const { data, error } = await admin.from('applications').insert(row).select('id').single()
+    const { data, error } = await admin.from('staff_licenses').insert(row).select('id').single()
 
     if (error) {
       return { ok: false, error: error.message || 'Failed to save license.' }
@@ -113,19 +112,19 @@ export async function insertCaregiverLicenseApplicationAction(
       msg.includes('SUPABASE_SERVICE_ROLE_KEY') || msg.includes('Missing SUPABASE_SERVICE_ROLE_KEY')
 
     if (missingServiceRole) {
-      const { data, error } = await q.insertApplicationRow(supabase, row)
+      const { data, error } = await q.insertStaffLicenseRow(supabase, row)
       if (error) {
         return {
           ok: false,
           error:
-            `${error.message} If this is an RLS error, apply migrations phast_two/020 and 021 in Supabase, or set SUPABASE_SERVICE_ROLE_KEY on the server.`,
+            `${error.message} If this is an RLS error, apply staff_licenses RLS migrations in Supabase, or set SUPABASE_SERVICE_ROLE_KEY on the server.`,
         }
       }
       if (!data?.id) {
         return {
           ok: false,
           error:
-            'License was not saved. Set SUPABASE_SERVICE_ROLE_KEY on the server or apply staff-license RLS migrations (020, 021).',
+            'License was not saved. Set SUPABASE_SERVICE_ROLE_KEY on the server or apply staff_licenses RLS migration.',
         }
       }
       return { ok: true, id: data.id }
