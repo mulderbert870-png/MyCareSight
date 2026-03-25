@@ -5,7 +5,8 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import StaffLayout from '@/components/StaffLayout'
 import AddCertificationModal from '@/components/AddCertificationModal'
 import EditCertificationModal from '@/components/EditCertificationModal'
-import { getCertifications, getCertificationTypes } from '@/app/actions/certifications'
+import { getCertificationTypes } from '@/app/actions/certifications'
+import { getMyStaffCertifications } from '@/app/actions/staff-member-certifications'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
 import { Plus, Edit, Eye, Award, Loader2 } from 'lucide-react'
@@ -39,6 +40,7 @@ function MyCertificationsContent() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [selectedCertification, setSelectedCertification] = useState<Certification | null>(null)
+  const [hasStaffProfile, setHasStaffProfile] = useState(true)
   const [loadingCertificationId, setLoadingCertificationId] = useState<string | null>(null)
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
@@ -68,12 +70,12 @@ function MyCertificationsContent() {
       const { count } = await q.getUnreadNotificationsCount(supabase, currentUser.id)
       setUnreadNotifications(count ?? 0)
 
-      // Load certifications and types
       const [certsResult, typesResult] = await Promise.all([
-        getCertifications(),
-        getCertificationTypes()
+        getMyStaffCertifications(),
+        getCertificationTypes(),
       ])
 
+      setHasStaffProfile(certsResult.hasStaffProfile)
       if (certsResult.data) {
         setCertifications(certsResult.data as Certification[])
       }
@@ -206,6 +208,14 @@ function MyCertificationsContent() {
             Manage all your professional certifications and licenses
           </p>
         </div>
+
+        {!hasStaffProfile && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Your login is not linked to an agency staff profile. You can still see certifications saved to your
+            account before this change. Ask your agency to link your account so new entries match the agency
+            “Manage certifications” list (same database records).
+          </div>
+        )}
 
         {/* Add New Certification Button */}
         <div className='flex justify-end'>

@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import Modal from './Modal'
 import { Upload, X, Loader2, Calendar, FileText } from 'lucide-react'
-import { createCertification, type CreateCertificationData } from '@/app/actions/certifications'
+import type { CreateCertificationData } from '@/app/actions/certifications'
+import { createMyStaffCertification } from '@/app/actions/staff-member-certifications'
 import { createClient } from '@/lib/supabase/client'
 import { US_STATES } from '@/lib/constants'
 
@@ -160,8 +161,8 @@ export default function AddCertificationModal({
         setIsUploading(false)
       }
 
-      // Create certification
-      const result = await createCertification({
+      // Persist on staff_licenses (same source as agency "Manage certifications")
+      const result = await createMyStaffCertification({
         ...formData,
         document_url: documentUrl,
       })

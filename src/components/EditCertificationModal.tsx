@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect } from 'react'
 import Modal from './Modal'
 import { Upload, X, Loader2, Calendar, FileText } from 'lucide-react'
-import { updateCertification, type UpdateCertificationData } from '@/app/actions/certifications'
+import type { UpdateCertificationData } from '@/app/actions/certifications'
+import { updateUnifiedCaregiverCertification } from '@/app/actions/staff-member-certifications'
 import { createClient } from '@/lib/supabase/client'
 import { US_STATES } from '@/lib/constants'
 
@@ -175,8 +176,7 @@ export default function EditCertificationModal({
         setIsUploading(false)
       }
 
-      // Update certification
-      const result = await updateCertification(certification.id, {
+      const result = await updateUnifiedCaregiverCertification(certification.id, {
         ...formData,
         document_url: documentUrl,
       })

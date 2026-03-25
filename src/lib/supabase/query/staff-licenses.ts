@@ -19,3 +19,12 @@ export async function insertStaffLicenseRow(
 ) {
   return supabase.from('staff_licenses').insert(data).select('id').single()
 }
+
+/** Update a staff_licenses row by id. */
+export async function updateStaffLicenseRow(
+  supabase: Supabase,
+  id: string,
+  data: Record<string, unknown>
+) {
+  return supabase.from('staff_licenses').update(data).eq('id', id).select().single()
+}

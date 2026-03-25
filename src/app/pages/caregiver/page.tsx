@@ -43,6 +43,7 @@ export default async function StaffDashboardPage() {
     return aDate - bDate
   })
 
+  const { data: staffLicensesFromDb } = await q.getStaffLicensesByStaffMemberIds(supabase, [staffMember.id])
   const { data: certificationsData } = await q.getCertificationsByUserId(supabase, session.user.id)
 
   const applicationIds = (applicationsOrdered ?? []).map((app: { id: string }) => app.id)
@@ -87,6 +88,54 @@ export default async function StaffDashboardPage() {
     documents_count: documentCounts[app.id] || 0,
     source: 'application' as const
   })) || []
+
+  type StaffLicRow = {
+    id: string
+    license_type: string
+    license_number: string
+    state: string | null
+    status: string
+    issue_date: string | null
+    expiry_date: string
+    days_until_expiry: number | null
+    issuing_authority?: string | null
+    document_url?: string | null
+  }
+  const staffLicensesAsLicenses = ((staffLicensesFromDb ?? []) as StaffLicRow[]).map((sl) => {
+    const expiryDate = sl.expiry_date
+    const today = new Date()
+    const expiry = new Date(expiryDate)
+    const daysUntilExpiry =
+      sl.days_until_expiry ??
+      Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+    let normStatus = (sl.status || 'active').toLowerCase()
+    if (normStatus === 'active' && daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
+      normStatus = 'expiring'
+    }
+    if (daysUntilExpiry <= 0) normStatus = 'expired'
+
+    return {
+      id: sl.id,
+      license_type: sl.license_type,
+      license_number: sl.license_number,
+      state: sl.state,
+      status: normStatus,
+      issue_date: sl.issue_date,
+      expiry_date: sl.expiry_date,
+      days_until_expiry: daysUntilExpiry,
+      issuing_authority: sl.issuing_authority,
+      activated_date: sl.issue_date,
+      renewal_due_date: expiryDate
+        ? (() => {
+            const renewal = new Date(expiryDate)
+            renewal.setDate(renewal.getDate() - 90)
+            return renewal.toISOString().split('T')[0]
+          })()
+        : null,
+      documents_count: sl.document_url ? 1 : 0,
+      source: 'staff_license' as const,
+    }
+  })
 
   type CertRow = {
     id: string
@@ -133,8 +182,8 @@ export default async function StaffDashboardPage() {
     }
   })
 
-  // Combine applications and certifications, sorted by expiry date
-  const expiringList = [...applicationsAsLicenses, ...certificationsAsLicenses].filter(l => {
+  // Combine applications, staff_licenses (agency-synced), and legacy certifications
+  const expiringList = [...applicationsAsLicenses, ...staffLicensesAsLicenses, ...certificationsAsLicenses].filter(l => {
     if (l.status === 'expiring') return l;
   }).sort((a, b) => {
     if (!a.expiry_date) return 1
@@ -142,7 +191,7 @@ export default async function StaffDashboardPage() {
     return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()
   }).reverse()
 
-  const staffLicenses = [...applicationsAsLicenses, ...certificationsAsLicenses].sort((a, b) => {
+  const staffLicenses = [...applicationsAsLicenses, ...staffLicensesAsLicenses, ...certificationsAsLicenses].sort((a, b) => {
     if (!a.expiry_date) return 1
     if (!b.expiry_date) return -1
     return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()

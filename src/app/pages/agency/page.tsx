@@ -282,7 +282,7 @@ export default async function DashboardPage() {
 
             {/* Manage Staff Certifications Button */}
             <Link
-              href="/pages/agency/staff"
+              href="/pages/agency/caregiver"
               className="block w-full text-center py-2.5 px-4 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg text-gray-700 font-medium transition-colors"
             >
               Manage Staff Certifications

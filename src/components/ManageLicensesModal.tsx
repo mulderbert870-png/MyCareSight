@@ -28,6 +28,7 @@ export default function ManageLicensesModal({
     if (!isOpen) setIsAddOpen(false)
   }, [isOpen])
 
+
   const handleMainModalClose = () => {
     if (isAddOpen) {
       setIsAddOpen(false)

@@ -43,7 +43,6 @@ export default async function StaffPage() {
     expiry_date: license.expiry_date,
     days_until_expiry: license.days_until_expiry,
   })) || []
-
   // Group licenses by staff member
   const licensesByStaff = allStaffLicenses?.reduce((acc: Record<string, typeof allStaffLicenses>, license) => {
     if (!acc[license.staff_member_id]) {
@@ -52,6 +51,7 @@ export default async function StaffPage() {
     acc[license.staff_member_id].push(license)
     return acc
   }, {}) || {}
+
 
   // Calculate statistics
   const totalStaff = staffMembers?.length || 0

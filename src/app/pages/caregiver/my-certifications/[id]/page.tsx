@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import StaffLayout from '@/components/StaffLayout'
 import Link from 'next/link'
-import { getCertification } from '@/app/actions/certifications'
+import { getUnifiedCaregiverCertificationDetail } from '@/app/actions/staff-member-certifications'
 import { 
   ArrowLeft,
   Award,
@@ -41,12 +41,12 @@ export default async function CertificationDetailPage({
 
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
 
-  const result = await getCertification(id)
-  let certification = result.data
+  const unified = await getUnifiedCaregiverCertificationDetail(id)
+  let certification = unified.data
   let isApplication = false
   let application = null
 
-  if (result.error || !result.data) {
+  if (!certification) {
     const { data: staffMember } = await q.getStaffMemberByUserId(supabase, session.user.id)
 
     if (staffMember) {
@@ -78,6 +78,10 @@ export default async function CertificationDetailPage({
     } else {
       redirect('/pages/caregiver/my-certifications?error=Certification not found')
     }
+  }
+
+  if (!certification) {
+    redirect('/pages/caregiver/my-certifications?error=Certification not found')
   }
 
   const formatDate = (date: string | null) => {
