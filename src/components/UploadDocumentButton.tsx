@@ -119,35 +119,35 @@ export default function UploadDocumentButton({
           const { data: ownerProfile } = applicationDetails.company_owner_id
             ? await q.getUserProfileById(supabase, applicationDetails.company_owner_id)
             : { data: null }
-          if (expertProfile?.email) {
-            // Trim email to remove any whitespace/newline characters
-            const trimmedEmail = expertProfile.email.trim()
-            fetch('/api/send-email-notification', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                expertEmail: trimmedEmail,
-                expertName: expertProfile.full_name || undefined,
-                ownerName: ownerProfile?.full_name || undefined,
-                applicationName: applicationDetails.application_name,
-                documentName: file.name,
-                applicationId: applicationId
-              })
-            }).then(async response => {
-              const result = await response.json()
-              if (!response.ok && result.warning) {
-                // Testing mode warning - log but don't show error to user
-                console.warn('Email notification:', result.warning)
-              } else if (!response.ok) {
-                console.error('Failed to send email notification:', result)
-              }
-            }).catch(err => {
-              console.error('Failed to send email notification:', err)
-              // Don't throw - email failure shouldn't break upload
-            })
-          }
+          // if (expertProfile?.email) {
+          //   // Trim email to remove any whitespace/newline characters
+          //   const trimmedEmail = expertProfile.email.trim()
+          //   fetch('/api/send-email-notification', {
+          //     method: 'POST',
+          //     headers: {
+          //       'Content-Type': 'application/json',
+          //     },
+          //     body: JSON.stringify({
+          //       expertEmail: trimmedEmail,
+          //       expertName: expertProfile.full_name || undefined,
+          //       ownerName: ownerProfile?.full_name || undefined,
+          //       applicationName: applicationDetails.application_name,
+          //       documentName: file.name,
+          //       applicationId: applicationId
+          //     })
+          //   }).then(async response => {
+          //     const result = await response.json()
+          //     if (!response.ok && result.warning) {
+          //       // Testing mode warning - log but don't show error to user
+          //       console.warn('Email notification:', result.warning)
+          //     } else if (!response.ok) {
+          //       console.error('Failed to send email notification:', result)
+          //     }
+          //   }).catch(err => {
+          //     console.error('Failed to send email notification:', err)
+          //     // Don't throw - email failure shouldn't break upload
+          //   })
+          // }
         }
       } catch (emailError) {
         console.error('Error sending email notification:', emailError)
