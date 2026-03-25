@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
+import { getMyStaffCertifications, type MyStaffCertificationUi } from '@/app/actions/staff-member-certifications'
 import StaffLayout from '@/components/StaffLayout'
 import Link from 'next/link'
 import {
@@ -43,8 +44,7 @@ export default async function StaffDashboardPage() {
     return aDate - bDate
   })
 
-  const { data: staffLicensesFromDb } = await q.getStaffLicensesByStaffMemberIds(supabase, [staffMember.id])
-  const { data: certificationsData } = await q.getCertificationsByUserId(supabase, session.user.id)
+  const myCertsResult = await getMyStaffCertifications()
 
   const applicationIds = (applicationsOrdered ?? []).map((app: { id: string }) => app.id)
   const { data: applicationDocuments } =
@@ -89,42 +89,27 @@ export default async function StaffDashboardPage() {
     source: 'application' as const
   })) || []
 
-  type StaffLicRow = {
-    id: string
-    license_type: string
-    license_number: string
-    state: string | null
-    status: string
-    issue_date: string | null
-    expiry_date: string
-    days_until_expiry: number | null
-    issuing_authority?: string | null
-    document_url?: string | null
-  }
-  const staffLicensesAsLicenses = ((staffLicensesFromDb ?? []) as StaffLicRow[]).map((sl) => {
-    const expiryDate = sl.expiry_date
+  /** Same rows as /pages/caregiver/my-certifications (staff_licenses + legacy certifications). */
+  function mapMyCertUiToDashboardLicense(c: MyStaffCertificationUi) {
+    const expiryDate = c.expiration_date
     const today = new Date()
     const expiry = new Date(expiryDate)
-    const daysUntilExpiry =
-      sl.days_until_expiry ??
-      Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-    let normStatus = (sl.status || 'active').toLowerCase()
-    if (normStatus === 'active' && daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
-      normStatus = 'expiring'
-    }
+    const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+    let normStatus: 'active' | 'expiring' | 'expired' = 'active'
     if (daysUntilExpiry <= 0) normStatus = 'expired'
+    else if (daysUntilExpiry <= 90) normStatus = 'expiring'
 
     return {
-      id: sl.id,
-      license_type: sl.license_type,
-      license_number: sl.license_number,
-      state: sl.state,
+      id: c.id,
+      license_type: c.type,
+      license_number: c.license_number,
+      state: c.state,
       status: normStatus,
-      issue_date: sl.issue_date,
-      expiry_date: sl.expiry_date,
+      issue_date: c.issue_date,
+      expiry_date: c.expiration_date,
       days_until_expiry: daysUntilExpiry,
-      issuing_authority: sl.issuing_authority,
-      activated_date: sl.issue_date,
+      issuing_authority: c.issuing_authority,
+      activated_date: c.issue_date,
       renewal_due_date: expiryDate
         ? (() => {
             const renewal = new Date(expiryDate)
@@ -132,66 +117,23 @@ export default async function StaffDashboardPage() {
             return renewal.toISOString().split('T')[0]
           })()
         : null,
-      documents_count: sl.document_url ? 1 : 0,
-      source: 'staff_license' as const,
+      documents_count: c.document_url ? 1 : 0,
+      source: 'my_certifications' as const,
     }
-  })
-
-  type CertRow = {
-    id: string
-    type: string
-    license_number: string
-    state: string | null
-    issue_date: string | null
-    expiration_date: string
-    issuing_authority: string
-    status: string
-    document_url: string | null
   }
-  const certificationsAsLicenses = ((certificationsData ?? []) as CertRow[]).map(cert => {
-    const expiryDate = cert.expiration_date
-    const today = new Date()
-    const expiry = new Date(expiryDate)
-    const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-    
-    let status = 'active'
-    if (cert.status === 'Expired' || daysUntilExpiry <= 0) {
-      status = 'expired'
-    } else if (daysUntilExpiry <= 90 && daysUntilExpiry > 0) {
-      status = 'expiring'
-    }
 
-    return {
-      id: cert.id,
-      license_type: cert.type,
-      license_number: cert.license_number,
-      state: cert.state || null,
-      status: status,
-      issue_date: cert.issue_date,
-      expiry_date: cert.expiration_date,
-      days_until_expiry: daysUntilExpiry,
-      issuing_authority: cert.issuing_authority,
-      activated_date: cert.issue_date,
-      renewal_due_date: expiryDate ? (() => {
-        const renewal = new Date(expiryDate)
-        renewal.setDate(renewal.getDate() - 90)
-        return renewal.toISOString().split('T')[0]
-      })() : null,
-      documents_count: cert.document_url ? 1 : 0,
-      source: 'certification' as const
-    }
-  })
+  const myCertificationsAsLicenses = (myCertsResult.data ?? []).map(mapMyCertUiToDashboardLicense)
 
-  // Combine applications, staff_licenses (agency-synced), and legacy certifications
-  const expiringList = [...applicationsAsLicenses, ...staffLicensesAsLicenses, ...certificationsAsLicenses].filter(l => {
-    if (l.status === 'expiring') return l;
-  }).sort((a, b) => {
+  // Applications (in-progress) + same certification list as My certifications page
+  const allLicensesSorted = [...applicationsAsLicenses, ...myCertificationsAsLicenses].sort((a, b) => {
     if (!a.expiry_date) return 1
     if (!b.expiry_date) return -1
     return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()
   }).reverse()
 
-  const staffLicenses = [...applicationsAsLicenses, ...staffLicensesAsLicenses, ...certificationsAsLicenses].sort((a, b) => {
+  const expiringList = allLicensesSorted
+
+  const staffLicenses = [...applicationsAsLicenses, ...myCertificationsAsLicenses].sort((a, b) => {
     if (!a.expiry_date) return 1
     if (!b.expiry_date) return -1
     return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()
