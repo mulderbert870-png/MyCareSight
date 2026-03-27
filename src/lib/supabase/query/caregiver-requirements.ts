@@ -20,6 +20,12 @@ export async function getCaregiverRequirementsByPatientId(
     .maybeSingle()
 }
 
+/** Batch-load caregiver requirements for many patients. */
+export async function getCaregiverRequirementsByPatientIds(supabase: Supabase, patientIds: string[]) {
+  if (patientIds.length === 0) return { data: [] as CaregiverRequirement[], error: null }
+  return supabase.from('caregiver_requirements').select('*').in('patient_id', patientIds)
+}
+
 /** Upsert caregiver requirements for a patient (insert or update by patient_id). */
 export async function upsertCaregiverRequirements(
   supabase: Supabase,

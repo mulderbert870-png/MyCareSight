@@ -13,7 +13,8 @@ import {
   Menu,
   X,
   BarChart3,
-  UserCircle
+  UserCircle,
+  CalendarDays
 } from 'lucide-react'
 import { signOut } from '@/app/actions/auth'
 import LoadingSpinner from './LoadingSpinner'
@@ -73,6 +74,7 @@ export default function DashboardLayout({
     ? [
         { href: '/pages/agency/clients', label: 'Clients', icon: UserCircle },
         { href: '/pages/agency/caregiver', label: 'Caregivers', icon: Users },
+        { href: '/pages/agency/care-visits', label: 'Care Visits', icon: CalendarDays },
       ]
     : [
         { href: '/pages/agency', label: 'Home', icon: Home },
