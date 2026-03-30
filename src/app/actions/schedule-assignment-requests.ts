@@ -108,11 +108,14 @@ export async function markScheduleMissedAction(
   const session = await getSession()
   if (!session?.user?.id) return { error: 'You must be signed in.' }
   const supabase = await createClient()
-  const { error } = await q.updateSchedule(supabase, scheduleId, {
+  const { data, error } = await q.updateSchedule(supabase, scheduleId, {
     status: 'missed',
     notes: reason?.trim() ? reason.trim() : null,
   })
   if (error) return { error: error.message || 'Could not mark visit as missed.' }
+  if ((data?.status ?? '').toLowerCase().trim() !== 'missed') {
+    return { error: 'Visit status was not updated to missed. Please refresh and try again.' }
+  }
   revalidatePath(COORDINATOR_PATH)
   return { ok: true }
 }

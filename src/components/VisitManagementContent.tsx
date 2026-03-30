@@ -287,6 +287,7 @@ export default function VisitManagementContent({
                   </div>
                   {group.visits.map((visit) => {
                     const isPastVisit = isPastVisitDate(visit.date)
+                    const isLockedStatus = visit.status === 'completed' || visit.status === 'missed'
                     return (
                     <div key={visit.id} className={`bg-white border rounded-xl p-4 shadow-sm border-l-4 ${statusLeftBorderClass(visit.status)} ${visit.status === 'unassigned' ? 'border-red-200' : 'border-gray-200'}`}>
                       <div className="flex flex-col lg:flex-row lg:items-center gap-4">
@@ -312,7 +313,7 @@ export default function VisitManagementContent({
                         </div>
                         <div className="flex lg:flex-col gap-2 lg:w-[130px]">
                           <button type="button" onClick={() => setDetailVisit(visit)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50">Details</button>
-                          {!isPastVisit && visit.status !== 'completed' ? (
+                          {!isPastVisit && !isLockedStatus ? (
                             <>
                               <button type="button" disabled={isPending} onClick={() => setReassignVisit(visit)} className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-60">
                                 {visit.caregiverId ? 'Reassign' : 'Assign'}
@@ -440,7 +441,7 @@ export default function VisitManagementContent({
               <div className="rounded-lg bg-gray-50 p-3"><div className="text-xs text-gray-500">Caregiver</div><div className="font-semibold">{detailVisit.caregiverName ?? '-'}</div></div>
             </div>
             <div><div className="text-xs text-gray-500 mb-1">ADL Tasks</div><div className="flex flex-wrap gap-2">{detailVisit.adlTasks.length ? detailVisit.adlTasks.map((task) => <span key={task} className="rounded-full border border-purple-200 text-purple-700 bg-purple-50 px-2 py-0.5 text-xs">{task}</span>) : <span className="text-sm text-gray-500">No ADL tasks</span>}</div></div>
-            {detailVisit.status !== 'completed' && !isPastVisitDate(detailVisit.date) ? (
+            {detailVisit.status !== 'completed' && detailVisit.status !== 'missed' && !isPastVisitDate(detailVisit.date) ? (
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setMissVisit(detailVisit)} className="rounded-lg border border-orange-200 text-orange-700 px-3 py-2 text-sm font-medium hover:bg-orange-50">Mark Missed</button>
                 <button type="button" onClick={() => setReassignVisit(detailVisit)} className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm font-medium hover:bg-blue-700">{detailVisit.caregiverId ? 'Reassign Caregiver' : 'Assign Caregiver'}</button>
