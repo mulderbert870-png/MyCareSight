@@ -95,7 +95,7 @@ export async function getStaffRoles() {
 
   try {
     const { data: roles, error } = await supabase
-      .from('staff_roles')
+      .from('caregiver_roles')
       .select('*')
       .order('name', { ascending: true })
 
@@ -118,7 +118,7 @@ export async function createStaffRole(name: string) {
 
   try {
     const { data, error } = await supabase
-      .from('staff_roles')
+      .from('caregiver_roles')
       .insert({ name })
       .select()
       .single()
@@ -139,7 +139,7 @@ export async function updateStaffRole(id: number, name: string) {
 
   try {
     const { data, error } = await supabase
-      .from('staff_roles')
+      .from('caregiver_roles')
       .update({ name })
       .eq('id', id)
       .select()
@@ -161,7 +161,7 @@ export async function deleteStaffRole(id: number) {
 
   try {
     const { error } = await supabase
-      .from('staff_roles')
+      .from('caregiver_roles')
       .delete()
       .eq('id', id)
 

@@ -45,22 +45,20 @@ export async function getStaffCertificationsReport() {
       return { error: 'You must be logged in', data: null }
     }
 
-    // Agency admin: staff_members.company_owner_id is clients.id — get client for current user first
-    const { data: client } = await supabase
-      .from('clients')
+    const { data: admin } = await supabase
+      .from('agency_admins')
       .select('id')
-      .eq('company_owner_id', user.id)
+      .eq('user_id', user.id)
       .single()
 
-    if (!client?.id) {
+    if (!admin?.id) {
       return { error: null, data: [] }
     }
 
-    // All caregivers (all statuses) so we show all certifications
     const { data: staffMembers, error: staffError } = await supabase
-      .from('staff_members')
+      .from('caregiver_members')
       .select('id, first_name, last_name, email, phone, user_id')
-      .eq('company_owner_id', client.id)
+      .eq('company_owner_id', admin.id)
       .order('first_name', { ascending: true })
 
     if (staffError) {
@@ -71,39 +69,33 @@ export async function getStaffCertificationsReport() {
       return { error: null, data: [] }
     }
 
-    const userIds = staffMembers
-      .map(sm => sm.user_id)
-      .filter((id): id is string => id !== null)
+    const staffIds = staffMembers.map((sm) => sm.id)
 
-    if (userIds.length === 0) {
-      return { error: null, data: [] }
-    }
-
-    // Get all certifications for these users
-    const { data: certifications, error: certError } = await supabase
-      .from('certifications')
+    const { data: credentials, error: certError } = await supabase
+      .from('caregiver_credentials')
       .select('*')
-      .in('user_id', userIds)
+      .in('caregiver_member_id', staffIds)
       .order('expiration_date', { ascending: true })
 
     if (certError) {
       return { error: certError.message, data: null }
     }
 
-    // Create a map of user_id to staff member
-    const staffMap = new Map(
-      staffMembers.map(sm => [sm.user_id, sm])
-    )
+    const staffMap = new Map(staffMembers.map((sm) => [sm.user_id, sm]))
+    const staffById = new Map(staffMembers.map((sm) => [sm.id, sm]))
 
-    // Combine data
-    const reportData: StaffCertificationReportRow[] = (certifications || []).map(cert => {
-      const staff = staffMap.get(cert.user_id)
+    const reportData: StaffCertificationReportRow[] = (credentials || []).map((cert) => {
+      const staff =
+        (cert.user_id ? staffMap.get(cert.user_id as string) : undefined) ??
+        (cert.caregiver_member_id ? staffById.get(cert.caregiver_member_id as string) : undefined)
+      const expStr = cert.expiration_date as string | null
       const today = new Date()
-      const expiry = new Date(cert.expiration_date)
+      const expiry = expStr ? new Date(expStr) : today
       const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
 
       let status: 'Active' | 'Expiring Soon' | 'Expired'
-      if (daysUntilExpiry <= 0 || cert.status === 'Expired') {
+      const st = String(cert.status || '')
+      if (!expStr || daysUntilExpiry <= 0 || st === 'Expired') {
         status = 'Expired'
       } else if (daysUntilExpiry <= 90) {
         status = 'Expiring Soon'
@@ -111,28 +103,30 @@ export async function getStaffCertificationsReport() {
         status = 'Active'
       }
 
-      const staffName = staff 
-        ? `${staff.first_name} ${staff.last_name}`
-        : 'Unknown Staff'
-      
-      const contact = staff
-        ? `${staff.email} ${staff.phone ? `(${staff.phone})` : ''}`
-        : 'N/A'
+      const staffName = staff ? `${staff.first_name} ${staff.last_name}` : 'Unknown Staff'
+
+      const contact = staff ? `${staff.email} ${staff.phone ? `(${staff.phone})` : ''}` : 'N/A'
 
       return {
         staff_name: staffName,
         contact: contact.trim(),
-        certification: cert.type,
-        cert_number: cert.license_number,
-        state: cert.state || 'N/A',
-        issuing_authority: cert.issuing_authority,
-        issue_date: cert.issue_date 
-          ? new Date(cert.issue_date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+        certification: (cert.source_credential_name as string) || 'Credential',
+        cert_number: (cert.credential_number as string) || '',
+        state: (cert.state as string) || 'N/A',
+        issuing_authority: (cert.issuing_authority as string) || 'N/A',
+        issue_date: cert.issue_date
+          ? new Date(cert.issue_date as string).toLocaleDateString('en-US', {
+              month: '2-digit',
+              day: '2-digit',
+              year: 'numeric',
+            })
           : 'N/A',
-        expiration: new Date(cert.expiration_date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }),
+        expiration: expStr
+          ? new Date(expStr).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+          : 'N/A',
         status,
-        certification_id: cert.id,
-        document_url: cert.document_url
+        certification_id: cert.id as string,
+        document_url: cert.document_url as string | null,
       }
     })
 
@@ -151,22 +145,20 @@ export async function getExpiringCertificationsReport() {
       return { error: 'You must be logged in', data: null }
     }
 
-    // Agency admin: staff_members.company_owner_id is clients.id — get client for current user first
-    const { data: client } = await supabase
-      .from('clients')
+    const { data: admin } = await supabase
+      .from('agency_admins')
       .select('id')
-      .eq('company_owner_id', user.id)
+      .eq('user_id', user.id)
       .single()
 
-    if (!client?.id) {
+    if (!admin?.id) {
       return { error: null, data: [] }
     }
 
-    // All caregivers (all statuses) so we include all their certifications
     const { data: staffMembers, error: staffError } = await supabase
-      .from('staff_members')
+      .from('caregiver_members')
       .select('id, first_name, last_name, email, phone, user_id')
-      .eq('company_owner_id', client.id)
+      .eq('company_owner_id', admin.id)
       .order('first_name', { ascending: true })
 
     if (staffError) {
@@ -177,44 +169,37 @@ export async function getExpiringCertificationsReport() {
       return { error: null, data: [] }
     }
 
-    const userIds = staffMembers
-      .map(sm => sm.user_id)
-      .filter((id): id is string => id !== null)
+    const staffIds = staffMembers.map((sm) => sm.id)
 
-    if (userIds.length === 0) {
-      return { error: null, data: [] }
-    }
-
-    // Get all certifications for these users
-    const { data: certifications, error: certError } = await supabase
-      .from('certifications')
+    const { data: credentials, error: certError } = await supabase
+      .from('caregiver_credentials')
       .select('*')
-      .in('user_id', userIds)
+      .in('caregiver_member_id', staffIds)
       .order('expiration_date', { ascending: true })
 
     if (certError) {
       return { error: certError.message, data: null }
     }
 
-    // Create a map of user_id to staff member
-    const staffMap = new Map(
-      staffMembers.map(sm => [sm.user_id, sm])
-    )
+    const staffMap = new Map(staffMembers.map((sm) => [sm.user_id, sm]))
+    const staffById = new Map(staffMembers.map((sm) => [sm.id, sm]))
 
     const today = new Date()
-    const ninetyDaysFromNow = new Date()
-    ninetyDaysFromNow.setDate(today.getDate() + 90)
 
-    // Filter certifications that are expiring soon or expired
-    const reportData: ExpiringCertificationReportRow[] = (certifications || [])
-      .filter(cert => {
-        const expiry = new Date(cert.expiration_date)
+    const reportData: ExpiringCertificationReportRow[] = (credentials || [])
+      .filter((cert) => {
+        const expStr = cert.expiration_date as string | null
+        if (!expStr) return String(cert.status || '') === 'Expired'
+        const expiry = new Date(expStr)
         const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
         return daysUntilExpiry <= 90 || cert.status === 'Expired'
       })
-      .map(cert => {
-        const staff = staffMap.get(cert.user_id)
-        const expiry = new Date(cert.expiration_date)
+      .map((cert) => {
+        const staff =
+          (cert.user_id ? staffMap.get(cert.user_id as string) : undefined) ??
+          (cert.caregiver_member_id ? staffById.get(cert.caregiver_member_id as string) : undefined)
+        const expStr = cert.expiration_date as string
+        const expiry = new Date(expStr)
         const daysUntilExpiry = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
 
         let status: 'Expiring Soon' | 'Expired'
@@ -224,23 +209,23 @@ export async function getExpiringCertificationsReport() {
           status = 'Expiring Soon'
         }
 
-        const staffName = staff 
-          ? `${staff.first_name} ${staff.last_name}`
-          : 'Unknown Staff'
-        
-        const contact = staff
-          ? `${staff.email} ${staff.phone ? `(${staff.phone})` : ''}`
-          : 'N/A'
+        const staffName = staff ? `${staff.first_name} ${staff.last_name}` : 'Unknown Staff'
+
+        const contact = staff ? `${staff.email} ${staff.phone ? `(${staff.phone})` : ''}` : 'N/A'
 
         return {
           staff_name: staffName,
           contact: contact.trim(),
-          certification: cert.type,
-          cert_number: cert.license_number,
-          expiration: new Date(cert.expiration_date).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }),
+          certification: (cert.source_credential_name as string) || 'Credential',
+          cert_number: (cert.credential_number as string) || '',
+          expiration: new Date(expStr).toLocaleDateString('en-US', {
+            month: '2-digit',
+            day: '2-digit',
+            year: 'numeric',
+          }),
           status,
-          certification_id: cert.id,
-          document_url: cert.document_url
+          certification_id: cert.id as string,
+          document_url: cert.document_url as string | null,
         }
       })
 
@@ -259,21 +244,20 @@ export async function getStaffRosterReport() {
       return { error: 'You must be logged in', data: null }
     }
 
-    // Agency admin: staff_members.company_owner_id references clients.id — get client for current user first
-    const { data: client } = await supabase
-      .from('clients')
+    const { data: admin } = await supabase
+      .from('agency_admins')
       .select('id')
-      .eq('company_owner_id', user.id)
+      .eq('user_id', user.id)
       .single()
 
-    if (!client?.id) {
+    if (!admin?.id) {
       return { error: null, data: [] }
     }
 
     const { data: staffMembers, error: staffError } = await supabase
-      .from('staff_members')
+      .from('caregiver_members')
       .select('id, first_name, last_name, email, phone, role, job_title, status')
-      .eq('company_owner_id', client.id)
+      .eq('company_owner_id', admin.id)
       .order('first_name', { ascending: true })
 
     if (staffError) {

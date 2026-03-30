@@ -336,7 +336,7 @@ export async function getApplicationDocumentsApplicationIds(
     .in('application_id', applicationIds)
 }
 
-/** Get applications by staff_member_id (e.g. staff licenses, status approved). */
+/** Get applications by caregiver_member_id (e.g. staff licenses, status approved). */
 export async function getApplicationsByStaffMemberIds(
   supabase: Supabase,
   staffMemberIds: string[]
@@ -345,12 +345,12 @@ export async function getApplicationsByStaffMemberIds(
   return supabase
     .from('applications')
     .select('*')
-    .in('staff_member_id', staffMemberIds)
-    .not('staff_member_id', 'is', null)
+    .in('caregiver_member_id', staffMemberIds)
+    .not('caregiver_member_id', 'is', null)
     .eq('status', 'approved')
 }
 
-/** Get all applications by staff_member_ids (any status, for caregiver dashboard). */
+/** Get all applications by caregiver_member_ids (any status, for caregiver dashboard). */
 export async function getApplicationsByStaffMemberIdsAll(
   supabase: Supabase,
   staffMemberIds: string[]
@@ -359,8 +359,8 @@ export async function getApplicationsByStaffMemberIdsAll(
   return supabase
     .from('applications')
     .select('*')
-    .in('staff_member_id', staffMemberIds)
-    .not('staff_member_id', 'is', null)
+    .in('caregiver_member_id', staffMemberIds)
+    .not('caregiver_member_id', 'is', null)
 }
 
 /** Get application ids by assigned_expert_id. */
@@ -395,7 +395,7 @@ export async function getApplicationById(supabase: Supabase, applicationId: stri
   return supabase.from('applications').select('*').eq('id', applicationId).single()
 }
 
-/** Get application by id and staff_member_id (for staff dashboard detail). */
+/** Get application by id and caregiver_member_id (for staff dashboard detail). */
 export async function getApplicationByIdAndStaffMemberId(
   supabase: Supabase,
   applicationId: string,
@@ -405,7 +405,7 @@ export async function getApplicationByIdAndStaffMemberId(
     .from('applications')
     .select('*')
     .eq('id', applicationId)
-    .eq('staff_member_id', staffMemberId)
+    .eq('caregiver_member_id', staffMemberId)
     .single()
 }
 

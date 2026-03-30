@@ -10,10 +10,10 @@ export async function insertAgency(supabase: Supabase, payload: Record<string, u
 
 export async function updateClientCompanyAndAgency(
   supabase: Supabase,
-  clientId: string,
+  adminId: string,
   updates: { company_name: string; agency_id?: string }
 ) {
-  return supabase.from('clients').update(updates).eq('id', clientId)
+  return supabase.from('agency_admins').update(updates).eq('id', adminId)
 }
 
 export async function getAgenciesExceptId(supabase: Supabase, excludeId: string) {
@@ -31,69 +31,70 @@ export async function updateAgencyById(supabase: Supabase, id: string, payload: 
   return supabase.from('agencies').update(payload).eq('id', id)
 }
 
-export async function updateClientClearAgency(supabase: Supabase, clientId: string) {
-  return supabase.from('clients').update({ company_name: '', agency_id: null }).eq('id', clientId)
+export async function updateClientClearAgency(supabase: Supabase, adminId: string) {
+  return supabase.from('agency_admins').update({ company_name: '', agency_id: null }).eq('id', adminId)
 }
 
 export async function getClientByCompanyOwnerId(supabase: Supabase, companyOwnerId: string) {
-  return supabase.from('clients').select('id').eq('company_owner_id', companyOwnerId).maybeSingle()
+  return supabase.from('agency_admins').select('id').eq('user_id', companyOwnerId).maybeSingle()
 }
 
-/** Get client id and agency_id by company_owner_id (for staff member creation). */
+/** Agency admin id and agency_id by auth user id (for staff creation). */
 export async function getClientByCompanyOwnerIdWithAgency(supabase: Supabase, companyOwnerId: string) {
-  return supabase
-    .from('clients')
-    .select('id, agency_id')
-    .eq('company_owner_id', companyOwnerId)
-    .single()
+  return supabase.from('agency_admins').select('id, agency_id').eq('user_id', companyOwnerId).single()
 }
 
-/** Get agency name by id. */
+/** One company-owner auth user id for an agency (for coordinators / legacy owner_id scoping). */
+export async function getRepresentativeOwnerUserIdForAgency(supabase: Supabase, agencyId: string) {
+  const { data, error } = await supabase
+    .from('agency_admins')
+    .select('company_owner_id, user_id')
+    .eq('agency_id', agencyId)
+    .not('user_id', 'is', null)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+  const uid = data?.company_owner_id ?? data?.user_id ?? null
+  return { data: uid, error }
+}
+
 export async function getAgencyNameById(supabase: Supabase, agencyId: string) {
   return supabase.from('agencies').select('name').eq('id', agencyId).single()
 }
 
-/** Get client by id (full row). */
-export async function getClientById(supabase: Supabase, clientId: string) {
-  return supabase.from('clients').select('*').eq('id', clientId).single()
+/** Full agency admin row by id. */
+export async function getClientById(supabase: Supabase, adminId: string) {
+  return supabase.from('agency_admins').select('*').eq('id', adminId).single()
 }
 
-/** Update client by id (company_name, contact_*, status, etc.). */
-export async function updateClientById(
-  supabase: Supabase,
-  clientId: string,
-  data: Record<string, unknown>
-) {
-  return supabase.from('clients').update(data).eq('id', clientId)
+export async function updateClientById(supabase: Supabase, adminId: string, data: Record<string, unknown>) {
+  return supabase.from('agency_admins').update(data).eq('id', adminId)
 }
 
-export async function getAgencyByAdminId(supabase: Supabase, clientId: string) {
-  return supabase.from('agencies').select('id').contains('agency_admin_ids', [clientId]).maybeSingle()
+export async function getAgencyByAdminId(supabase: Supabase, adminId: string) {
+  return supabase.from('agencies').select('id').contains('agency_admin_ids', [adminId]).maybeSingle()
 }
 
-/** Get agency by admin (client) id, full row. */
-export async function getAgencyByAdminIdFull(supabase: Supabase, clientId: string) {
-  return supabase.from('agencies').select('*').contains('agency_admin_ids', [clientId]).maybeSingle()
+export async function getAgencyByAdminIdFull(supabase: Supabase, adminId: string) {
+  return supabase.from('agencies').select('*').contains('agency_admin_ids', [adminId]).maybeSingle()
 }
 
-export async function updateClientAgencyId(supabase: Supabase, clientId: string, agencyId: string) {
-  return supabase.from('clients').update({ agency_id: agencyId }).eq('id', clientId)
+export async function updateClientAgencyId(supabase: Supabase, adminId: string, agencyId: string) {
+  return supabase.from('agency_admins').update({ agency_id: agencyId }).eq('id', adminId)
 }
 
 export async function insertAgencyWithAdmin(supabase: Supabase, payload: Record<string, unknown>) {
   return supabase.from('agencies').insert(payload).select('id').single()
 }
 
-export async function updateClientCompanyName(supabase: Supabase, clientId: string, companyName: string) {
-  return supabase.from('clients').update({ company_name: companyName }).eq('id', clientId)
+export async function updateClientCompanyName(supabase: Supabase, adminId: string, companyName: string) {
+  return supabase.from('agency_admins').update({ company_name: companyName }).eq('id', adminId)
 }
 
-/** Get all agencies ordered by created_at desc. */
 export async function getAgenciesOrdered(supabase: Supabase) {
   return supabase.from('agencies').select('*').order('created_at', { ascending: false })
 }
 
-/** Get agencies for billing (id, name, agency_admin_ids) ordered by name. */
 export async function getAgenciesForBilling(supabase: Supabase) {
   return supabase
     .from('agencies')
@@ -101,37 +102,32 @@ export async function getAgenciesForBilling(supabase: Supabase) {
     .order('name', { ascending: true })
 }
 
-/** Get agencies id and name only, ordered by name (e.g. for dropdowns). */
 export async function getAgenciesIdName(supabase: Supabase) {
   return supabase.from('agencies').select('id, name').order('name', { ascending: true })
 }
 
-/** Get clients that have company_owner_id (for agency admins list). */
 export async function getClientsWithCompanyOwner(supabase: Supabase) {
   return supabase
-    .from('clients')
+    .from('agency_admins')
     .select('id, contact_name, contact_email')
-    .not('company_owner_id', 'is', null)
+    .not('user_id', 'is', null)
     .order('contact_name', { ascending: true })
 }
 
-/** Get all clients ordered by created_at desc. */
 export async function getAllClientsOrdered(supabase: Supabase) {
-  return supabase.from('clients').select('*').order('created_at', { ascending: false })
+  return supabase.from('agency_admins').select('*').order('created_at', { ascending: false })
 }
 
-/** Get clients by ids (optional select). */
-export async function getClientsByIds(supabase: Supabase, clientIds: string[], select = 'id, company_name') {
-  if (clientIds.length === 0) return { data: [], error: null }
-  return supabase.from('clients').select(select).in('id', clientIds)
+export async function getClientsByIds(supabase: Supabase, adminIds: string[], select = 'id, company_name') {
+  if (adminIds.length === 0) return { data: [], error: null }
+  return supabase.from('agency_admins').select(select).in('id', adminIds)
 }
 
-/** Get clients by company_owner_ids (for user management). */
 export async function getClientsByCompanyOwnerIds(
   supabase: Supabase,
   companyOwnerIds: string[],
-  select = 'company_owner_id, company_name, agency_id'
+  select = 'user_id, company_name, agency_id'
 ) {
   if (companyOwnerIds.length === 0) return { data: [], error: null }
-  return supabase.from('clients').select(select).in('company_owner_id', companyOwnerIds)
+  return supabase.from('agency_admins').select(select).in('user_id', companyOwnerIds)
 }

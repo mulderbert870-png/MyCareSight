@@ -37,7 +37,7 @@ export default async function CaregiverProfilePage({
   const { data: staffLicensesData } = await q.getStaffLicensesByStaffMemberIds(supabase, [staffId])
   const allStaffLicenses = (staffLicensesData ?? []).map((license: any) => ({
     id: license.id,
-    staff_member_id: license.staff_member_id,
+    caregiver_member_id: license.caregiver_member_id,
     license_type: license.license_type,
     license_number: license.license_number || 'N/A',
     state: license.state,

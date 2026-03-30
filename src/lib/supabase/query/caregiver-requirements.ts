@@ -8,34 +8,46 @@ export interface CaregiverRequirement {
   updated_at: string
 }
 
-/** Get caregiver requirements for a patient (at most one row). */
+async function getPatientAgencyId(supabase: Supabase, patientId: string): Promise<string | null> {
+  const { data } = await supabase.from('patients').select('agency_id').eq('id', patientId).maybeSingle()
+  return data?.agency_id ?? null
+}
+
+/** Get skill requirements for a patient (at most one row). */
 export async function getCaregiverRequirementsByPatientId(
   supabase: Supabase,
   patientId: string
 ) {
   return supabase
-    .from('caregiver_requirements')
+    .from('patient_skill_requirements')
     .select('*')
     .eq('patient_id', patientId)
     .maybeSingle()
 }
 
-/** Batch-load caregiver requirements for many patients. */
+/** Batch-load skill requirements for many patients. */
 export async function getCaregiverRequirementsByPatientIds(supabase: Supabase, patientIds: string[]) {
   if (patientIds.length === 0) return { data: [] as CaregiverRequirement[], error: null }
-  return supabase.from('caregiver_requirements').select('*').in('patient_id', patientIds)
+  return supabase.from('patient_skill_requirements').select('*').in('patient_id', patientIds)
 }
 
-/** Upsert caregiver requirements for a patient (insert or update by patient_id). */
+/** Upsert skill requirements for a patient. */
 export async function upsertCaregiverRequirements(
   supabase: Supabase,
   patientId: string,
   skillCodes: string[]
 ) {
+  const agencyId = await getPatientAgencyId(supabase, patientId)
+  if (!agencyId) {
+    return {
+      data: null,
+      error: { message: 'Patient has no agency_id; cannot save skill requirements.', details: '', hint: '', code: '' },
+    }
+  }
   return supabase
-    .from('caregiver_requirements')
+    .from('patient_skill_requirements')
     .upsert(
-      { patient_id: patientId, skill_codes: skillCodes },
+      { patient_id: patientId, agency_id: agencyId, skill_codes: skillCodes },
       { onConflict: 'patient_id' }
     )
 }

@@ -161,7 +161,7 @@ export default function AddCertificationModal({
         setIsUploading(false)
       }
 
-      // Persist on staff_licenses (same source as agency "Manage certifications")
+      // Persist on caregiver_credentials (same source as agency "Manage certifications")
       const result = await createMyStaffCertification({
         ...formData,
         document_url: documentUrl,

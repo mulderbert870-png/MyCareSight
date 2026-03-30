@@ -77,17 +77,20 @@ export async function getLicensingExpertByUserId(supabase: Supabase, userId: str
   return supabase.from('licensing_experts').select('*').eq('user_id', userId).maybeSingle()
 }
 
-/** Get clients by expert_id (user_id), e.g. for expert detail page. */
+/** Agency admin rows assigned to a licensing expert (by auth user id of the expert). */
 export async function getClientsByExpertId(supabase: Supabase, expertUserId: string) {
+  const { data: le, error: leErr } = await getLicensingExpertByUserId(supabase, expertUserId)
+  if (leErr) return { data: null, error: leErr }
+  if (!le?.id) return { data: [], error: null }
   return supabase
-    .from('clients')
+    .from('agency_admins')
     .select('*')
-    .eq('expert_id', expertUserId)
+    .eq('expert_id', le.id)
     .order('company_name', { ascending: true })
 }
 
-/** Get clients by expert ids (e.g. licensing_expert ids for counting). */
+/** Rows per licensing_expert.id (primary key), for admin counts. */
 export async function getClientsByExpertIds(supabase: Supabase, expertIds: string[]) {
   if (expertIds.length === 0) return { data: [], error: null }
-  return supabase.from('clients').select('expert_id').in('expert_id', expertIds)
+  return supabase.from('agency_admins').select('expert_id').in('expert_id', expertIds)
 }

@@ -23,7 +23,7 @@ export default async function UsersPage() {
   })
 
   const companyOwnerIds = profilesList.filter(u => u.role === 'company_owner').map(u => u.id)
-  type ClientCompanyRow = { company_owner_id: string; company_name: string | null; agency_id: string | null }
+  type ClientCompanyRow = { user_id: string; company_name: string | null; agency_id: string | null }
   const { data: clientCompaniesData } =
     companyOwnerIds.length > 0
       ? await q.getClientsByCompanyOwnerIds(supabase, companyOwnerIds)
@@ -31,11 +31,11 @@ export default async function UsersPage() {
   const clientCompanies = (clientCompaniesData ?? []) as unknown as ClientCompanyRow[]
   const companyNameByUserId: Record<string, string> = {}
   clientCompanies.forEach(c => {
-    if (!c.company_owner_id) return
+    if (!c.user_id) return
     const name = c.agency_id && agencyNameById[c.agency_id]
       ? agencyNameById[c.agency_id]
       : (c.company_name?.trim() ?? null)
-    if (name) companyNameByUserId[c.company_owner_id] = name
+    if (name) companyNameByUserId[c.user_id] = name
   })
 
   const staffUserIds = profilesList.filter(u => u.role === 'staff_member').map(u => u.id)

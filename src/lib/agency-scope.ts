@@ -27,12 +27,11 @@ export async function resolveEffectiveCompanyOwnerUserId(
     const { data: coordinator } = await q.getCareCoordinatorByUserId(supabase, userId)
     if (!coordinator?.agency_id) return null
 
-    const { data: agency } = await q.getAgencyById(supabase, coordinator.agency_id)
-    const adminClientId = ((agency?.agency_admin_ids as string[] | null) ?? [])[0]
-    if (!adminClientId) return null
-
-    const { data: adminClient } = await q.getClientById(supabase, adminClientId)
-    return adminClient?.company_owner_id ?? null
+    const { data: ownerUid } = await q.getRepresentativeOwnerUserIdForAgency(
+      supabase,
+      coordinator.agency_id
+    )
+    return ownerUid
   }
 
   return null

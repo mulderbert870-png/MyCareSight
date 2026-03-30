@@ -15,13 +15,26 @@ export async function rpcUpdateUserPassword(supabase: Supabase, userId: string, 
 
 export async function insertClient(
   supabase: Supabase,
-  data: { company_owner_id: string; contact_name: string; contact_email: string; status: string }
+  data: {
+    user_id: string
+    contact_name: string
+    contact_email: string
+    status: string
+    agency_id?: string | null
+  }
 ) {
-  return supabase.from('clients').insert(data)
+  return supabase.from('agency_admins').insert({
+    user_id: data.user_id,
+    company_owner_id: data.user_id,
+    contact_name: data.contact_name,
+    contact_email: data.contact_email,
+    status: data.status,
+    agency_id: data.agency_id ?? null,
+  })
 }
 
 export async function getStaffMemberByUserId(supabase: Supabase, userId: string) {
-  return supabase.from('staff_members').select('id').eq('user_id', userId).maybeSingle()
+  return supabase.from('caregiver_members').select('id, agency_id, user_id').eq('user_id', userId).maybeSingle()
 }
 
 export async function insertStaffMember(
@@ -37,7 +50,7 @@ export async function insertStaffMember(
     status: string
   }
 ) {
-  return supabase.from('staff_members').insert(data)
+  return supabase.from('caregiver_members').insert(data)
 }
 
 /** Insert staff member and return the created row. */
@@ -45,7 +58,7 @@ export async function insertStaffMemberReturning(
   supabase: Supabase,
   data: Record<string, unknown>
 ) {
-  return supabase.from('staff_members').insert(data).select().single()
+  return supabase.from('caregiver_members').insert(data).select().single()
 }
 
 /**
@@ -58,7 +71,7 @@ export async function updateStaffMember(
   staffId: string,
   data: Record<string, unknown>
 ) {
-  return supabase.from('staff_members').update(data).eq('id', staffId).select('id').single()
+  return supabase.from('caregiver_members').update(data).eq('id', staffId).select('id').single()
 }
 
 /** Update user profile (full_name, role, updated_at). */
@@ -134,7 +147,7 @@ export async function getStaffMembersByCompanyOwnerId(
   options?: { status?: string }
 ) {
   let query = supabase
-    .from('staff_members')
+    .from('caregiver_members')
     .select('*')
     .eq('company_owner_id', companyOwnerId)
     .order('created_at', { ascending: false })
@@ -150,7 +163,7 @@ export async function getStaffMembersByAgencyOrCompanyOwner(
   options?: { status?: string }
 ) {
   let query = supabase
-    .from('staff_members')
+    .from('caregiver_members')
     .select('*')
     .order('created_at', { ascending: false })
 
@@ -172,7 +185,7 @@ export async function getStaffMemberByIdWithAgencyOrCompanyOwner(
   agencyId: string | null
 ) {
   let query = supabase
-    .from('staff_members')
+    .from('caregiver_members')
     .select('*')
     .eq('id', staffId)
 
@@ -192,7 +205,7 @@ export async function getStaffMembersByAgencyId(
   options?: { status?: string }
 ) {
   let query = supabase
-    .from('staff_members')
+    .from('caregiver_members')
     .select('*')
     .eq('agency_id', agencyId)
     .order('created_at', { ascending: false })
@@ -207,7 +220,7 @@ export async function getStaffMemberByIdAndAgencyId(
   agencyId: string
 ) {
   return supabase
-    .from('staff_members')
+    .from('caregiver_members')
     .select('*')
     .eq('id', staffId)
     .eq('agency_id', agencyId)
@@ -255,7 +268,7 @@ export async function getStaffMembersByUserIds(
   select = 'user_id, agency_id, company_owner_id'
 ) {
   if (userIds.length === 0) return { data: [], error: null }
-  return supabase.from('staff_members').select(select).in('user_id', userIds)
+  return supabase.from('caregiver_members').select(select).in('user_id', userIds)
 }
 
 export async function getCareCoordinatorsByUserIds(
@@ -270,7 +283,7 @@ export async function getCareCoordinatorsByUserIds(
 /** Get staff members with agency_id not null and status active. */
 export async function getStaffMembersWithAgencyActive(supabase: Supabase) {
   return supabase
-    .from('staff_members')
+    .from('caregiver_members')
     .select('*')
     .not('agency_id', 'is', null)
     .eq('status', 'active')
@@ -286,13 +299,13 @@ export async function getFirstAdminUserId(supabase: Supabase) {
     .maybeSingle()
 }
 
-/** Get all staff_roles (for caregiver dashboard). */
+/** Get all caregiver_roles (for caregiver dashboard). */
 export async function getStaffRoles(supabase: Supabase) {
-  return supabase.from('staff_roles').select('*')
+  return supabase.from('caregiver_roles').select('*')
 }
 
 /**
- * Update staff_members.documents JSONB.
+ * Update caregiver_members.documents JSONB.
  * Must use .select().single() so PostgREST returns an error when RLS blocks the update (0 rows);
  * without SELECT, update() returns { error: null } even when nothing was saved.
  */
@@ -302,7 +315,7 @@ export async function updateStaffMemberDocuments(
   documents: PatientDocument[]
 ) {
   return supabase
-    .from('staff_members')
+    .from('caregiver_members')
     .update({ documents })
     .eq('id', staffMemberId)
     .select('id, documents')

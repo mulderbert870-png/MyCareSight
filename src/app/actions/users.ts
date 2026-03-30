@@ -84,7 +84,7 @@ async function ensureRoleTableRow(
     const { data: existing } = await q.getClientByCompanyOwnerId(supabaseAdmin, userId)
     if (!existing) {
       await q.insertClient(supabaseAdmin, {
-        company_owner_id: userId,
+        user_id: userId,
         contact_name: fullName || normalizedEmail,
         contact_email: normalizedEmail,
         status: 'pending',
@@ -203,31 +203,32 @@ export async function createUserAccount(
     const { first_name: firstName, last_name: lastName } = parseFullName(fullNameTrimmed)
 
     if (role === 'company_owner') {
-      const { data: newClient, error: clientError } = await supabaseAdmin
-        .from('clients')
+      const { data: newAdmin, error: adminError } = await supabaseAdmin
+        .from('agency_admins')
         .insert({
+          user_id: userId,
           company_owner_id: userId,
           contact_name: fullNameTrimmed || normalizedEmail,
           contact_email: normalizedEmail,
           status: 'pending',
-          ...(agencyId ? { agency_id: agencyId } : {}),
+          agency_id: agencyId ?? null,
         })
         .select('id')
         .single()
-      if (clientError) {
-        console.error('Failed to create clients row for agency admin:', clientError)
+      if (adminError) {
+        console.error('Failed to create agency_admins row for agency admin:', adminError)
         return {
-          error: `User created but failed to create agency record: ${clientError.message}`,
+          error: `User created but failed to create agency record: ${adminError.message}`,
           data: null,
         }
       }
-      if (agencyId && newClient?.id) {
+      if (agencyId && newAdmin?.id) {
         const { data: agency } = await supabaseAdmin.from('agencies').select('agency_admin_ids').eq('id', agencyId).single()
         const currentIds = (agency?.agency_admin_ids as string[] | null) || []
-        if (!currentIds.includes(newClient.id)) {
+        if (!currentIds.includes(newAdmin.id)) {
           await supabaseAdmin
             .from('agencies')
-            .update({ agency_admin_ids: [...currentIds, newClient.id], updated_at: new Date().toISOString() })
+            .update({ agency_admin_ids: [...currentIds, newAdmin.id], updated_at: new Date().toISOString() })
             .eq('id', agencyId)
         }
       }
@@ -239,7 +240,7 @@ export async function createUserAccount(
         if (adminIds.length > 0) companyOwnerId = adminIds[0]
       }
       const { error: staffError } = await supabaseAdmin
-        .from('staff_members')
+        .from('caregiver_members')
         .insert({
           user_id: userId,
           company_owner_id: companyOwnerId,
@@ -251,7 +252,7 @@ export async function createUserAccount(
           status: 'active',
         })
       if (staffError) {
-        console.error('Failed to create staff_members row for caregiver:', staffError)
+        console.error('Failed to create caregiver_members row for caregiver:', staffError)
         return {
           error: `User created but failed to create staff record: ${staffError.message}`,
           data: null,
@@ -380,19 +381,20 @@ export async function createAgencyAdminAccount(
           .maybeSingle()
         userId = existingProfile?.id ?? null
         if (userId) {
-          const { data: existingClient } = await supabaseAdmin
-            .from('clients')
+          const { data: existingAdmin } = await supabaseAdmin
+            .from('agency_admins')
             .select('id')
-            .eq('company_owner_id', userId)
+            .eq('user_id', userId)
             .maybeSingle()
-          if (!existingClient) {
-            await supabaseAdmin.from('clients').insert({
+          if (!existingAdmin) {
+            await supabaseAdmin.from('agency_admins').insert({
+              user_id: userId,
               company_owner_id: userId,
-              // company_name: companyName,
               contact_name: fullName,
               contact_email: normalizedEmail,
               contact_phone: contactPhone.trim() || null,
               status,
+              agency_id: null,
             })
           }
         }
@@ -423,18 +425,19 @@ export async function createAgencyAdminAccount(
 
     await new Promise((resolve) => setTimeout(resolve, 500))
 
-    const { error: clientError } = await supabaseAdmin.from('clients').insert({
+    const { error: adminError } = await supabaseAdmin.from('agency_admins').insert({
+      user_id: userId,
       company_owner_id: userId,
-      // company_name: companyName,
       contact_name: fullName,
       contact_email: normalizedEmail,
       contact_phone: contactPhone.trim() || null,
       status,
+      agency_id: null,
     })
-    if (clientError) {
-      console.error('Failed to create clients row for agency admin:', clientError)
+    if (adminError) {
+      console.error('Failed to create agency_admins row for agency admin:', adminError)
       return {
-        error: `User created but failed to create agency record: ${clientError.message}`,
+        error: `User created but failed to create agency record: ${adminError.message}`,
         data: null,
       }
     }
@@ -548,7 +551,7 @@ export async function createStaffUserAccount(
         createError.message.includes('database')
       ) {
         errorMessage =
-          'Database error creating user account. Please ensure the database migration 033_fix_handle_new_user_for_staff_members.sql has been applied.'
+          'Database error creating user account. Please ensure handle_new_user / caregiver_members migrations are applied.'
       }
       return { error: `Failed to create user: ${errorMessage}`, data: null }
     }

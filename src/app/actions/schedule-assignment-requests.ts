@@ -86,7 +86,7 @@ export async function requestScheduleAssignmentAction(
   const note = caregiverNote?.trim() ? caregiverNote.trim() : null
   const { error } = await q.insertScheduleAssignmentRequest(supabase, {
     schedule_id: scheduleId,
-    staff_member_id: staffRow.id,
+    caregiver_member_id: staffRow.id,
     caregiver_note: note,
   })
 

@@ -33,24 +33,26 @@ export default async function StaffPage() {
     ? await q.getStaffLicensesByStaffMemberIds(supabase, staffMemberIds)
     : { data: [] }
 
-  const allStaffLicenses = allStaffLicensesData?.map(license => ({
-    id: license.id,
-    staff_member_id: license.staff_member_id,
-    license_type: license.license_type,
-    license_number: license.license_number || 'N/A',
-    state: license.state,
-    status: license.status,
-    expiry_date: license.expiry_date,
-    days_until_expiry: license.days_until_expiry,
-  })) || []
-  // Group licenses by staff member
-  const licensesByStaff = allStaffLicenses?.reduce((acc: Record<string, typeof allStaffLicenses>, license) => {
-    if (!acc[license.staff_member_id]) {
-      acc[license.staff_member_id] = []
-    }
-    acc[license.staff_member_id].push(license)
-    return acc
-  }, {}) || {}
+  const allStaffLicenses =
+    allStaffLicensesData?.map((license) => ({
+      id: license.id,
+      caregiver_member_id: license.caregiver_member_id,
+      license_type: license.license_type,
+      license_number: license.license_number || 'N/A',
+      state: license.state,
+      status: license.status,
+      expiry_date: license.expiry_date,
+      days_until_expiry: license.days_until_expiry,
+    })) || []
+  const licensesByStaff = allStaffLicenses.reduce(
+    (acc: Record<string, typeof allStaffLicenses>, license) => {
+      const sid = license.caregiver_member_id
+      if (!acc[sid]) acc[sid] = []
+      acc[sid].push(license)
+      return acc
+    },
+    {}
+  )
 
 
   // Calculate statistics

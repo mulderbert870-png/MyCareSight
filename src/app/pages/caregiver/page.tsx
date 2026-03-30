@@ -89,7 +89,7 @@ export default async function StaffDashboardPage() {
     source: 'application' as const
   })) || []
 
-  /** Same rows as /pages/caregiver/my-certifications (staff_licenses + legacy certifications). */
+  /** Same rows as /pages/caregiver/my-certifications (caregiver_credentials). */
   function mapMyCertUiToDashboardLicense(c: MyStaffCertificationUi) {
     const expiryDate = c.expiration_date
     const today = new Date()

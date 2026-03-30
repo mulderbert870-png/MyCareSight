@@ -21,15 +21,22 @@ export default async function ClientsPage() {
 
   const effectiveOwnerId = await resolveEffectiveCompanyOwnerUserId(supabase, profile, session.user.id)
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
+
   const { data: clientContext } = effectiveOwnerId
     ? await q.getClientByCompanyOwnerIdWithAgency(supabase, effectiveOwnerId)
     : { data: null }
-  const patientsResult = clientContext?.agency_id
-    ? await q.getPatientsByAgencyId(supabase, clientContext.agency_id)
-    : effectiveOwnerId
-      ? await q.getPatientsByOwnerId(supabase, effectiveOwnerId)
-      : { data: null }
-  const clients = patientsResult.data ?? []
+
+  let clients: NonNullable<Awaited<ReturnType<typeof q.getPatientsByAgencyId>>['data']>
+
+  if (clientContext?.agency_id) {
+    const patientsResult = await q.getPatientsByAgencyId(supabase, clientContext.agency_id)
+    clients = patientsResult.data ?? []
+  } else if (effectiveOwnerId) {
+    const patientsResult = await q.getPatientsByOwnerId(supabase, effectiveOwnerId)
+    clients = patientsResult.data ?? []
+  } else {
+    clients = []
+  }
 
   return (
     <DashboardLayout

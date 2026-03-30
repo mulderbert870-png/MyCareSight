@@ -40,10 +40,10 @@ export default async function DashboardPage() {
     ? await q.getApplicationsByStaffMemberIds(supabase, staffIds)
     : { data: [] }
 
-  type StaffLicenseRow = { id: string; staff_member_id: string; license_type: string; license_number: string; state: string; status: string; expiry_date: string | null; days_until_expiry: number | null }
+  type StaffLicenseRow = { id: string; caregiver_member_id: string; license_type: string; license_number: string; state: string; status: string; expiry_date: string | null; days_until_expiry: number | null }
   const staffLicenses: StaffLicenseRow[] = (staffLicensesData || []).map((app: Record<string, unknown>) => ({
     id: app.id as string,
-    staff_member_id: app.staff_member_id as string,
+    caregiver_member_id: app.caregiver_member_id as string,
     license_type: (app.application_name as string) || '',
     license_number: (app.license_number as string) || 'N/A',
     state: (app.state as string) || '',

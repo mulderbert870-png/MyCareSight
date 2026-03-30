@@ -16,7 +16,7 @@ export type InsertCaregiverLicenseInput = {
 }
 
 /**
- * Inserts a staff_licenses row for caregiver certifications.
+ * Inserts a caregiver_credentials row for caregiver licenses/certifications.
  * Uses the service role after verifying the signed-in user may manage this caregiver,
  * so inserts work even when RLS has not been extended yet in the target environment.
  */
@@ -43,13 +43,17 @@ export async function insertCaregiverLicenseApplicationAction(
   }
 
   const { data: staff, error: staffErr } = await supabase
-    .from('staff_members')
-    .select('id, company_owner_id, agency_id')
+    .from('caregiver_members')
+    .select('id, company_owner_id, agency_id, user_id')
     .eq('id', input.staffMemberId)
     .maybeSingle()
 
   if (staffErr || !staff) {
     return { ok: false, error: 'Caregiver not found or you do not have access.' }
+  }
+
+  if (!staff.agency_id) {
+    return { ok: false, error: 'Caregiver has no agency; cannot attach a credential.' }
   }
 
   const sameClient = staff.company_owner_id === client.id
@@ -85,19 +89,30 @@ export async function insertCaregiverLicenseApplicationAction(
   }
 
   const row = {
-    staff_member_id: input.staffMemberId,
+    agency_id: staff.agency_id,
+    caregiver_member_id: input.staffMemberId,
+    user_id: staff.user_id,
     license_type: input.licenseType.trim(),
     license_number: input.licenseNumber.trim(),
     state: input.state.trim() || '—',
     status,
     issue_date: issueDate,
     expiry_date: expiryDate,
-    days_until_expiry: daysUntilExpiry,
   }
 
   try {
     const admin = createAdminClient()
-    const { data, error } = await admin.from('staff_licenses').insert(row).select('id').single()
+    const { data, error } = await admin.from('caregiver_credentials').insert({
+      agency_id: row.agency_id,
+      caregiver_member_id: row.caregiver_member_id,
+      user_id: row.user_id,
+      source_credential_name: row.license_type,
+      credential_number: row.license_number,
+      state: row.state,
+      status: row.status,
+      issue_date: row.issue_date,
+      expiration_date: row.expiry_date,
+    }).select('id').single()
 
     if (error) {
       return { ok: false, error: error.message || 'Failed to save license.' }
@@ -117,14 +132,14 @@ export async function insertCaregiverLicenseApplicationAction(
         return {
           ok: false,
           error:
-            `${error.message} If this is an RLS error, apply staff_licenses RLS migrations in Supabase, or set SUPABASE_SERVICE_ROLE_KEY on the server.`,
+            `${error.message} If this is an RLS error, apply caregiver_credentials policies in Supabase, or set SUPABASE_SERVICE_ROLE_KEY on the server.`,
         }
       }
       if (!data?.id) {
         return {
           ok: false,
           error:
-            'License was not saved. Set SUPABASE_SERVICE_ROLE_KEY on the server or apply staff_licenses RLS migration.',
+            'License was not saved. Set SUPABASE_SERVICE_ROLE_KEY on the server or apply caregiver_credentials RLS migration.',
         }
       }
       return { ok: true, id: data.id }

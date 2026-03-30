@@ -26,7 +26,7 @@ interface StaffMember {
 
 interface StaffLicense {
   id: string
-  staff_member_id: string
+  caregiver_member_id: string
   license_type: string
   license_number: string
   state?: string | null

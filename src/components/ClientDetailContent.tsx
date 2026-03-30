@@ -1396,6 +1396,7 @@ export default function ClientDetailContent({ client, allClients, representative
           patient_id: s.patient_id,
           adl_code: s.adl_code,
           day_of_week: s.day_of_week,
+          display_order: s.display_order,
           // adl_note: s.adl_note,
           schedule_type: s.schedule_type,
           times_per_day: s.times_per_day,

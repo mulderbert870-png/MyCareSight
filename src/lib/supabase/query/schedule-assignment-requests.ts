@@ -5,7 +5,7 @@ export type ScheduleAssignmentStatus = 'pending' | 'approved' | 'declined'
 export interface ScheduleAssignmentRequestRow {
   id: string
   schedule_id: string
-  staff_member_id: string
+  caregiver_member_id: string
   status: ScheduleAssignmentStatus
   caregiver_note: string | null
   decline_reason: string | null
@@ -18,7 +18,7 @@ export interface ScheduleAssignmentRequestRow {
 const requestSelect = `
   id,
   schedule_id,
-  staff_member_id,
+  caregiver_member_id,
   status,
   caregiver_note,
   decline_reason,
@@ -66,13 +66,13 @@ export async function declineScheduleAssignmentRequestRpc(
 /** Caregiver submits a request (RLS enforces open schedule + same agency). */
 export async function insertScheduleAssignmentRequest(
   supabase: Supabase,
-  data: { schedule_id: string; staff_member_id: string; caregiver_note?: string | null }
+  data: { schedule_id: string; caregiver_member_id: string; caregiver_note?: string | null }
 ) {
   return supabase
     .from('schedule_assignment_requests')
     .insert({
       schedule_id: data.schedule_id,
-      staff_member_id: data.staff_member_id,
+      caregiver_member_id: data.caregiver_member_id,
       status: 'pending',
       caregiver_note: data.caregiver_note ?? null,
     })

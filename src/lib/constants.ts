@@ -28,7 +28,7 @@ export const US_STATES: string[] = [
 ]
 
 /**
- * Activities of Daily Living (ADL) library. Used for patient_adls.adl_code and schedules.adl_codes.
+ * Activities of Daily Living (ADL) library. Used for patient_adls.adl_code and scheduled_visit_tasks.legacy_task_code.
  * Store the `name` value in the database; use these constants for options and validation.
  */
 export const ADL_LISTS: { name: string; group: string }[] = [

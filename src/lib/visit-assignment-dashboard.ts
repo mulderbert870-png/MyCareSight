@@ -139,7 +139,7 @@ type StaffRow = {
   last_name?: string | null
   zip_code?: string | null
   skills?: string[] | null
-  /** Staff role label stored on the row (not a FK to staff_roles in this schema). */
+  /** Staff role label stored on the row (not a FK to caregiver_roles in this schema). */
   role?: string | null
   job_title?: string | null
 }
@@ -187,10 +187,10 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
 
   const allScheduleIds = Array.from(new Set(scheduleIds.concat(resolvedScheduleIds)))
 
-  const { data: schedulesData, error: schedErr } = await supabase
-    .from('schedules')
-    .select('*')
-    .in('id', allScheduleIds)
+  const { data: schedulesData, error: schedErr } = await q.getScheduledVisitsByIdsAsScheduleRows(
+    supabase,
+    allScheduleIds
+  )
 
   if (schedErr) {
     return { visits: [], resolved: [], approvedTotal, declinedTotal, error: schedErr.message }
@@ -201,8 +201,8 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
 
   const patientIds = Array.from(new Set(schedules.map((s) => s.patient_id)))
   const staffIds = new Set<string>()
-  pendingRows.forEach((r) => staffIds.add(r.staff_member_id))
-  resolvedRows.forEach((r) => staffIds.add(r.staff_member_id))
+  pendingRows.forEach((r) => staffIds.add(r.caregiver_member_id))
+  resolvedRows.forEach((r) => staffIds.add(r.caregiver_member_id))
 
   const { data: patientsData, error: patErr } = await supabase
     .from('patients')
@@ -214,7 +214,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   }
 
   const { data: staffData, error: staffErr } = await supabase
-    .from('staff_members')
+    .from('caregiver_members')
     .select('id, first_name, last_name, zip_code, skills, role, job_title')
     .in('id', Array.from(staffIds))
 
@@ -245,7 +245,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
     if (!sched || sched.caregiver_id) continue
 
     const patient = patientById.get(sched.patient_id)
-    const staff = staffById.get(row.staff_member_id)
+    const staff = staffById.get(row.caregiver_member_id)
     if (!patient || !staff) continue
 
     const clientZip = normalizeUsZipForLookup(patient.zip_code)
@@ -323,7 +323,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   for (const row of resolvedRows) {
     const sched = scheduleById.get(row.schedule_id)
     const patient = sched ? patientById.get(sched.patient_id) : undefined
-    const staff = staffById.get(row.staff_member_id)
+    const staff = staffById.get(row.caregiver_member_id)
     if (!sched || !patient || !staff || !row.resolved_at) continue
 
     const caregiverName = [staff.first_name, staff.last_name].filter(Boolean).join(' ') || 'Caregiver'

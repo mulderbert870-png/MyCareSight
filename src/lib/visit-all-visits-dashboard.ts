@@ -167,17 +167,15 @@ function skillMatchForStaff(requiredSkills: string[], caregiverSkills: string[])
 }
 
 export async function fetchAllVisitsDashboardData(supabase: Supabase): Promise<AllVisitsDashboardDTO> {
-  const [{ data: schedulesData }, { data: allPatientsData }, { data: allStaffDataAll }] = await Promise.all([
-    supabase
-      .from('schedules')
-      .select('*')
-      .order('date', { ascending: false })
-      .order('start_time', { ascending: true }),
+  const [visitsRes, patientsMinRes, staffMinRes] = await Promise.all([
+    q.getAllScheduledVisitsAsScheduleRows(supabase),
     supabase.from('patients').select('id, full_name').order('full_name', { ascending: true }),
-    supabase.from('staff_members').select('id, first_name, last_name').order('first_name', { ascending: true }),
+    supabase.from('caregiver_members').select('id, first_name, last_name').order('first_name', { ascending: true }),
   ])
 
-  const schedules = (schedulesData ?? []) as ScheduleRow[]
+  const schedules = (visitsRes.error ? [] : (visitsRes.data ?? [])) as ScheduleRow[]
+  const allPatientsData = patientsMinRes.data
+  const allStaffDataAll = staffMinRes.data
   const allClients = ((allPatientsData ?? []) as Array<{ id: string; full_name?: string | null }>).map((p) => ({
     id: p.id,
     name: p.full_name?.trim() || 'Client',
@@ -191,7 +189,7 @@ export async function fetchAllVisitsDashboardData(supabase: Supabase): Promise<A
   const patientIds = Array.from(new Set(schedules.map((s) => s.patient_id)))
   const [{ data: patientsData }, { data: allStaffData }, { data: reqRows }] = await Promise.all([
     supabase.from('patients').select('id, full_name, zip_code, state, city, street_address').in('id', patientIds),
-    supabase.from('staff_members').select('id, first_name, last_name, zip_code, skills, role, job_title'),
+    supabase.from('caregiver_members').select('id, first_name, last_name, zip_code, skills, role, job_title'),
     q.getCaregiverRequirementsByPatientIds(supabase, patientIds),
   ])
 

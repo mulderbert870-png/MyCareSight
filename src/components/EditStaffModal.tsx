@@ -59,7 +59,7 @@ interface EditStaffModalProps {
   isOpen: boolean
   onClose: () => void
   staff: StaffMember
-  /** When set (e.g. from agency page), role dropdown uses these names from `staff_roles`. */
+  /** When set (e.g. from agency page), role dropdown uses these names from `caregiver_roles`. */
   staffRoleNames?: string[]
   onSuccess?: () => void
 }

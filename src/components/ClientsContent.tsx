@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Users, CheckCircle2, FileText, Plus, Search, Eye, Loader2 } from 'lucide-react'
 import AddNewClientModal from './AddNewClientModal'
@@ -60,7 +60,6 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
 
   // Filter clients
   const filteredClients = useMemo(() => {
-    console.log('clients', clients)
     return clients.filter(client => {
       // Search filter
       if (searchQuery) {

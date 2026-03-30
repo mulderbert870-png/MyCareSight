@@ -127,13 +127,13 @@ export function CaregiverDocumentsPanel({
       const msg = ue.message || 'Update failed'
       const rlsHint =
         code === 'PGRST116' || /0 rows|no rows|contains 0 rows/i.test(msg)
-          ? ' Your user is not allowed to update this caregiver row (Row Level Security on staff_members), or the row id is wrong. Sign in as the client owner who manages this caregiver, or ask an admin to adjust RLS.'
+          ? ' Your user is not allowed to update this caregiver row (Row Level Security on caregiver_members), or the row id is wrong. Sign in as the client owner who manages this caregiver, or ask an admin to adjust RLS.'
           : ''
       throw new Error(msg + rlsHint)
     }
     if (!data) {
       logCaregiverDocsError('persist:no data returned', new Error('data is null'), { staffMemberId })
-      throw new Error('Update returned no row — documents were not saved. Check staff_members RLS UPDATE policies.')
+      throw new Error('Update returned no row — documents were not saved. Check caregiver_members RLS UPDATE policies.')
     }
     logCaregiverDocs('persist:ok', { staffMemberId, returnedId: data.id })
     setDocs(next)
@@ -196,7 +196,7 @@ export function CaregiverDocumentsPanel({
           const upMsg = getErrorMessage(upErr)
           const hint =
             upMsg.toLowerCase().includes('bucket') || upMsg.toLowerCase().includes('not found')
-              ? ' Ensure the bucket id is exactly `staff-member-documents` (not a typo) and exists — run migration phast_two/018_add_documents_column_on_staff_members_table.sql on this Supabase project.'
+              ? ' Ensure the bucket id is exactly `staff-member-documents` (not a typo) and exists — run migration phase_two/018_add_documents_column_on_staff_members_table.sql (table is now caregiver_members) on this Supabase project.'
               : ''
           throw new Error(`Upload failed: ${upMsg}${hint}`)
         }
@@ -228,7 +228,7 @@ export function CaregiverDocumentsPanel({
         })
         const p = getErrorMessage(persistErr)
         setError(
-          `${p} Files were uploaded to the bucket "${BUCKET}" under folder "${staffMemberId}/" but were not saved on the caregiver record. Check Storage in the dashboard, confirm migration 018 is applied, and RLS allows UPDATE on staff_members for your role.`
+          `${p} Files were uploaded to the bucket "${BUCKET}" under folder "${staffMemberId}/" but were not saved on the caregiver record. Check Storage in the dashboard, confirm migration 018 is applied, and RLS allows UPDATE on caregiver_members for your role.`
         )
         return
       }
