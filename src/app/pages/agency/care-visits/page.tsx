@@ -23,12 +23,14 @@ export default async function CareVisitsPage() {
 
   const dashboard = await fetchVisitAssignmentDashboardData(supabase)
   const allVisits = await fetchAllVisitsDashboardData(supabase)
+  const pendingRequestCount = dashboard.visits.reduce((sum, v) => sum + v.requests.length, 0)
 
   return (
     <DashboardLayout
       user={session.user}
       profile={profile}
       unreadNotifications={unreadNotifications ?? 0}
+      careVisitsPendingCount={pendingRequestCount}
     >
       <VisitManagementContent
         visits={dashboard.visits}

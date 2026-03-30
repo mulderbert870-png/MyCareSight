@@ -32,6 +32,7 @@ interface DashboardLayoutProps {
     role?: string | null
   } | null
   unreadNotifications?: number
+  careVisitsPendingCount?: number
   application?: {
     id: string
     state: string
@@ -46,6 +47,7 @@ export default function DashboardLayout({
   user, 
   profile,
   unreadNotifications = 0,
+  careVisitsPendingCount = 0,
   application = null
 }: DashboardLayoutProps) {
   const pathname = usePathname()
@@ -197,8 +199,24 @@ export default function DashboardLayout({
                           : 'text-gray-700 hover:bg-gray-100'
                       }`}
                     >
-                      <Icon className="w-5 h-5 flex-shrink-0" />
-                      {!sidebarCollapsed && <span>{item.label}</span>}
+                      <div className="relative flex-shrink-0">
+                        <Icon className="w-5 h-5" />
+                        {sidebarCollapsed && item.href === '/pages/agency/care-visits' && careVisitsPendingCount > 0 ? (
+                          <span className="absolute -top-2 -right-2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 min-w-[1rem] text-center leading-none">
+                            {careVisitsPendingCount}
+                          </span>
+                        ) : null}
+                      </div>
+                      {!sidebarCollapsed ? (
+                        <div className="flex items-center justify-between min-w-0 w-full">
+                          <span>{item.label}</span>
+                          {item.href === '/pages/agency/care-visits' && careVisitsPendingCount > 0 ? (
+                            <span className="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 min-w-[1.25rem] text-center">
+                              {careVisitsPendingCount}
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </Link>
                   )
                 })}
