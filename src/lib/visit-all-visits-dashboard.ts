@@ -108,16 +108,33 @@ function patientLocationLabel(patient: PatientRow): string {
   return '-'
 }
 
-function decodeAdlCodes(codes: string[] | null | undefined): string[] {
+function decodeAdlCodes(
+  codes: string[] | null | undefined,
+  taskNameById?: Map<string, string>
+): string[] {
   if (!Array.isArray(codes)) return []
   return codes
     .map((code) => {
       const v = String(code || '').trim()
       if (!v) return ''
       const parts = v.split('::')
-      return (parts.length > 1 ? parts[1] : parts[0]).trim()
+      const token = (parts.length > 1 ? parts[1] : parts[0]).trim()
+      if (!token) return ''
+      const mapped = taskNameById?.get(token)
+      return (mapped && mapped.trim()) || token
     })
     .filter(Boolean)
+}
+
+function extractTaskToken(raw: string): string {
+  const v = String(raw || '').trim()
+  if (!v) return ''
+  const parts = v.split('::')
+  return (parts.length > 1 ? parts[1] : parts[0]).trim()
+}
+
+function isUuidLike(v: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
 }
 
 function deriveVisitStatus(s: ScheduleRow): VisitStatus {
@@ -136,12 +153,12 @@ function deriveVisitStatus(s: ScheduleRow): VisitStatus {
   // If current time is within the scheduled window, show in progress.
   if (start && end && now >= start && now <= end) return 'in_progress'
 
-  // Any schedule in the past: unassigned becomes missed, assigned becomes completed
-  // (unless explicitly marked missed above).
+  // Past visit: "completed" only when DB status is `completed` (handled above).
+  // Past + caregiver but still `scheduled` (or similar) in DB → missed, not completed.
   if (end) {
-    if (end < now) return s.caregiver_id ? 'completed' : 'missed'
+    if (end < now) return 'missed'
   } else if (dayStart < todayStart) {
-    return s.caregiver_id ? 'completed' : 'missed'
+    return 'missed'
   }
 
   if (!s.caregiver_id) return 'unassigned'
@@ -203,6 +220,29 @@ export async function fetchAllVisitsDashboardData(supabase: Supabase): Promise<A
     if (pr.patient_id && Array.isArray(pr.skill_codes)) requirementsByPatient.set(pr.patient_id, pr.skill_codes)
   }
 
+  const taskIdTokens = Array.from(
+    new Set(
+      schedules
+        .flatMap((s) => s.adl_codes ?? [])
+        .map((raw) => extractTaskToken(raw))
+        .filter((token) => token && isUuidLike(token))
+    )
+  )
+  const taskNameById = new Map<string, string>()
+  if (taskIdTokens.length > 0) {
+    const { data: taskRows } = await supabase
+      .from('task_catalog')
+      .select('id, name, code')
+      .in('id', taskIdTokens)
+    for (const row of taskRows ?? []) {
+      const r = row as { id?: string | null; name?: string | null; code?: string | null }
+      const id = (r.id ?? '').trim()
+      if (!id) continue
+      const label = (r.name ?? '').trim() || (r.code ?? '').trim()
+      if (label) taskNameById.set(id, label)
+    }
+  }
+
   const allVisits: AllVisitCardDTO[] = schedules.map((s) => {
     const patient = patientById.get(s.patient_id)
     const currentCaregiver = s.caregiver_id ? staffById.get(s.caregiver_id) : undefined
@@ -252,7 +292,7 @@ export async function fetchAllVisitsDashboardData(supabase: Supabase): Promise<A
       locationLabel: patient ? patientLocationLabel(patient) : '-',
       caregiverId: s.caregiver_id,
       caregiverName: currentCaregiver ? [currentCaregiver.first_name, currentCaregiver.last_name].filter(Boolean).join(' ') : null,
-      adlTasks: decodeAdlCodes(s.adl_codes),
+      adlTasks: decodeAdlCodes(s.adl_codes, taskNameById),
       notes: s.notes,
       clientRequiredSkills: requiredSkills,
       reassignCandidates: candidates,

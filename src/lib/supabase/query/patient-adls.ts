@@ -91,6 +91,7 @@ export async function getAdlsByPatientId(supabase: Supabase, patientId: string) 
     .from('patient_care_plan_tasks')
     .select('*')
     .eq('patient_id', patientId)
+    .eq('service_type', 'non_skilled')
     .eq('day_of_week', 1)
     .order('display_order', { ascending: true })
     .order('created_at', { ascending: true })
@@ -114,6 +115,7 @@ export async function insertAdl(
     legacy_task_code: data.adl_code,
     day_of_week,
     schedule_type: 'never' as const,
+    service_type: 'non_skilled' as const,
     display_order: displayOrder,
   }))
   const { error } = await supabase
@@ -124,6 +126,7 @@ export async function insertAdl(
     .from('patient_care_plan_tasks')
     .select('*')
     .eq('patient_id', data.patient_id)
+    .eq('service_type', 'non_skilled')
     .eq('legacy_task_code', data.adl_code)
     .eq('day_of_week', 1)
     .maybeSingle()
@@ -148,6 +151,7 @@ export async function insertAdls(
     legacy_task_code: string
     day_of_week: number
     schedule_type: 'never'
+    service_type: 'non_skilled'
     display_order: number
   }[] = []
   adlCodes.forEach((adl_code, i) => {
@@ -159,6 +163,7 @@ export async function insertAdls(
         legacy_task_code: adl_code,
         day_of_week: d,
         schedule_type: 'never',
+        service_type: 'non_skilled',
         display_order: displayOrder,
       })
     }
@@ -171,6 +176,7 @@ export async function insertAdls(
     .from('patient_care_plan_tasks')
     .select('*')
     .eq('patient_id', patientId)
+    .eq('service_type', 'non_skilled')
     .eq('day_of_week', 1)
     .in('legacy_task_code', adlCodes)
     .order('display_order', { ascending: true })
@@ -186,6 +192,7 @@ export async function deleteAdl(supabase: Supabase, patientId: string, adlCode: 
     .from('patient_care_plan_tasks')
     .delete()
     .eq('patient_id', patientId)
+    .eq('service_type', 'non_skilled')
     .eq('legacy_task_code', adlCode)
 }
 
@@ -195,6 +202,7 @@ export async function getPatientAdlDaySchedulesByPatientId(supabase: Supabase, p
     .from('patient_care_plan_tasks')
     .select('*')
     .eq('patient_id', patientId)
+    .eq('service_type', 'non_skilled')
   if (error) return { data: null, error }
   return {
     data: (data ?? []).map((r) => mapTaskToDaySchedule(r as Parameters<typeof mapTaskToDaySchedule>[0])),
@@ -229,6 +237,7 @@ export async function upsertPatientAdlDaySchedule(
         legacy_task_code: data.adl_code,
         day_of_week: data.day_of_week,
         display_order: data.display_order ?? 0,
+        service_type: 'non_skilled',
         task_note: data.adl_note ?? null,
         schedule_type: data.schedule_type,
         times_per_day: data.times_per_day ?? null,

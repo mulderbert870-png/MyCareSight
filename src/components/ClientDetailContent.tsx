@@ -34,8 +34,7 @@ import {
   TrendingUp,
   X,
   Timer,
-  SquareArrowOutUpRight,
-  History
+  SquareArrowOutUpRight
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
@@ -47,7 +46,9 @@ import type { PatientIncident } from '@/lib/supabase/query/patient-incidents'
 import type { PatientAdl, PatientAdlDaySchedule } from '@/lib/supabase/query/patient-adls'
 import type { ScheduleRow } from '@/lib/supabase/query/schedules'
 import type { PatientContractedHoursRow } from '@/lib/supabase/query/patient-contracted-hours'
-import { CAREGIVER_SKILL_POINTS, ADL_LISTS } from '@/lib/constants'
+import type { SkilledCarePlanTask } from '@/lib/supabase/query/skilled-care-plan'
+import type { PatientServiceContractRow } from '@/lib/supabase/query/patient-service-contracts'
+import { CAREGIVER_SKILL_POINTS } from '@/lib/constants'
 import Modal from '@/components/Modal'
 import zipcodes from 'zipcodes'
 
@@ -179,11 +180,14 @@ interface ClientDetailContentProps {
   adlSchedules?: PatientAdlDaySchedule[] | null
   staff?: StaffMember[] | null
   contractedHours?: PatientContractedHoursRow[] | null
+  skilledCarePlanTasks?: SkilledCarePlanTask[] | null
+  serviceContracts?: PatientServiceContractRow[] | null
 }
 
 export default function ClientDetailContent({ client, allClients, representatives = [], caregiverRequirements: initialCaregiverRequirements = null, 
   incidents: initialIncidents = [], adls: initialAdls = [], adlSchedules: initialAdlSchedules = [], staff: staffList = [], 
-  contractedHours: initialContractedHours = [] }: ClientDetailContentProps) {
+  contractedHours: initialContractedHours = [], skilledCarePlanTasks: initialSkilledCarePlanTasks = [],
+  serviceContracts: initialServiceContracts = [] }: ClientDetailContentProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const tab = searchParams.get('tab')
@@ -254,6 +258,13 @@ export default function ClientDetailContent({ client, allClients, representative
   const [deletingIncidentId, setDeletingIncidentId] = useState<string | null>(null)
   const [downloadingIncidentId, setDownloadingIncidentId] = useState<string | null>(null)
   const [localAdls, setLocalAdls] = useState<PatientAdl[]>(initialAdls ?? [])
+  const [localSkilledCarePlanTasks, setLocalSkilledCarePlanTasks] = useState<SkilledCarePlanTask[]>(
+    initialSkilledCarePlanTasks ?? []
+  )
+  const [adlLists, setAdlLists] = useState<{ name: string; group: string }[]>([])
+  const [skilledTaskLibrary, setSkilledTaskLibrary] = useState<
+    Array<{ id: string; code: string; name: string; category: string; description: string | null }>
+  >([])
   const [localAdlSchedules, setLocalAdlSchedules] = useState<PatientAdlDaySchedule[]>(initialAdlSchedules ?? [])
   const [addAdlModalOpen, setAddAdlModalOpen] = useState(false)
   const [addAdlSearch, setAddAdlSearch] = useState('')
@@ -281,6 +292,12 @@ export default function ClientDetailContent({ client, allClients, representative
   const [isSavingAdlPlan, setIsSavingAdlPlan] = useState(false)
   const [adlPlanError, setAdlPlanError] = useState<string | null>(null)
   const [deletingAdlCode, setDeletingAdlCode] = useState<string | null>(null)
+  const [skilledTaskModalOpen, setSkilledTaskModalOpen] = useState(false)
+  const [skilledTaskSearch, setSkilledTaskSearch] = useState('')
+  const [skilledTaskCategoryFilter, setSkilledTaskCategoryFilter] = useState('all')
+  const [pendingSkilledTaskIds, setPendingSkilledTaskIds] = useState<Set<string>>(new Set())
+  const [isSavingSkilledTasks, setIsSavingSkilledTasks] = useState(false)
+  const [skilledTasksError, setSkilledTasksError] = useState<string | null>(null)
 
   const getMonday = (d: Date) => {
     const date = new Date(d)
@@ -294,6 +311,21 @@ export default function ClientDetailContent({ client, allClients, representative
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const [scheduleWeekStart, setScheduleWeekStart] = useState<Date>(() => getMonday(new Date()))
   const [weekSchedules, setWeekSchedules] = useState<ScheduleRow[]>([])
+  const [serviceContracts, setServiceContracts] = useState<PatientServiceContractRow[]>(initialServiceContracts ?? [])
+  const [serviceContractsModalOpen, setServiceContractsModalOpen] = useState(false)
+  const [isSavingServiceContract, setIsSavingServiceContract] = useState(false)
+  const [serviceContractError, setServiceContractError] = useState<string | null>(null)
+  const [serviceContractForm, setServiceContractForm] = useState({
+    contract_name: '',
+    contract_type: 'Private Pay',
+    service_type: 'non_skilled' as 'non_skilled' | 'skilled',
+    bill_rate: '',
+    bill_unit_type: 'hour' as 'hour' | 'visit' | '15_min_unit',
+    weekly_hours_limit: '',
+    effective_date: toLocalDateString(new Date()),
+    end_date: '',
+    note: '',
+  })
   const [scheduleHover, setScheduleHover] = useState<{ dateStr: string; startHour: number; endHourExclusive: number } | null>(null)
   const [scheduleLoading, setScheduleLoading] = useState(false)
   const [addVisitModalOpen, setAddVisitModalOpen] = useState(false)
@@ -302,6 +334,7 @@ export default function ClientDetailContent({ client, allClients, representative
     date: '',
     startTime: '09:00',
     endTime: '10:00',
+    contractId: '',
     description: '',
     type: 'Routine' as string,
     caregiverId: '',
@@ -428,8 +461,26 @@ export default function ClientDetailContent({ client, allClients, representative
   }, [client.id, initialAdls, initialAdlSchedules])
 
   useEffect(() => {
+    setLocalSkilledCarePlanTasks(initialSkilledCarePlanTasks ?? [])
+  }, [client.id, initialSkilledCarePlanTasks])
+
+  useEffect(() => {
+    const supabase = createClient()
+    q.getTaskCatalogAdlLists(supabase).then(({ data }) => {
+      if (data) setAdlLists(data)
+    })
+    q.getTaskCatalogSkilledTasks(supabase).then(({ data }) => {
+      if (data) setSkilledTaskLibrary(data)
+    })
+  }, [])
+
+  useEffect(() => {
     setLocalContractedHours(initialContractedHours ?? [])
   }, [client.id, initialContractedHours])
+
+  useEffect(() => {
+    setServiceContracts(initialServiceContracts ?? [])
+  }, [client.id, initialServiceContracts])
 
   useEffect(() => {
     setPendingAdlDeletes([])
@@ -1697,7 +1748,7 @@ export default function ClientDetailContent({ client, allClients, representative
     const rowEntries: Array<{ adl: PatientAdl; rowKey: string; periodLabel: string; storageSlot: string; groupName: string }> = []
     for (const a of candidates) {
       const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dow)
-      const info = ADL_LISTS.find((x) => x.name === a.adl_code)
+      const info = adlLists.find((x) => x.name === a.adl_code)
       const groupName = info?.group ?? 'General'
       if (s?.schedule_type === 'always') {
         const token = encodeVisitAdlSlotKey('any', a.adl_code)
@@ -1723,7 +1774,7 @@ export default function ClientDetailContent({ client, allClients, representative
       'inline-flex items-center gap-0.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 border border-gray-200/80'
 
     const renderRow = (a: PatientAdl, rowKey: string, periodBadges: string[], storageSlot: string) => {
-      const info = ADL_LISTS.find((x) => x.name === a.adl_code) ?? { name: a.adl_code, group: 'General' }
+      const info = adlLists.find((x) => x.name === a.adl_code) ?? { name: a.adl_code, group: 'General' }
       const token = encodeVisitAdlSlotKey(storageSlot, a.adl_code)
       const isChecked = visitAdlSelected.has(token)
       return (
@@ -1801,6 +1852,16 @@ export default function ClientDetailContent({ client, allClients, representative
     )
   }
 
+  const activeContracts = useMemo(
+    () => serviceContracts.filter((c) => (c.status ?? 'active') === 'active'),
+    [serviceContracts]
+  )
+
+  const selectedVisitContract = useMemo(
+    () => activeContracts.find((c) => c.id === visitForm.contractId) ?? null,
+    [activeContracts, visitForm.contractId]
+  )
+
   /** Pill segmented control for Details / ADLs in visit modals (matches design: grey track, white active segment). */
   const visitModalHeaderTabs = (
     <div className="flex w-full rounded-full bg-gray-100 p-1 gap-0.5">
@@ -1824,7 +1885,7 @@ export default function ClientDetailContent({ client, allClients, representative
             : 'text-gray-600 hover:text-gray-800'
         }`}
       >
-        ADLs & IADLs
+        {selectedVisitContract?.service_type === 'skilled' ? 'Skilled Tasks' : 'ADLs & IADLs'}
         {visitAdlSelected.size > 0 && (
           <span className="rounded-full bg-green-100 text-green-800 text-xs px-1.5 py-0.5 font-semibold tabular-nums">
             {visitAdlSelected.size}
@@ -2144,6 +2205,7 @@ export default function ClientDetailContent({ client, allClients, representative
       date: today,
       startTime: '09:00',
       endTime: '10:00',
+      contractId: activeContracts[0]?.id ?? '',
       description: '',
       type: 'Routine',
       caregiverId: '',
@@ -2180,6 +2242,7 @@ export default function ClientDetailContent({ client, allClients, representative
       date: schedule.date,
       startTime: start,
       endTime: end,
+      contractId: schedule.contract_id ?? '',
       description: schedule.description ?? '',
       type: (schedule.type ?? 'Routine') as string,
       caregiverId: schedule.caregiver_id ?? '',
@@ -2221,15 +2284,67 @@ export default function ClientDetailContent({ client, allClients, representative
   }
 
   const openManageLimitModal = () => {
-    const monday = getMonday(new Date())
-    const mondayStr = toLocalDateString(monday)
-    setLimitForm({ totalHours: '', effectiveDate: mondayStr, note: '' })
-    setLimitError(null)
-    setManageLimitModalOpen(true)
+    setServiceContractError(null)
+    setServiceContractsModalOpen(true)
   }
 
   const closeManageLimitModal = () => {
-    if (!isSavingLimit) setManageLimitModalOpen(false)
+    if (!isSavingServiceContract) setServiceContractsModalOpen(false)
+  }
+
+  const handleSaveServiceContract = async () => {
+    if (!serviceContractForm.contract_type.trim()) {
+      setServiceContractError('Please select contract type.')
+      return
+    }
+    if (!serviceContractForm.effective_date) {
+      setServiceContractError('Please set effective date.')
+      return
+    }
+    setServiceContractError(null)
+    setIsSavingServiceContract(true)
+    try {
+      const supabase = createClient()
+      const { data, error } = await q.insertPatientServiceContract(supabase, {
+        patient_id: localClient.id,
+        contract_name: serviceContractForm.contract_name || null,
+        contract_type: serviceContractForm.contract_type,
+        service_type: serviceContractForm.service_type,
+        bill_rate: serviceContractForm.bill_rate ? Number(serviceContractForm.bill_rate) : null,
+        bill_unit_type: serviceContractForm.bill_unit_type,
+        weekly_hours_limit: serviceContractForm.weekly_hours_limit ? Number(serviceContractForm.weekly_hours_limit) : null,
+        effective_date: serviceContractForm.effective_date,
+        end_date: serviceContractForm.end_date || null,
+        note: serviceContractForm.note || null,
+      })
+      if (error || !data) {
+        setServiceContractError(error?.message ?? 'Failed to save contract.')
+        return
+      }
+      setServiceContracts((prev) => {
+        const inserted = data as PatientServiceContractRow
+        // Keep list status in sync immediately: newest contract is active, previous same-service active contracts become inactive.
+        const updatedPrev = prev.map((x) =>
+          x.id !== inserted.id && x.service_type === inserted.service_type && (x.status ?? 'active') === 'active'
+            ? { ...x, status: 'inactive' }
+            : x
+        )
+        return [{ ...inserted, status: 'active' }, ...updatedPrev.filter((x) => x.id !== inserted.id)]
+      })
+      setVisitForm((p) => ({ ...p, contractId: data.id }))
+      setServiceContractForm((p) => ({
+        ...p,
+        contract_name: '',
+        bill_rate: '',
+        weekly_hours_limit: '',
+        end_date: '',
+        note: '',
+      }))
+    } catch (e) {
+      setServiceContractError(e instanceof Error ? e.message : 'Failed to save contract.')
+    } finally {
+      setIsSavingServiceContract(false)
+    }
   }
 
   const normalizeToWeekStart = (dateStr: string) => {
@@ -2242,8 +2357,16 @@ export default function ClientDetailContent({ client, allClients, representative
       setVisitError('Please set start time and end time.')
       return
     }
+    if (!visitForm.contractId) {
+      setVisitError('Please select a billing contract.')
+      return
+    }
     if (visitAdlSelected.size === 0) {
-      setVisitError('Please select at least one ADL task in the ADLs tab.')
+      setVisitError(
+        selectedVisitContract?.service_type === 'skilled'
+          ? 'Please select at least one skilled task in the ADLs tab.'
+          : 'Please select at least one ADL task in the ADLs tab.'
+      )
       return
     }
     if (!visitForm.isRecurring && !visitForm.date) {
@@ -2267,6 +2390,8 @@ export default function ClientDetailContent({ client, allClients, representative
 
     const startTime = visitForm.startTime.length === 5 ? visitForm.startTime : visitForm.startTime.slice(0, 5)
     const endTime = visitForm.endTime.length === 5 ? visitForm.endTime : visitForm.endTime.slice(0, 5)
+    const selectedContract = activeContracts.find((c) => c.id === visitForm.contractId) ?? null
+    const selectedServiceType = selectedContract?.service_type ?? 'non_skilled'
     const startParts = visitForm.startTime.split(':').map(Number)
     const endParts = visitForm.endTime.split(':').map(Number)
     const newMins = (endParts[0] * 60 + (endParts[1] ?? 0)) - (startParts[0] * 60 + (startParts[1] ?? 0))
@@ -2348,13 +2473,22 @@ export default function ClientDetailContent({ client, allClients, representative
     setIsSavingVisit(true)
     try {
       const idsToReplace = Array.from(overlappingIds)
-      for (let i = 0; i < idsToReplace.length; i++) {
-        await q.deleteSchedule(supabase, idsToReplace[i])
+      for (const rid of idsToReplace) {
+        const { error: delErr } = await q.deleteSchedule(supabase, rid)
+        if (delErr) {
+          setVisitError(
+            delErr.message ??
+              'Could not remove the existing visit before replacing. Check permissions or try again.'
+          )
+          return
+        }
       }
       const basePayload = {
         patient_id: localClient.id,
         start_time: startTime,
         end_time: endTime,
+        contract_id: visitForm.contractId,
+        service_type: selectedServiceType,
         description: visitForm.description || null,
         type: visitForm.type || 'Routine',
         caregiver_id: visitForm.caregiverId || null,
@@ -2375,11 +2509,26 @@ export default function ClientDetailContent({ client, allClients, representative
         repeat_start: visitForm.isRecurring ? visitForm.repeatStart || null : null,
         repeat_end: visitForm.isRecurring && visitForm.repeatEnd ? visitForm.repeatEnd : null,
       }
-      for (const dateStr of datesToInsert) {
-        const { error } = await q.insertSchedule(supabase, { ...basePayload, date: dateStr })
+      if (visitForm.isRecurring) {
+        const repeatStart = visitForm.repeatStart || datesToInsert[0]
+        const repeatEnd = visitForm.repeatEnd || datesToInsert[datesToInsert.length - 1]
+        const { error } = await q.insertRecurringSchedulesFromSeries(supabase, {
+          ...basePayload,
+          dates: datesToInsert,
+          repeat_start: repeatStart,
+          repeat_end: repeatEnd,
+        })
         if (error) {
-          setVisitError(error.message ?? 'Failed to add visit.')
+          setVisitError(error.message ?? 'Failed to add recurring visit.')
           return
+        }
+      } else {
+        for (const dateStr of datesToInsert) {
+          const { error } = await q.insertSchedule(supabase, { ...basePayload, date: dateStr })
+          if (error) {
+            setVisitError(error.message ?? 'Failed to add visit.')
+            return
+          }
         }
       }
       if (maxDate >= scheduleWeekStartStr && minDate <= scheduleWeekEndStr) {
@@ -2406,8 +2555,18 @@ export default function ClientDetailContent({ client, allClients, representative
       setVisitError('Please set start time and end time.')
       return
     }
+    if (!visitForm.contractId) {
+      setVisitError('Please select a billing contract.')
+      return
+    }
+    const selectedContract = activeContracts.find((c) => c.id === visitForm.contractId) ?? null
+    const selectedServiceType = selectedContract?.service_type ?? 'non_skilled'
     if (visitAdlSelected.size === 0) {
-      setVisitError('Please select at least one ADL task in the ADLs tab.')
+      setVisitError(
+        selectedVisitContract?.service_type === 'skilled'
+          ? 'Please select at least one skilled task in the ADLs tab.'
+          : 'Please select at least one ADL task in the ADLs tab.'
+      )
       return
     }
     if (!visitForm.isRecurring && !visitForm.date) {
@@ -2427,6 +2586,8 @@ export default function ClientDetailContent({ client, allClients, representative
         date: dateToSave,
         start_time: visitForm.startTime.length === 5 ? visitForm.startTime : visitForm.startTime.slice(0, 5),
         end_time: visitForm.endTime.length === 5 ? visitForm.endTime : visitForm.endTime.slice(0, 5),
+        contract_id: visitForm.contractId,
+        service_type: selectedServiceType,
         description: visitForm.description || null,
         type: visitForm.type || 'Routine',
         caregiver_id: visitForm.caregiverId || null,
@@ -2530,7 +2691,11 @@ export default function ClientDetailContent({ client, allClients, representative
     setIsSavingVisit(true)
     try {
       const supabase = createClient()
-      await q.deleteSchedule(supabase, editingSchedule.id)
+      const { error: delErr } = await q.deleteSchedule(supabase, editingSchedule.id)
+      if (delErr) {
+        setVisitError(delErr.message ?? 'Could not delete this visit.')
+        return
+      }
       setWeekSchedules((prev) => prev.filter((s) => s.id !== editingSchedule.id))
       setEditVisitModalOpen(false)
       setEditingSchedule(null)
@@ -2637,22 +2802,108 @@ export default function ClientDetailContent({ client, allClients, representative
     }, 0)
   }, [weekSchedules])
 
-  const currentEffectiveLimit = latestAddedContractLimit
-  const limitHistoryRows = useMemo(
+  const scheduledHoursForWeekByServiceType = useMemo(
     () =>
-      [...localContractedHours].sort((a, b) => {
-        const byEffective = b.effective_date.localeCompare(a.effective_date)
-        if (byEffective !== 0) return byEffective
-        return (b.created_at ?? '').localeCompare(a.created_at ?? '')
-      }),
-    [localContractedHours]
+      weekSchedules.reduce(
+        (acc, s) => {
+          const [sh, sm] = (s.start_time ?? '0:0').split(':').slice(0, 2).map(Number)
+          const [eh, em] = (s.end_time ?? '0:0').split(':').slice(0, 2).map(Number)
+          const dur = (eh * 60 + em - sh * 60 - sm) / 60
+          if (!Number.isFinite(dur) || dur <= 0) return acc
+          const key = s.service_type === 'skilled' ? 'skilled' : 'non_skilled'
+          acc[key] += dur
+          return acc
+        },
+        { non_skilled: 0, skilled: 0 } as Record<'non_skilled' | 'skilled', number>
+      ),
+    [weekSchedules]
   )
 
-  /** Overview card: older limits (same order as history table, excluding current row). */
-  const contractedHoursPreviousRows = useMemo(() => {
-    if (!currentEffectiveLimit) return []
-    return limitHistoryRows.filter((r) => r.id !== currentEffectiveLimit.id)
-  }, [limitHistoryRows, currentEffectiveLimit])
+  const weeklyLimitRows = useMemo(
+    () =>
+      serviceContracts.filter(
+        (r) =>
+          r.weekly_hours_limit != null &&
+          Number.isFinite(Number(r.weekly_hours_limit)) &&
+          Number(r.weekly_hours_limit) >= 0
+      ),
+    [serviceContracts]
+  )
+
+  const activeWeeklyLimitRows = useMemo(
+    () => weeklyLimitRows.filter((r) => (r.status ?? 'active') === 'active'),
+    [weeklyLimitRows]
+  )
+
+  const currentWeeklyLimitByServiceType = useMemo(() => {
+    const weekStart = scheduleWeekStartStr
+    const weekEnd = scheduleWeekEndStr
+    const overlapsWeek = (r: PatientServiceContractRow) =>
+      r.effective_date <= weekEnd && (r.end_date == null || r.end_date >= weekStart)
+    const pickFor = (serviceType: 'non_skilled' | 'skilled') => {
+      const rows = activeWeeklyLimitRows.filter((r) => r.service_type === serviceType)
+      if (rows.length === 0) return null
+      // "Activated by last added" per service type.
+      const latest = [...rows].sort((a, b) => {
+        const byCreated = (b.created_at ?? '').localeCompare(a.created_at ?? '')
+        if (byCreated !== 0) return byCreated
+        const byEffective = b.effective_date.localeCompare(a.effective_date)
+        if (byEffective !== 0) return byEffective
+        return b.id.localeCompare(a.id)
+      })[0]
+      const applies = overlapsWeek(latest)
+      if (applies) return latest
+      const applicable = rows
+        .filter((r) => overlapsWeek(r))
+        .sort((a, b) => {
+          const byEffective = b.effective_date.localeCompare(a.effective_date)
+          if (byEffective !== 0) return byEffective
+          return (b.created_at ?? '').localeCompare(a.created_at ?? '')
+        })
+      return applicable[0] ?? null
+    }
+    return {
+      non_skilled: pickFor('non_skilled'),
+      skilled: pickFor('skilled'),
+    } as Record<'non_skilled' | 'skilled', PatientServiceContractRow | null>
+  }, [activeWeeklyLimitRows, scheduleWeekStartStr, scheduleWeekEndStr])
+
+  /** Overview tab: most recently saved weekly limit per service type (from patient_service_contracts). */
+  const latestOverviewWeeklyByServiceType = useMemo(() => {
+    const pick = (st: 'non_skilled' | 'skilled') => {
+      const rows = weeklyLimitRows.filter((r) => r.service_type === st)
+      if (rows.length === 0) return null
+      return [...rows].sort((a, b) => {
+        const byCreated = (b.created_at ?? '').localeCompare(a.created_at ?? '')
+        if (byCreated !== 0) return byCreated
+        const byEffective = b.effective_date.localeCompare(a.effective_date)
+        if (byEffective !== 0) return byEffective
+        return b.id.localeCompare(a.id)
+      })[0]
+    }
+    return {
+      non_skilled: pick('non_skilled'),
+      skilled: pick('skilled'),
+    } as Record<'non_skilled' | 'skilled', PatientServiceContractRow | null>
+  }, [weeklyLimitRows])
+
+  const overviewPreviousWeeklyByServiceType = useMemo(() => {
+    const rest = (st: 'non_skilled' | 'skilled') => {
+      const rows = weeklyLimitRows
+        .filter((r) => r.service_type === st)
+        .sort((a, b) => {
+          const byCreated = (b.created_at ?? '').localeCompare(a.created_at ?? '')
+          if (byCreated !== 0) return byCreated
+          return b.effective_date.localeCompare(a.effective_date)
+        })
+      return rows.slice(1)
+    }
+    return { non_skilled: rest('non_skilled'), skilled: rest('skilled') }
+  }, [weeklyLimitRows])
+
+  const overviewHasWeeklyContractLimits =
+    latestOverviewWeeklyByServiceType.non_skilled != null ||
+    latestOverviewWeeklyByServiceType.skilled != null
 
   const skillsByType = CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
     if (!acc[s.type]) acc[s.type] = []
@@ -2675,6 +2926,41 @@ export default function ClientDetailContent({ client, allClients, representative
     'Certifications': 'ring-blue-500 bg-blue-500 text-white',
     'Language': 'ring-teal-500 bg-teal-500 text-white',
   }
+  const skilledTaskBadgePalette = [
+    'bg-red-100 text-red-700',
+    'bg-orange-100 text-orange-700',
+    'bg-amber-100 text-amber-700',
+    'bg-yellow-100 text-yellow-700',
+    'bg-lime-100 text-lime-700',
+    'bg-green-100 text-green-700',
+    'bg-emerald-100 text-emerald-700',
+    'bg-teal-100 text-teal-700',
+    'bg-cyan-100 text-cyan-700',
+    'bg-sky-100 text-sky-700',
+    'bg-blue-100 text-blue-700',
+    'bg-indigo-100 text-indigo-700',
+    'bg-violet-100 text-violet-700',
+    'bg-purple-100 text-purple-700',
+    'bg-fuchsia-100 text-fuchsia-700',
+    'bg-pink-100 text-pink-700',
+    'bg-rose-100 text-rose-700',
+  ] as const
+  const skilledTaskBadgeClassByCategory = (category: string) => {
+    const known: Record<string, string> = {
+      'Wound Care': 'bg-rose-100 text-rose-700',
+      'Medication Management': 'bg-blue-100 text-blue-700',
+      'Vital Signs & Monitoring': 'bg-emerald-100 text-emerald-700',
+      'Respiratory Care': 'bg-cyan-100 text-cyan-700',
+      'Physical / OT': 'bg-amber-100 text-amber-700',
+      'Nutrition Support': 'bg-lime-100 text-lime-700',
+      'Catheter & Elimination': 'bg-orange-100 text-orange-700',
+      'Lab & Diagnostics': 'bg-teal-100 text-teal-700',
+    }
+    if (known[category]) return known[category]
+    let hash = 0
+    for (let i = 0; i < category.length; i++) hash = (hash * 31 + category.charCodeAt(i)) >>> 0
+    return skilledTaskBadgePalette[hash % skilledTaskBadgePalette.length]
+  }
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
@@ -2682,10 +2968,57 @@ export default function ClientDetailContent({ client, allClients, representative
     { id: 'representatives', label: 'Representatives' },
     { id: 'schedule', label: 'Schedule' },
     { id: 'adls', label: 'ADLs' },
+    { id: 'skilled-tasks', label: 'Skilled Tasks' },
     { id: 'documents', label: 'Documents' },
-    { id: 'caregiver-requirements', label: 'Caregiver Requirements' },
+    { id: 'caregiver-requirements', label: 'Caregiver Competencies' },
     { id: 'incidents', label: 'Incidents' },
   ]
+
+  const openSkilledTaskModal = () => {
+    setSkilledTasksError(null)
+    setSkilledTaskSearch('')
+    setSkilledTaskCategoryFilter('all')
+    setPendingSkilledTaskIds(new Set(localSkilledCarePlanTasks.map((t) => t.task_id)))
+    setSkilledTaskModalOpen(true)
+  }
+
+  const applySkilledTaskSelection = () => {
+    const selected = skilledTaskLibrary.filter((t) => pendingSkilledTaskIds.has(t.id))
+    const next = selected.map((t, i) => ({
+      id: `draft-${t.id}`,
+      patient_id: localClient.id,
+      task_id: t.id,
+      category: t.category || 'General',
+      name: t.name,
+      description: t.description ?? null,
+      display_order: i,
+    }))
+    setLocalSkilledCarePlanTasks(next)
+    setSkilledTaskModalOpen(false)
+  }
+
+  const handleSaveSkilledCarePlan = async () => {
+    setSkilledTasksError(null)
+    setIsSavingSkilledTasks(true)
+    try {
+      const supabase = createClient()
+      const orderedIds = localSkilledCarePlanTasks
+        .slice()
+        .sort((a, b) => a.display_order - b.display_order)
+        .map((t) => t.task_id)
+      const { data, error } = await q.replacePatientSkilledCarePlanTasks(supabase, localClient.id, orderedIds)
+      if (error) {
+        setSkilledTasksError(error.message ?? 'Failed to save care plan.')
+        return
+      }
+      setLocalSkilledCarePlanTasks(data ?? [])
+      router.refresh()
+    } catch (e) {
+      setSkilledTasksError(e instanceof Error ? e.message : 'Failed to save care plan.')
+    } finally {
+      setIsSavingSkilledTasks(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -3003,7 +3336,7 @@ export default function ClientDetailContent({ client, allClients, representative
                     Set Limit
                   </button>
                 </div>
-                {!currentEffectiveLimit ? (
+                {!overviewHasWeeklyContractLimits ? (
                   <div className="p-6">
                     <div className="rounded-lg border-2 border-dashed border-gray-200 p-8 flex flex-col items-center justify-center min-h-[140px]">
                       <Timer className="w-12 h-12 text-gray-300 mb-3" aria-hidden />
@@ -3019,41 +3352,63 @@ export default function ClientDetailContent({ client, allClients, representative
                     </div>
                   </div>
                 ) : (
-                  <div className="p-4">
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-2xl font-bold text-gray-900">{currentEffectiveLimit.total_hours}</span>
-                      <span className="text-sm text-gray-500">hrs / week</span>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      Effective {parseDateOnly(currentEffectiveLimit.effective_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                    </p>
-                    {contractedHoursPreviousRows.length > 0 && (
-                      <>
-                        <div className="my-4 border-t border-gray-200" aria-hidden />
-                        <div className="flex items-center gap-1.5 text-xs font-medium text-gray-500 mb-2.5">
-                          <History className="w-3.5 h-3.5 shrink-0 text-gray-400" aria-hidden />
-                          <span>Previous limits</span>
-                        </div>
-                        <ul className="space-y-2">
-                          {contractedHoursPreviousRows.map((row) => (
-                            <li
-                              key={row.id}
-                              className="flex items-center justify-between gap-3 text-xs text-gray-500"
-                            >
-                              <span>{row.total_hours} hrs</span>
-                              <span className="shrink-0 tabular-nums">
-                                from{' '}
-                                {parseDateOnly(row.effective_date).toLocaleDateString('en-US', {
-                                  month: 'short',
-                                  day: 'numeric',
-                                  year: 'numeric',
-                                })}
+                  <div className="p-4 space-y-3">
+                    {(['non_skilled', 'skilled'] as const).map((key) => {
+                      const row = latestOverviewWeeklyByServiceType[key]
+                      const label = key === 'skilled' ? 'Skilled' : 'Non-skilled'
+                      const prevRows = overviewPreviousWeeklyByServiceType[key]
+                      return (
+                        <div key={key} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
+                            {row ? (
+                              <span
+                                className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
+                                  (row.status ?? 'active') === 'active'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-gray-200 text-gray-600'
+                                }`}
+                              >
+                                {(row.status ?? 'active') === 'active' ? 'Active' : 'Inactive'}
                               </span>
-                            </li>
-                          ))}
-                        </ul>
-                      </>
-                    )}
+                            ) : null}
+                          </div>
+                          {row ? (
+                            <>
+                              <div className="flex items-baseline gap-1 mt-1">
+                                <span className="text-2xl font-bold text-gray-900">
+                                  {Number(row.weekly_hours_limit ?? 0)}
+                                </span>
+                                <span className="text-sm text-gray-500">hrs / week</span>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-1">
+                                Effective {formatShortDate(row.effective_date)}
+                              </p>
+                              {prevRows.length > 0 ? (
+                                <ul className="mt-2 space-y-1 border-t border-gray-200/80 pt-2">
+                                  {prevRows.map((p) => (
+                                    <li
+                                      key={p.id}
+                                      className="flex items-center justify-between gap-2 text-[11px] text-gray-500"
+                                    >
+                                      <span>
+                                        {Number(p.weekly_hours_limit ?? 0)} hrs ·{' '}
+                                        <span className="text-gray-400">
+                                          {(p.status ?? 'active') === 'active' ? 'active' : 'inactive'}
+                                        </span>
+                                      </span>
+                                      <span className="shrink-0 tabular-nums">{formatShortDate(p.effective_date)}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : null}
+                            </>
+                          ) : (
+                            <p className="text-sm text-gray-400 mt-2">Not set</p>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -3589,33 +3944,18 @@ export default function ClientDetailContent({ client, allClients, representative
 
           {activeTab === 'schedule' && (
             <div className="w-full space-y-4">
-              {/* Weekly Contracted Hours card (when limit set) or simple header + message */}
+              {/* Weekly Contracted Hours card by service type */}
               {(() => {
-                const contracted = currentLimitForWeek ? Number(currentLimitForWeek.total_hours) : 0
-                const overBy = currentLimitForWeek ? Math.max(0, scheduledHoursForWeek - contracted) : 0
-                const remaining = currentLimitForWeek ? Math.max(0, contracted - scheduledHoursForWeek) : 0
-                const isOverLimit = currentLimitForWeek ? scheduledHoursForWeek > contracted : false
-                const isAtLimit = currentLimitForWeek ? Math.abs(scheduledHoursForWeek - contracted) < 0.0001 : false
-                const usedPct = currentLimitForWeek && contracted > 0
-                  ? Math.min(100, (scheduledHoursForWeek / contracted) * 100)
-                  : 0
-                const cardTone = isOverLimit
-                  ? 'rounded-lg border border-red-300 bg-red-50/40 p-4'
-                  : isAtLimit
-                    ? 'rounded-lg border border-amber-300 bg-amber-50/40 p-4'
-                    : 'rounded-lg border border-blue-200 bg-blue-50/50 p-4'
-                const accentBg = isOverLimit
-                  ? 'bg-red-100 text-red-500'
-                  : isAtLimit
-                    ? 'bg-amber-100 text-amber-500'
-                    : 'bg-blue-100 text-blue-500'
-                const progressBg = isOverLimit ? 'bg-red-200' : isAtLimit ? 'bg-amber-200' : 'bg-blue-200'
-                const progressFill = isOverLimit ? 'bg-red-500' : isAtLimit ? 'bg-amber-500' : 'bg-blue-500'
+                const rows = [
+                  { key: 'non_skilled' as const, label: 'Non-Skilled', tone: 'blue' as const },
+                  { key: 'skilled' as const, label: 'Skilled', tone: 'purple' as const },
+                ]
+                const hasAnyAppliedLimit = rows.some((r) => currentWeeklyLimitByServiceType[r.key])
                 return (
-              <div className={cardTone}>
+              <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <div className={`flex h-8 w-8 items-center justify-center rounded ${accentBg}`}>
+                    <div className="flex h-8 w-8 items-center justify-center rounded bg-blue-100 text-blue-500">
                       <TrendingUp className="h-4 w-4" />
                     </div>
                     <div>
@@ -3634,74 +3974,101 @@ export default function ClientDetailContent({ client, allClients, representative
                     Manage Limit
                   </button>
                 </div>
-                {currentLimitForWeek ? (
+                {hasAnyAppliedLimit ? (
                   <>
-                    <div className="mt-4 grid grid-cols-3 gap-3">
-                      <div className={`rounded-lg border p-3 text-center ${isOverLimit ? 'border-gray-200 bg-white' : 'border-gray-200 bg-white'}`}>
-                        <p className="text-2xl font-bold text-gray-900">{Number(currentLimitForWeek.total_hours)}</p>
-                        <p className="text-xs text-gray-500">Contracted hrs</p>
-                      </div>
-                      <div className={`rounded-lg border p-3 text-center ${isOverLimit ? 'border-red-300 bg-red-50/40' : 'border-gray-200 bg-white'}`}>
-                        <p className={`text-2xl font-bold ${isOverLimit ? 'text-red-600' : 'text-gray-900'}`}>{scheduledHoursForWeek.toFixed(1)}</p>
-                        <p className="text-xs text-gray-500">Scheduled hrs</p>
-                      </div>
-                      <div className={`rounded-lg border p-3 text-center ${isOverLimit ? 'border-red-300 bg-red-50/40' : isAtLimit ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200 bg-white'}`}>
-                        <p className={`text-2xl font-bold ${isOverLimit ? 'text-red-600' : isAtLimit ? 'text-amber-600' : 'text-gray-900'}`}>
-                          {isOverLimit ? `+${overBy.toFixed(1)}` : remaining.toFixed(1)}
-                        </p>
-                        <p className="text-xs text-gray-500">{isOverLimit ? 'Over limit' : 'Remaining hrs'}</p>
-                      </div>
-                    </div>
-                    <div className="mt-4">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className={isOverLimit ? 'text-red-600' : 'text-gray-500'}>
-                          {usedPct.toFixed(0)}% of contracted hours used
-                        </span>
-                        {isOverLimit ? (
-                          <span className="inline-flex items-center gap-1 font-medium text-red-600">
-                            <AlertTriangle className="h-3.5 w-3.5" />
-                            Over contracted limit!
-                          </span>
-                        ) : isAtLimit ? (
-                          <span className="inline-flex items-center gap-1 font-medium text-amber-600">
-                            <AlertCircle className="h-3.5 w-3.5" />
-                            Approaching limit
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 font-medium text-green-600">
-                            <Check className="h-3.5 w-3.5" />
-                            Within limit
-                          </span>
-                        )}
-                      </div>
-                      {isOverLimit ? (
-                        <div className="mt-1.5 w-full">
-                          <div className="h-2 w-full overflow-hidden rounded-full bg-red-200">
-                            <div
-                              className="h-full rounded-full bg-red-500 transition-all"
-                              style={{ width: `${usedPct}%` }}
-                            />
+                    <div className="mt-4 space-y-4">
+                      {rows.map((row) => {
+                        const limit = currentWeeklyLimitByServiceType[row.key]
+                        const contracted = limit ? Number(limit.weekly_hours_limit ?? 0) : 0
+                        const scheduled = Number(scheduledHoursForWeekByServiceType[row.key] ?? 0)
+                        const usedPct = contracted > 0 ? Math.min(100, (scheduled / contracted) * 100) : 0
+                        const isOverLimit = limit ? scheduled > contracted : false
+                        const isAtLimit = limit ? Math.abs(scheduled - contracted) < 0.0001 : false
+                        const toneClass =
+                          row.tone === 'purple'
+                            ? isOverLimit
+                              ? 'border-red-300 bg-red-50/30'
+                              : isAtLimit
+                                ? 'border-amber-300 bg-amber-50/30'
+                                : 'border-purple-200 bg-purple-50/40'
+                            : isOverLimit
+                              ? 'border-red-300 bg-red-50/30'
+                              : isAtLimit
+                                ? 'border-amber-300 bg-amber-50/30'
+                                : 'border-blue-200 bg-blue-50/40'
+                        const progressBg =
+                          isOverLimit ? 'bg-red-200' : isAtLimit ? 'bg-amber-200' : row.tone === 'purple' ? 'bg-purple-200' : 'bg-blue-200'
+                        const progressFill =
+                          isOverLimit ? 'bg-red-500' : isAtLimit ? 'bg-amber-500' : row.tone === 'purple' ? 'bg-purple-500' : 'bg-blue-500'
+                        return (
+                          <div key={row.key} className={`rounded-lg border p-3 ${toneClass}`}>
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-semibold text-gray-900">{row.label}</p>
+                              {limit ? (
+                                <span className="text-xs text-gray-500">
+                                  Effective {formatShortDate(limit.effective_date)}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-gray-500">No active limit</span>
+                              )}
+                            </div>
+                            <div className="mt-2 grid grid-cols-3 gap-3 text-center">
+                              <div className="rounded border border-gray-200 bg-white p-2">
+                                <p className="text-xl font-bold text-gray-900">{contracted.toFixed(1)}</p>
+                                <p className="text-[11px] text-gray-500">Contracted</p>
+                              </div>
+                              <div className="rounded border border-gray-200 bg-white p-2">
+                                <p className={`text-xl font-bold ${isOverLimit ? 'text-red-600' : 'text-gray-900'}`}>
+                                  {scheduled.toFixed(1)}
+                                </p>
+                                <p className="text-[11px] text-gray-500">Scheduled</p>
+                              </div>
+                              <div className="rounded border border-gray-200 bg-white p-2">
+                                <p className={`text-xl font-bold ${isOverLimit ? 'text-red-600' : isAtLimit ? 'text-amber-600' : 'text-gray-900'}`}>
+                                  {limit ? (isOverLimit ? `+${(scheduled - contracted).toFixed(1)}` : Math.max(0, contracted - scheduled).toFixed(1)) : '—'}
+                                </p>
+                                <p className="text-[11px] text-gray-500">{isOverLimit ? 'Over' : 'Remaining'}</p>
+                              </div>
+                            </div>
+                            {limit ? (
+                              <div className="mt-2">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className={isOverLimit ? 'text-red-600' : 'text-gray-500'}>
+                                    {usedPct.toFixed(0)}% used
+                                  </span>
+                                  {isOverLimit ? (
+                                    <span className="inline-flex items-center gap-1 font-medium text-red-600">
+                                      <AlertTriangle className="h-3.5 w-3.5" />
+                                      Over limit
+                                    </span>
+                                  ) : isAtLimit ? (
+                                    <span className="inline-flex items-center gap-1 font-medium text-amber-600">
+                                      <AlertCircle className="h-3.5 w-3.5" />
+                                      At limit
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 font-medium text-green-600">
+                                      <Check className="h-3.5 w-3.5" />
+                                      Within limit
+                                    </span>
+                                  )}
+                                </div>
+                                <div className={`mt-1.5 h-2 w-full overflow-hidden rounded-full ${progressBg}`}>
+                                  <div
+                                    className={`h-full rounded-full ${progressFill} transition-all`}
+                                    style={{ width: `${usedPct}%` }}
+                                  />
+                                </div>
+                              </div>
+                            ) : null}
                           </div>
-                          <div className="mt-0.5 h-0.5 w-full overflow-hidden rounded-full bg-red-200">
-                            <div
-                              className="h-full rounded-full bg-red-500 transition-all"
-                              style={{ width: `${Math.min(100, usedPct * 0.67)}%` }}
-                            />
-                          </div>
-                        </div>
-                      ) : (
-                        <div className={`mt-1.5 h-2 w-full overflow-hidden rounded-full ${progressBg}`}>
-                          <div
-                            className={`h-full rounded-full ${progressFill} transition-all`}
-                            style={{ width: `${usedPct}%` }}
-                          />
-                        </div>
-                      )}
+                        )
+                      })}
                     </div>
                   </>
                 ) : (
                   <div className="mt-3 rounded-md bg-blue-50 px-3 py-2 text-sm text-blue-700">
-                    {localContractedHours.length > 0 ? (
+                    {weeklyLimitRows.length > 0 ? (
                       <>
                         No limit applies to this calendar week — the selected week is before your newest
                         limit&apos;s effective week, or older limits have ended. Use week navigation to view a
@@ -4006,7 +4373,7 @@ export default function ClientDetailContent({ client, allClients, representative
                       </thead>
                       <tbody className="divide-y divide-gray-200">
                         {localAdls.map((adlRow) => {
-                          const adlInfo = ADL_LISTS.find((a) => a.name === adlRow.adl_code) ?? { name: adlRow.adl_code, group: 'General' }
+                          const adlInfo = adlLists.find((a) => a.name === adlRow.adl_code) ?? { name: adlRow.adl_code, group: 'General' }
                           const adlNote = getAdlNote(adlRow.adl_code)
                           return (
                             <tr key={adlRow.id} className="bg-white hover:bg-gray-50">
@@ -4184,8 +4551,208 @@ export default function ClientDetailContent({ client, allClients, representative
               </div>
             </div>
           )}
+
+          {activeTab === 'skilled-tasks' && (
+            <div className="space-y-5">
+              <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-xl font-semibold text-gray-900">Skilled Care Plan</h3>
+                    <p className="text-sm text-gray-600">
+                      {localSkilledCarePlanTasks.length > 0
+                        ? `${localSkilledCarePlanTasks.length} skilled task${localSkilledCarePlanTasks.length > 1 ? 's' : ''} on care plan`
+                        : 'No skilled tasks configured'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={openSkilledTaskModal}
+                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Task
+                  </button>
+                </div>
+                <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-800">
+                  Skilled tasks are billed under <strong>Skilled</strong> service contracts only. They are separate from ADLs which apply to Non-Skilled contracts.
+                </div>
+              </div>
+
+              {localSkilledCarePlanTasks.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-10 text-center">
+                  <ClipboardList className="mx-auto h-10 w-10 text-gray-300" />
+                  <p className="mt-3 text-base font-medium text-gray-700">No skilled tasks on care plan</p>
+                  <p className="mt-1 text-sm text-gray-500">Add skilled nursing or therapy tasks from the library</p>
+                  <button
+                    type="button"
+                    onClick={openSkilledTaskModal}
+                    className="mt-6 inline-flex items-center gap-2 rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-800"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add First Task
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {Object.entries(
+                    localSkilledCarePlanTasks.reduce<Record<string, SkilledCarePlanTask[]>>((acc, t) => {
+                      if (!acc[t.category]) acc[t.category] = []
+                      acc[t.category].push(t)
+                      return acc
+                    }, {})
+                  ).map(([category, tasks]) => (
+                    <div key={category} className="space-y-2">
+                      <div
+                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${skilledTaskBadgeClassByCategory(
+                          category
+                        )}`}
+                      >
+                        {category}
+                        <span className="ml-2 text-gray-500">{tasks.length} task{tasks.length > 1 ? 's' : ''}</span>
+                      </div>
+                      {tasks.map((task) => (
+                        <div key={`${task.task_id}-${task.display_order}`} className="rounded-xl border border-gray-200 bg-white p-3">
+                          <div className="font-medium text-gray-900">{task.name}</div>
+                          {task.description ? <div className="mt-0.5 text-xs text-gray-500">{task.description}</div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {skilledTasksError ? (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{skilledTasksError}</div>
+              ) : null}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLocalSkilledCarePlanTasks(initialSkilledCarePlanTasks ?? [])
+                    setSkilledTasksError(null)
+                  }}
+                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveSkilledCarePlan}
+                  disabled={isSavingSkilledTasks}
+                  className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-60"
+                >
+                  {isSavingSkilledTasks ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Save Care Plan
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      <Modal
+        isOpen={skilledTaskModalOpen}
+        onClose={() => setSkilledTaskModalOpen(false)}
+        title="Skilled Task Library"
+        subtitle="Select skilled nursing or therapy tasks to add to the care plan"
+        size="md"
+      >
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={skilledTaskSearch}
+                onChange={(e) => setSkilledTaskSearch(e.target.value)}
+                placeholder="Search tasks..."
+                className="w-full rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm"
+              />
+            </div>
+            <select
+              value={skilledTaskCategoryFilter}
+              onChange={(e) => setSkilledTaskCategoryFilter(e.target.value)}
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              <option value="all">All</option>
+              {Array.from(new Set(skilledTaskLibrary.map((t) => t.category))).sort().map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="max-h-[50vh] overflow-y-auto space-y-3 pr-1">
+            {Object.entries(
+              skilledTaskLibrary
+                .filter((t) => {
+                  const q = skilledTaskSearch.trim().toLowerCase()
+                  if (skilledTaskCategoryFilter !== 'all' && t.category !== skilledTaskCategoryFilter) return false
+                  if (!q) return true
+                  const hay = `${t.name} ${t.category} ${t.description ?? ''}`.toLowerCase()
+                  return hay.includes(q)
+                })
+                .reduce<Record<string, typeof skilledTaskLibrary>>((acc, item) => {
+                  if (!acc[item.category]) acc[item.category] = []
+                  acc[item.category].push(item)
+                  return acc
+                }, {})
+            ).map(([category, tasks]) => (
+              <div key={category} className="space-y-2">
+                <div
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${skilledTaskBadgeClassByCategory(
+                    category
+                  )}`}
+                >
+                  {category}
+                </div>
+                {tasks.map((task) => {
+                  const selected = pendingSkilledTaskIds.has(task.id)
+                  return (
+                    <div key={task.id} className="rounded-xl border border-gray-200 bg-white p-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-medium text-gray-900">{task.name}</div>
+                        {task.description ? <div className="mt-0.5 text-xs text-gray-500">{task.description}</div> : null}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPendingSkilledTaskIds((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(task.id)) next.delete(task.id)
+                            else next.add(task.id)
+                            return next
+                          })
+                        }
+                        className="rounded-lg px-2 py-1 text-sm font-semibold text-purple-600 hover:bg-purple-50"
+                      >
+                        {selected ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => setSkilledTaskModalOpen(false)}
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={applySkilledTaskSelection}
+              className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Representative Add/Edit Modal */}
       <Modal
@@ -4303,7 +4870,7 @@ export default function ClientDetailContent({ client, allClients, representative
           ) : adlToDelete ? (
             <p className="text-gray-600">
               Are you sure you want to remove{' '}
-              <strong>{ADL_LISTS.find((a) => a.name === adlToDelete)?.name ?? adlToDelete}</strong>
+              <strong>{adlLists.find((a) => a.name === adlToDelete)?.name ?? adlToDelete}</strong>
               {' '}from this client&apos;s ADL plan? This cannot be undone.
             </p>
           ) : docToDelete ? (
@@ -4728,7 +5295,7 @@ export default function ClientDetailContent({ client, allClients, representative
           <div className="border border-gray-200 rounded-lg max-h-64 overflow-y-auto">
             {(() => {
               const query = addAdlSearch.toLowerCase().trim()
-              const available = ADL_LISTS.filter(
+              const available = adlLists.filter(
                 (a) =>
                   !localAdls.some((x) => x.adl_code === a.name) &&
                   (query === '' ||
@@ -5026,6 +5593,34 @@ export default function ClientDetailContent({ client, allClients, representative
               </div>
             </div>
             <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">Billing Contract <span className="text-red-500">*</span></label>
+                <button
+                  type="button"
+                  onClick={() => setServiceContractsModalOpen(true)}
+                  className="text-xs font-medium text-blue-700 hover:underline"
+                >
+                  Manage contracts
+                </button>
+              </div>
+              <select
+                value={visitForm.contractId}
+                onChange={(e) => setVisitForm((p) => ({ ...p, contractId: e.target.value }))}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                disabled={isSavingVisit}
+              >
+                <option value="">Select contract...</option>
+                {activeContracts.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {(c.contract_name?.trim() || c.contract_type)} - {c.service_type === 'skilled' ? 'Skilled' : 'Non-Skilled'} - {c.bill_unit_type}
+                  </option>
+                ))}
+              </select>
+              {activeContracts.length === 0 ? (
+                <p className="mt-1 text-xs text-amber-700">No active contracts on file. Add a contract before scheduling visits.</p>
+              ) : null}
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
               <textarea
                 value={visitForm.description}
@@ -5252,24 +5847,54 @@ export default function ClientDetailContent({ client, allClients, representative
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm">
               <span className="font-medium text-gray-700">
-                Select ADL Tasks <span className="text-red-500">*</span>
+                {selectedVisitContract?.service_type === 'skilled'
+                  ? 'Select Skilled Tasks'
+                  : 'Select ADL Tasks'} <span className="text-red-500">*</span>
               </span>
               {visitAdlSelected.size > 0 && (
                 <span className="text-green-600 font-medium">✓ {visitAdlSelected.size} tasks selected</span>
               )}
             </div>
             <div className="max-h-160 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
-              {(() => {
-                const visitDate = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
-                const dayOfWeekDb = visitDate
-                  ? (() => {
-                      const d = new Date(visitDate + 'T12:00:00').getDay()
-                      return d === 0 ? 7 : d
-                    })()
-                  : null
-                const assignedSlots = buildAssignedVisitAdlSlotSet(visitDateSchedules ?? [], localAdlSchedules)
-                return renderVisitAdlSelectionList(dayOfWeekDb, assignedSlots)
-              })()}
+              {selectedVisitContract?.service_type === 'skilled'
+                ? localSkilledCarePlanTasks.length === 0
+                  ? <p className="text-sm text-gray-500 p-3">No skilled tasks configured. Add them in Skilled Tasks tab first.</p>
+                  : localSkilledCarePlanTasks.map((t) => {
+                      const token = `skilled::${t.task_id}`
+                      const isChecked = visitAdlSelected.has(token)
+                      return (
+                        <label key={token} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              setVisitAdlSelected((prev) => {
+                                const next = new Set(prev)
+                                if (e.target.checked) next.add(token)
+                                else next.delete(token)
+                                return next
+                              })
+                            }}
+                            className="mt-1 rounded border-gray-300"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-gray-900">{t.name}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{t.category}</div>
+                          </div>
+                        </label>
+                      )
+                    })
+                : (() => {
+                    const visitDate = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
+                    const dayOfWeekDb = visitDate
+                      ? (() => {
+                          const d = new Date(visitDate + 'T12:00:00').getDay()
+                          return d === 0 ? 7 : d
+                        })()
+                      : null
+                    const assignedSlots = buildAssignedVisitAdlSlotSet(visitDateSchedules ?? [], localAdlSchedules)
+                    return renderVisitAdlSelectionList(dayOfWeekDb, assignedSlots)
+                  })()}
             </div>
             {(visitForm.isRecurring ? visitForm.repeatStart : visitForm.date) && (
               <p className="text-xs text-gray-500">
@@ -5354,6 +5979,31 @@ export default function ClientDetailContent({ client, allClients, representative
                   disabled={isSavingVisit}
                 />
               </div>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">Billing Contract <span className="text-red-500">*</span></label>
+                <button
+                  type="button"
+                  onClick={() => setServiceContractsModalOpen(true)}
+                  className="text-xs font-medium text-blue-700 hover:underline"
+                >
+                  Manage contracts
+                </button>
+              </div>
+              <select
+                value={visitForm.contractId}
+                onChange={(e) => setVisitForm((p) => ({ ...p, contractId: e.target.value }))}
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                disabled={isSavingVisit}
+              >
+                <option value="">Select contract...</option>
+                {activeContracts.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {(c.contract_name?.trim() || c.contract_type)} - {c.service_type === 'skilled' ? 'Skilled' : 'Non-Skilled'} - {c.bill_unit_type}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -5582,25 +6232,55 @@ export default function ClientDetailContent({ client, allClients, representative
           <div className="space-y-4">
             <div className="flex items-center justify-between text-sm">
               <span className="font-medium text-gray-700">
-                Select ADL Tasks <span className="text-red-500">*</span>
+                {selectedVisitContract?.service_type === 'skilled'
+                  ? 'Select Skilled Tasks'
+                  : 'Select ADL Tasks'} <span className="text-red-500">*</span>
               </span>
               {visitAdlSelected.size > 0 && (
                 <span className="text-green-600 font-medium">✓ {visitAdlSelected.size} tasks selected</span>
               )}
             </div>
             <div className="max-h-160 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
-              {(() => {
-                const visitDate = visitForm.date
-                const dayOfWeekDb = visitDate
-                  ? (() => {
-                      const d = new Date(visitDate + 'T12:00:00').getDay()
-                      return d === 0 ? 7 : d
-                    })()
-                  : null
-                const otherVisitsOnDate = (visitDateSchedules ?? []).filter((s) => s.id !== editingSchedule?.id)
-                const assignedSlots = buildAssignedVisitAdlSlotSet(otherVisitsOnDate, localAdlSchedules)
-                return renderVisitAdlSelectionList(dayOfWeekDb, assignedSlots)
-              })()}
+              {selectedVisitContract?.service_type === 'skilled'
+                ? localSkilledCarePlanTasks.length === 0
+                  ? <p className="text-sm text-gray-500 p-3">No skilled tasks configured. Add them in Skilled Tasks tab first.</p>
+                  : localSkilledCarePlanTasks.map((t) => {
+                      const token = `skilled::${t.task_id}`
+                      const isChecked = visitAdlSelected.has(token)
+                      return (
+                        <label key={token} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              setVisitAdlSelected((prev) => {
+                                const next = new Set(prev)
+                                if (e.target.checked) next.add(token)
+                                else next.delete(token)
+                                return next
+                              })
+                            }}
+                            className="mt-1 rounded border-gray-300"
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="font-medium text-gray-900">{t.name}</div>
+                            <div className="text-xs text-gray-500 mt-0.5">{t.category}</div>
+                          </div>
+                        </label>
+                      )
+                    })
+                : (() => {
+                    const visitDate = visitForm.date
+                    const dayOfWeekDb = visitDate
+                      ? (() => {
+                          const d = new Date(visitDate + 'T12:00:00').getDay()
+                          return d === 0 ? 7 : d
+                        })()
+                      : null
+                    const otherVisitsOnDate = (visitDateSchedules ?? []).filter((s) => s.id !== editingSchedule?.id)
+                    const assignedSlots = buildAssignedVisitAdlSlotSet(otherVisitsOnDate, localAdlSchedules)
+                    return renderVisitAdlSelectionList(dayOfWeekDb, assignedSlots)
+                  })()}
             </div>
             {(visitForm.isRecurring ? visitForm.repeatStart : visitForm.date) && (
               <p className="text-xs text-gray-500">
@@ -5665,138 +6345,114 @@ export default function ClientDetailContent({ client, allClients, representative
         </div>
       </Modal>
 
-      {/* Manage Contracted Hours Modal */}
       <Modal
-        isOpen={manageLimitModalOpen}
+        isOpen={serviceContractsModalOpen}
         onClose={closeManageLimitModal}
-        title={`Manage Contracted Weekly Hours — ${localClient.full_name}`}
+        title={`Manage Service Contracts — ${localClient.full_name}`}
         size="lg"
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-500 -mt-2">
-            Set total contracted caregiver hours. The limit takes effect from the week that contains the effective date.
+            Track billing contracts per service type. Only one active contract per service type is allowed at a time.
           </p>
-          <div className="rounded-lg border border-gray-200 p-4 space-y-4">
-            <h4 className="text-sm font-semibold text-gray-900">Add New Hours Limit</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+            <h4 className="text-sm font-semibold text-gray-900">New Contract</h4>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Contract Name</label>
+                <input value={serviceContractForm.contract_name} onChange={(e) => setServiceContractForm((p) => ({ ...p, contract_name: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" placeholder="e.g. Medicaid Non-Skilled 2025" />
+              </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Hours Per Week *</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={limitForm.totalHours}
-                  onChange={(e) => setLimitForm((p) => ({ ...p, totalHours: e.target.value }))}
-                  placeholder="e.g. 40"
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  disabled={isSavingLimit}
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-1">Contract Type *</label>
+                <select value={serviceContractForm.contract_type} onChange={(e) => setServiceContractForm((p) => ({ ...p, contract_type: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white">
+                  <option>Private Pay</option><option>Medicaid</option><option>Insurance</option><option>Medicare</option><option>Veterans Affairs</option><option>Waiver</option><option>Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Service Type *</label>
+                <select value={serviceContractForm.service_type} onChange={(e) => setServiceContractForm((p) => ({ ...p, service_type: e.target.value as 'non_skilled' | 'skilled' }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white">
+                  <option value="non_skilled">Non-Skilled</option>
+                  <option value="skilled">Skilled</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Bill Rate ($)</label>
+                <input type="number" min={0} step={0.01} value={serviceContractForm.bill_rate} onChange={(e) => setServiceContractForm((p) => ({ ...p, bill_rate: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Unit Type *</label>
+                <select value={serviceContractForm.bill_unit_type} onChange={(e) => setServiceContractForm((p) => ({ ...p, bill_unit_type: e.target.value as 'hour' | 'visit' | '15_min_unit' }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white">
+                  <option value="hour">Hour</option>
+                  <option value="visit">Visit</option>
+                  <option value="15_min_unit">15-Min Unit</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Weekly Hours Limit</label>
+                <input type="number" min={0} step={0.25} value={serviceContractForm.weekly_hours_limit} onChange={(e) => setServiceContractForm((p) => ({ ...p, weekly_hours_limit: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" placeholder="e.g. 40" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Effective Date *</label>
-                <input
-                  type="date"
-                  value={limitForm.effectiveDate}
-                  onChange={(e) => setLimitForm((p) => ({ ...p, effectiveDate: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  disabled={isSavingLimit}
-                />
-                <p className="mt-1 text-xs text-gray-500">This will apply from that week&apos;s Monday.</p>
+                <input type="date" value={serviceContractForm.effective_date} onChange={(e) => setServiceContractForm((p) => ({ ...p, effective_date: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">End Date (optional)</label>
+                <input type="date" value={serviceContractForm.end_date} onChange={(e) => setServiceContractForm((p) => ({ ...p, end_date: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" />
               </div>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Note (optional)</label>
-              <input
-                type="text"
-                value={limitForm.note}
-                onChange={(e) => setLimitForm((p) => ({ ...p, note: e.target.value }))}
-                placeholder="e.g. Plan renewal, insurance update..."
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                disabled={isSavingLimit}
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
+              <textarea value={serviceContractForm.note} onChange={(e) => setServiceContractForm((p) => ({ ...p, note: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" rows={2} />
             </div>
-            <button
-              type="button"
-              onClick={handleSaveLimit}
-              disabled={isSavingLimit}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
-            >
-              {isSavingLimit && <Loader2 className="w-4 h-4 animate-spin" />}
-              Save Hours Limit
-            </button>
+            {serviceContractError ? <p className="text-sm text-red-600">{serviceContractError}</p> : null}
+            <div className="flex justify-end">
+              <button type="button" onClick={handleSaveServiceContract} disabled={isSavingServiceContract} className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50">
+                {isSavingServiceContract ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                Save Contract
+              </button>
+            </div>
           </div>
 
-          <div>
-            <h4 className="text-sm font-semibold text-gray-900 flex items-center gap-1 mb-2">
-              <Clock className="w-4 h-4" />
-              Limit History
-            </h4>
-            <div className="rounded border border-gray-200 overflow-hidden">
+          <div className="rounded border border-gray-200 overflow-hidden">
+            {serviceContracts.length === 0 ? (
+              <div className="p-10 text-center text-gray-500">No service contracts yet</div>
+            ) : (
               <table className="w-full text-sm">
                 <thead className="bg-gray-50">
                   <tr>
-                    <th className="text-left p-2 font-medium text-gray-700">Total hrs</th>
-                    <th className="text-left p-2 font-medium text-gray-700">Effective Date</th>
-                    <th className="text-left p-2 font-medium text-gray-700">Note</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Name</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Service</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Unit</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Weekly Hrs</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Effective</th>
                     <th className="text-left p-2 font-medium text-gray-700">Status</th>
-                    <th className="w-10" />
                   </tr>
                 </thead>
                 <tbody>
-                  {limitHistoryRows.map((row) => {
-                    const isCurrent = currentEffectiveLimit?.id === row.id
-                    const rawNote = row.note?.trim() ?? ''
-                    const notePreview =
-                      rawNote.length === 0
-                        ? '—'
-                        : rawNote.length > 10
-                          ? `${rawNote.slice(0, 10)}…`
-                          : rawNote
-                    return (
-                      <tr key={row.id} className={isCurrent ? 'bg-blue-50' : 'bg-white'}>
-                        <td className="p-2">{row.total_hours} hrs</td>
-                        <td className="p-2">{formatShortDate(row.effective_date)}</td>
-                        <td
-                          className="p-2 text-gray-600 max-w-[10rem]"
-                          title={rawNote.length > 10 ? rawNote : undefined}
-                        >
-                          {notePreview}
-                        </td>
-                        <td className="p-2">
-                          {isCurrent
-                            ? <span className="text-xs font-medium text-blue-600">Current</span>
-                            : <span className="text-xs font-medium text-gray-500">Inactive</span>}
-                        </td>
-                        <td className="p-2">
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteLimit(row.id)}
-                            className="text-gray-400 hover:text-red-600"
-                            aria-label="Delete"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })}
+                  {serviceContracts.map((row) => (
+                    <tr key={row.id} className="bg-white border-t border-gray-100">
+                      <td className="p-2">{row.contract_name || row.contract_type}</td>
+                      <td className="p-2">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${row.service_type === 'skilled' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}`}>
+                          {row.service_type === 'skilled' ? 'Skilled' : 'Non-Skilled'}
+                        </span>
+                      </td>
+                      <td className="p-2">{row.bill_unit_type}</td>
+                      <td className="p-2">{row.weekly_hours_limit ?? '—'}</td>
+                      <td className="p-2">{formatShortDate(row.effective_date)}</td>
+                      <td className="p-2">
+                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${row.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
+                          {row.status === 'active' ? 'Active' : 'Inactive'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
-            </div>
-            {limitHistoryRows.length === 0 && (
-              <p className="text-sm text-gray-500 py-4 text-center">No limit history yet.</p>
             )}
           </div>
-
-          {limitError && <p className="text-sm text-red-600">{limitError}</p>}
           <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={closeManageLimitModal}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-            >
-              Close
-            </button>
+            <button type="button" onClick={closeManageLimitModal} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">Done</button>
           </div>
         </div>
       </Modal>

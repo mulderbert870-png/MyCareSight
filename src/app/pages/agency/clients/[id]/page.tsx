@@ -104,6 +104,22 @@ export default async function ClientDetailPage({
     contractedHoursList = []
   }
 
+  let serviceContracts: Awaited<ReturnType<typeof q.getPatientServiceContractsByPatientId>>['data'] = []
+  try {
+    const res = await q.getPatientServiceContractsByPatientId(supabase, id)
+    serviceContracts = res.data ?? []
+  } catch {
+    serviceContracts = []
+  }
+
+  let skilledCarePlanTasks: Awaited<ReturnType<typeof q.getPatientSkilledCarePlanTasks>>['data'] = []
+  try {
+    const res = await q.getPatientSkilledCarePlanTasks(supabase, id)
+    skilledCarePlanTasks = res.data ?? []
+  } catch {
+    skilledCarePlanTasks = []
+  }
+
   return (
     <DashboardLayout
       user={session.user}
@@ -120,6 +136,8 @@ export default async function ClientDetailPage({
         adlSchedules={adlSchedulesList}
         staff={staffList}
         contractedHours={contractedHoursList}
+        skilledCarePlanTasks={skilledCarePlanTasks}
+        serviceContracts={serviceContracts}
       />
     </DashboardLayout>
   )

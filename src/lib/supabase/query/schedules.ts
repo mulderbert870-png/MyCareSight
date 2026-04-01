@@ -5,6 +5,8 @@ export interface ScheduleRow {
   id: string
   patient_id: string
   caregiver_id: string | null
+  contract_id: string | null
+  service_type: string | null
   /** Encoded as `slotKey::adlName` or plain ADL name; sourced from scheduled_visit_tasks.legacy_task_code */
   adl_codes: string[]
   date: string
@@ -28,6 +30,8 @@ const visitSelect = `
   id,
   patient_id,
   caregiver_member_id,
+  contract_id,
+  service_type,
   visit_date,
   scheduled_start_time,
   scheduled_end_time,
@@ -50,6 +54,8 @@ type ScheduledVisitDbRow = {
   id: string
   patient_id: string
   caregiver_member_id: string | null
+  contract_id: string | null
+  service_type: string | null
   visit_date: string
   scheduled_start_time: string | null
   scheduled_end_time: string | null
@@ -86,6 +92,8 @@ function toScheduleRow(v: ScheduledVisitDbRow, adlCodes: string[]): ScheduleRow 
     id: v.id,
     patient_id: v.patient_id,
     caregiver_id: v.caregiver_member_id,
+    contract_id: v.contract_id,
+    service_type: v.service_type,
     adl_codes: adlCodes,
     date: v.visit_date,
     start_time: v.scheduled_start_time,
@@ -236,12 +244,36 @@ async function replaceVisitTasks(
   await supabase.from('scheduled_visit_tasks').insert(rows)
 }
 
+async function replaceVisitTasksForMany(
+  supabase: Supabase,
+  agencyId: string,
+  visitIds: string[],
+  adlCodes: string[] | undefined
+) {
+  if (visitIds.length === 0) return
+  await supabase.from('scheduled_visit_tasks').delete().in('scheduled_visit_id', visitIds)
+  const codes = adlCodes ?? []
+  if (codes.length === 0) return
+  const rows = visitIds.flatMap((visitId) =>
+    codes.map((code, i) => ({
+      agency_id: agencyId,
+      scheduled_visit_id: visitId,
+      task_id: null as string | null,
+      legacy_task_code: code,
+      sort_order: i,
+    }))
+  )
+  await supabase.from('scheduled_visit_tasks').insert(rows)
+}
+
 /** Insert a visit and return the row as ScheduleRow. */
 export async function insertSchedule(
   supabase: Supabase,
   data: {
     patient_id: string
     caregiver_id?: string | null
+    contract_id?: string | null
+    service_type?: string | null
     adl_codes?: string[]
     date: string
     start_time?: string | null
@@ -271,7 +303,8 @@ export async function insertSchedule(
       agency_id: agency.agency_id,
       patient_id: data.patient_id,
       caregiver_member_id: data.caregiver_id ?? null,
-      service_type: 'non_skilled',
+      contract_id: data.contract_id ?? null,
+      service_type: data.service_type ?? 'non_skilled',
       visit_date: data.date,
       scheduled_start_time: data.start_time ?? null,
       scheduled_end_time: data.end_time ?? null,
@@ -296,6 +329,98 @@ export async function insertSchedule(
   return { data: toScheduleRow(v, adlCodes), error: null }
 }
 
+/** Create one visit_series template and many dated scheduled_visits linked to it. */
+export async function insertRecurringSchedulesFromSeries(
+  supabase: Supabase,
+  data: {
+    patient_id: string
+    caregiver_id?: string | null
+    contract_id?: string | null
+    service_type?: string | null
+    adl_codes?: string[]
+    dates: string[]
+    start_time?: string | null
+    end_time?: string | null
+    description?: string | null
+    type?: string | null
+    notes?: string | null
+    repeat_frequency?: string | null
+    days_of_week?: number[] | null
+    repeat_monthly_rules?: { ordinal: number; weekday: number }[] | null
+    repeat_start: string
+    repeat_end?: string | null
+  }
+) {
+  if (data.dates.length === 0) return { data: [], error: { message: 'No dates to insert.' } }
+  const agency = await requirePatientAgencyId(supabase, data.patient_id)
+  if ('error' in agency) return { data: null, error: agency.error }
+
+  const monthly =
+    data.repeat_monthly_rules && data.repeat_monthly_rules.length > 0
+      ? data.repeat_monthly_rules
+      : null
+
+  const { data: series, error: seriesError } = await supabase
+    .from('visit_series')
+    .insert({
+      agency_id: agency.agency_id,
+      patient_id: data.patient_id,
+      primary_caregiver_member_id: data.caregiver_id ?? null,
+      contract_id: data.contract_id ?? null,
+      service_type: data.service_type ?? 'non_skilled',
+      series_name: data.type ?? null,
+      repeat_frequency: data.repeat_frequency ?? null,
+      days_of_week: data.days_of_week?.length ? data.days_of_week.map((n) => Number(n)) : null,
+      repeat_start: data.repeat_start,
+      repeat_end: data.repeat_end ?? null,
+      repeat_monthly_rules: monthly,
+      notes: data.notes ?? null,
+      status: 'active',
+    })
+    .select('id')
+    .single()
+
+  if (seriesError || !series?.id) return { data: null, error: seriesError ?? { message: 'Failed to create visit series.' } }
+
+  const rows = data.dates.map((dateStr) => ({
+    agency_id: agency.agency_id,
+    visit_series_id: series.id,
+    patient_id: data.patient_id,
+    caregiver_member_id: data.caregiver_id ?? null,
+    contract_id: data.contract_id ?? null,
+    service_type: data.service_type ?? 'non_skilled',
+    visit_date: dateStr,
+    scheduled_start_time: data.start_time ?? null,
+    scheduled_end_time: data.end_time ?? null,
+    description: data.description ?? null,
+    notes: data.notes ?? null,
+    visit_type: data.type ?? null,
+    status: 'scheduled',
+    is_recurring: true,
+    repeat_frequency: data.repeat_frequency ?? null,
+    days_of_week: data.days_of_week?.length ? data.days_of_week.map((n) => Number(n)) : null,
+    repeat_start: data.repeat_start,
+    repeat_end: data.repeat_end ?? null,
+    repeat_monthly_rules: monthly,
+  }))
+
+  const { data: visits, error: visitsError } = await supabase
+    .from('scheduled_visits')
+    .insert(rows)
+    .select(visitSelect)
+
+  if (visitsError) return { data: null, error: visitsError }
+  const inserted = (visits ?? []) as ScheduledVisitDbRow[]
+  await replaceVisitTasksForMany(
+    supabase,
+    agency.agency_id,
+    inserted.map((v) => v.id),
+    data.adl_codes
+  )
+  const codes = (data.adl_codes ?? []).filter(Boolean)
+  return { data: inserted.map((v) => toScheduleRow(v, codes)), error: null }
+}
+
 /** Update a visit by id. */
 export async function updateSchedule(
   supabase: Supabase,
@@ -307,6 +432,8 @@ export async function updateSchedule(
     description?: string | null
     type?: string | null
     caregiver_id?: string | null
+    contract_id?: string | null
+    service_type?: string | null
     notes?: string | null
     adl_codes?: string[]
     is_recurring?: boolean
@@ -336,6 +463,8 @@ export async function updateSchedule(
   if (data.description !== undefined) patch.description = data.description
   if (data.type !== undefined) patch.visit_type = data.type
   if (data.caregiver_id !== undefined) patch.caregiver_member_id = data.caregiver_id
+  if (data.contract_id !== undefined) patch.contract_id = data.contract_id
+  if (data.service_type !== undefined) patch.service_type = data.service_type
   if (data.notes !== undefined) patch.notes = data.notes
   if (data.is_recurring !== undefined) patch.is_recurring = data.is_recurring
   if (data.repeat_frequency !== undefined) patch.repeat_frequency = data.repeat_frequency

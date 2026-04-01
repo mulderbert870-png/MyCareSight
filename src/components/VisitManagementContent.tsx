@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useState, useTransition, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Bell,
@@ -190,6 +190,11 @@ export default function VisitManagementContent({
     }
     return Array.from(map.entries()).map(([date, v]) => ({ date, ...v }))
   }, [filteredAllVisits])
+
+  useEffect(() => {
+    console.log('groupvisits', groupedVisits)
+  }, [groupedVisits])
+
 
   const handleApprove = (request: AssignmentRequestCardDTO) => void runAction(() => approveScheduleAssignmentRequestAction(request.id))
   const confirmDecline = (reason: string) => {
