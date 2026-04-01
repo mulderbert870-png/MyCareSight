@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Save, Search, Sparkles, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
-import { CAREGIVER_SKILL_POINTS } from '@/lib/constants'
 import ModalWrapper from './Modal'
 import { useRouter } from 'next/navigation'
 
@@ -33,22 +32,24 @@ export default function EditCaregiverSkillsModal({
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [selectedSkills, setSelectedSkills] = useState<string[]>(caregiver.skills ?? [])
+  const [skillCatalog, setSkillCatalog] = useState<{ type: string; name: string }[]>([])
   const [openType, setOpenType] = useState<string | null>(null)
   /** Only the category row that currently has its dropdown open (toggle + panel + chips). */
   const openSkillCategoryRef = useRef<HTMLDivElement>(null)
 
   const skillsByType = useMemo(() => {
-    return CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
+    return skillCatalog.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
       if (!acc[s.type]) acc[s.type] = []
       acc[s.type].push(s)
       return acc
     }, {})
-  }, [])
+  }, [skillCatalog])
 
-  const typeOrder = useMemo(
-    () => ['Clinical Care', 'Specialty Conditions', 'Physical Support', 'Daily Living', 'Certifications', 'Language'],
-    [],
-  )
+  const typeOrder = useMemo(() => {
+    const preferred = ['Clinical Care', 'Specialty Conditions', 'Physical Support', 'Daily Living', 'Certifications', 'Language']
+    const dynamic = Object.keys(skillsByType).filter((t) => !preferred.includes(t)).sort()
+    return [...preferred.filter((t) => skillsByType[t]?.length), ...dynamic]
+  }, [skillsByType])
 
   const categoryColors: Record<string, string> = {
     'Clinical Care': 'ring-red-500 bg-red-500 text-white',
@@ -122,6 +123,20 @@ export default function EditCaregiverSkillsModal({
     if (isOpen) resetFromCaregiver()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, caregiver.id])
+
+  useEffect(() => {
+    if (!isOpen) return
+    let cancelled = false
+    const run = async () => {
+      const supabase = createClient()
+      const { data } = await q.getCaregiverSkillCatalogFromTaskRequirements(supabase)
+      if (!cancelled) setSkillCatalog(data ?? [])
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen])
 
   // Close category dropdown when clicking outside that category (not the whole scroll list).
   useEffect(() => {

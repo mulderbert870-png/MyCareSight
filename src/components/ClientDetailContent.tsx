@@ -48,7 +48,6 @@ import type { ScheduleRow } from '@/lib/supabase/query/schedules'
 import type { PatientContractedHoursRow } from '@/lib/supabase/query/patient-contracted-hours'
 import type { SkilledCarePlanTask } from '@/lib/supabase/query/skilled-care-plan'
 import type { PatientServiceContractRow } from '@/lib/supabase/query/patient-service-contracts'
-import { CAREGIVER_SKILL_POINTS } from '@/lib/constants'
 import Modal from '@/components/Modal'
 import zipcodes from 'zipcodes'
 
@@ -311,6 +310,7 @@ export default function ClientDetailContent({ client, allClients, representative
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const [scheduleWeekStart, setScheduleWeekStart] = useState<Date>(() => getMonday(new Date()))
   const [weekSchedules, setWeekSchedules] = useState<ScheduleRow[]>([])
+  const [caregiverSkillCatalog, setCaregiverSkillCatalog] = useState<{ type: string; name: string }[]>([])
   const [serviceContracts, setServiceContracts] = useState<PatientServiceContractRow[]>(initialServiceContracts ?? [])
   const [serviceContractsModalOpen, setServiceContractsModalOpen] = useState(false)
   const [isSavingServiceContract, setIsSavingServiceContract] = useState(false)
@@ -471,6 +471,9 @@ export default function ClientDetailContent({ client, allClients, representative
     })
     q.getTaskCatalogSkilledTasks(supabase).then(({ data }) => {
       if (data) setSkilledTaskLibrary(data)
+    })
+    q.getCaregiverSkillCatalogFromTaskRequirements(supabase).then(({ data }) => {
+      if (data) setCaregiverSkillCatalog(data)
     })
   }, [])
 
@@ -2905,7 +2908,7 @@ export default function ClientDetailContent({ client, allClients, representative
     latestOverviewWeeklyByServiceType.non_skilled != null ||
     latestOverviewWeeklyByServiceType.skilled != null
 
-  const skillsByType = CAREGIVER_SKILL_POINTS.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
+  const skillsByType = caregiverSkillCatalog.reduce<Record<string, { type: string; name: string }[]>>((acc, s) => {
     if (!acc[s.type]) acc[s.type] = []
     acc[s.type].push(s)
     return acc
@@ -2917,6 +2920,17 @@ export default function ClientDetailContent({ client, allClients, representative
     'Daily Living',
     'Certifications',
     'Language',
+    ...Object.keys(skillsByType).filter(
+      (t) =>
+        ![
+          'Clinical Care',
+          'Specialty Conditions',
+          'Physical Support',
+          'Daily Living',
+          'Certifications',
+          'Language',
+        ].includes(t)
+    ),
   ]
   const categoryColors: Record<string, string> = {
     'Clinical Care': 'ring-red-500 bg-red-500 text-white',
@@ -3778,7 +3792,7 @@ export default function ClientDetailContent({ client, allClients, representative
                       <div className="w-full space-y-4">
                         {CAREGIVER_REQUIREMENTS_TYPE_ORDER.map((type) => {
                           const skillsInType = caregiverRequirements.filter((code) => {
-                            const skill = CAREGIVER_SKILL_POINTS.find((s) => s.name === code)
+                            const skill = caregiverSkillCatalog.find((s) => s.name === code)
                             return skill?.type === type
                           })
                           if (skillsInType.length === 0) return null

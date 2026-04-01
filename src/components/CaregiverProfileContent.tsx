@@ -1,9 +1,11 @@
 'use client'
 
 import { Key, MapPin } from 'lucide-react'
-import { CAREGIVER_SKILL_POINTS } from '@/lib/constants'
 import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
+import { useEffect, useMemo, useState } from 'react'
+import { createClient } from '@/lib/supabase/client'
+import * as q from '@/lib/supabase/query'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
 import { CaregiverDocumentsPanel } from './CaregiverDocumentsPanel'
 
@@ -61,6 +63,12 @@ export default function CaregiverProfileContent({
   const homeAddressLine = [staff.address, stateZip].filter(Boolean).join(', ')
 
   const skills = staff.skills ?? []
+  const [skillCatalog, setSkillCatalog] = useState<{ type: string; name: string }[]>([])
+  const skillTypeByName = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const s of skillCatalog) map.set(s.name, s.type)
+    return map
+  }, [skillCatalog])
 
   const skillTypeToPillClass: Record<string, string> = {
     'Clinical Care': 'bg-red-100 text-red-700 border border-red-200',
@@ -70,6 +78,19 @@ export default function CaregiverProfileContent({
     Certifications: 'bg-blue-100 text-blue-700 border border-blue-200',
     Language: 'bg-teal-100 text-teal-700 border border-teal-200',
   }
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      const supabase = createClient()
+      const { data } = await q.getCaregiverSkillCatalogFromTaskRequirements(supabase)
+      if (!cancelled) setSkillCatalog(data ?? [])
+    }
+    run()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <div className="space-y-6 relative">
@@ -187,7 +208,7 @@ export default function CaregiverProfileContent({
         <div className="flex flex-wrap gap-2">
           {skills.length > 0 ? (
             skills.map((s) => {
-              const type = CAREGIVER_SKILL_POINTS.find((x) => x.name === s)?.type
+              const type = skillTypeByName.get(s)
               const pillClass = skillTypeToPillClass[type ?? ''] ?? 'bg-gray-100 text-gray-700 border border-gray-200'
               return (
                 <span key={s} className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${pillClass}`}>
