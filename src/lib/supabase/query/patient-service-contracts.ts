@@ -6,6 +6,7 @@ export type PatientServiceContractRow = {
   contract_name: string | null
   contract_type: string
   service_type: 'non_skilled' | 'skilled'
+  billing_code_id: string | null
   bill_rate: number | null
   bill_unit_type: 'hour' | 'visit' | '15_min_unit'
   weekly_hours_limit: number | null
@@ -37,6 +38,7 @@ export async function insertPatientServiceContract(
     contract_name?: string | null
     contract_type: string
     service_type: 'non_skilled' | 'skilled'
+    billing_code_id?: string | null
     bill_rate?: number | null
     bill_unit_type: 'hour' | 'visit' | '15_min_unit'
     weekly_hours_limit?: number | null
@@ -64,6 +66,7 @@ export async function insertPatientServiceContract(
       contract_name: data.contract_name ?? null,
       contract_type: data.contract_type,
       service_type: data.service_type,
+      billing_code_id: data.billing_code_id ?? null,
       bill_rate: data.bill_rate ?? null,
       bill_unit_type: data.bill_unit_type,
       weekly_hours_limit: data.weekly_hours_limit ?? null,

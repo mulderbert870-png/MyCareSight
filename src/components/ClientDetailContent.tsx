@@ -168,6 +168,8 @@ interface SmallClient {
 }
 
 type StaffMember = { id: string; user_id?: string; first_name?: string; last_name?: string; [key: string]: unknown }
+type BillingCodeOption = { id: string; code: string; name: string; unit_type: 'hour' | 'visit' | '15_min_unit' }
+const BILLING_CODE_PICKLIST_ORDER = ['S5125', 'S5126', 'T1019', 'T1020', 'G0156', 'G0159', '97110', '97530', '99509', 'W1726'] as const
 
 interface ClientDetailContentProps {
   client: SmallClient
@@ -315,10 +317,12 @@ export default function ClientDetailContent({ client, allClients, representative
   const [serviceContractsModalOpen, setServiceContractsModalOpen] = useState(false)
   const [isSavingServiceContract, setIsSavingServiceContract] = useState(false)
   const [serviceContractError, setServiceContractError] = useState<string | null>(null)
+  const [billingCodeOptions, setBillingCodeOptions] = useState<BillingCodeOption[]>([])
   const [serviceContractForm, setServiceContractForm] = useState({
     contract_name: '',
     contract_type: 'Private Pay',
     service_type: 'non_skilled' as 'non_skilled' | 'skilled',
+    billing_code_id: '',
     bill_rate: '',
     bill_unit_type: 'hour' as 'hour' | 'visit' | '15_min_unit',
     weekly_hours_limit: '',
@@ -2291,11 +2295,42 @@ export default function ClientDetailContent({ client, allClients, representative
     setServiceContractsModalOpen(true)
   }
 
+  useEffect(() => {
+    if (!serviceContractsModalOpen) return
+    let isMounted = true
+    const loadBillingCodes = async () => {
+      const supabase = createClient()
+      const { data, error } = await supabase
+        .from('billing_codes')
+        .select('id, code, name, unit_type')
+        .order('code', { ascending: true })
+      if (!isMounted || error) return
+      setBillingCodeOptions((data ?? []) as BillingCodeOption[])
+    }
+    void loadBillingCodes()
+    return () => {
+      isMounted = false
+    }
+  }, [serviceContractsModalOpen])
+
   const closeManageLimitModal = () => {
     if (!isSavingServiceContract) setServiceContractsModalOpen(false)
   }
 
+  const billingCodeSelectOptions = useMemo(() => {
+    const byCode = new Map(billingCodeOptions.map((row) => [row.code.toUpperCase(), row]))
+    const ordered = BILLING_CODE_PICKLIST_ORDER
+      .map((code) => byCode.get(code))
+      .filter((row): row is BillingCodeOption => !!row)
+    const remaining = billingCodeOptions.filter((row) => !BILLING_CODE_PICKLIST_ORDER.includes(row.code.toUpperCase() as (typeof BILLING_CODE_PICKLIST_ORDER)[number]))
+    return [...ordered, ...remaining]
+  }, [billingCodeOptions])
+
   const handleSaveServiceContract = async () => {
+    if (!serviceContractForm.billing_code_id) {
+      setServiceContractError('Please select billing code.')
+      return
+    }
     if (!serviceContractForm.contract_type.trim()) {
       setServiceContractError('Please select contract type.')
       return
@@ -2313,6 +2348,7 @@ export default function ClientDetailContent({ client, allClients, representative
         contract_name: serviceContractForm.contract_name || null,
         contract_type: serviceContractForm.contract_type,
         service_type: serviceContractForm.service_type,
+        billing_code_id: serviceContractForm.billing_code_id,
         bill_rate: serviceContractForm.bill_rate ? Number(serviceContractForm.bill_rate) : null,
         bill_unit_type: serviceContractForm.bill_unit_type,
         weekly_hours_limit: serviceContractForm.weekly_hours_limit ? Number(serviceContractForm.weekly_hours_limit) : null,
@@ -2338,6 +2374,7 @@ export default function ClientDetailContent({ client, allClients, representative
       setServiceContractForm((p) => ({
         ...p,
         contract_name: '',
+        billing_code_id: '',
         bill_rate: '',
         weekly_hours_limit: '',
         end_date: '',
@@ -6390,6 +6427,19 @@ export default function ClientDetailContent({ client, allClients, representative
                 </select>
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Billing Code *</label>
+                <select
+                  value={serviceContractForm.billing_code_id}
+                  onChange={(e) => setServiceContractForm((p) => ({ ...p, billing_code_id: e.target.value }))}
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                >
+                  <option value="">Select code</option>
+                  {billingCodeSelectOptions.map((row) => (
+                    <option key={row.id} value={row.id}>{row.code}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Bill Rate ($)</label>
                 <input type="number" min={0} step={0.01} value={serviceContractForm.bill_rate} onChange={(e) => setServiceContractForm((p) => ({ ...p, bill_rate: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" />
               </div>
@@ -6417,6 +6467,9 @@ export default function ClientDetailContent({ client, allClients, representative
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
               <textarea value={serviceContractForm.note} onChange={(e) => setServiceContractForm((p) => ({ ...p, note: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" rows={2} />
+            </div>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              If an active contract already exists for the same service type, it will be automatically expired when this contract becomes active.
             </div>
             {serviceContractError ? <p className="text-sm text-red-600">{serviceContractError}</p> : null}
             <div className="flex justify-end">

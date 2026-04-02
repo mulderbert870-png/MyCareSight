@@ -91,12 +91,40 @@ function staffCityLabel(zip: unknown): string {
   return z
 }
 
-function visitTitleFromSchedule(s: ScheduleRow): string {
+function visitTitleFromSchedule(s: ScheduleRow, taskNameById?: Map<string, string>): string {
+  const tasks = decodeAdlCodes(s.adl_codes, taskNameById)
+  if (tasks.length > 0) return tasks.join(', ')
   const t = (s.type ?? '').trim()
   if (t) return t
   const d = (s.description ?? '').trim()
   if (d) return d.length > 80 ? `${d.slice(0, 77)}…` : d
   return 'Care visit'
+}
+
+function decodeAdlCodes(codes: string[] | null | undefined, taskNameById?: Map<string, string>): string[] {
+  if (!Array.isArray(codes)) return []
+  return codes
+    .map((code) => {
+      const v = String(code || '').trim()
+      if (!v) return ''
+      const parts = v.split('::')
+      const token = (parts.length > 1 ? parts[1] : parts[0]).trim()
+      if (!token) return ''
+      const mapped = taskNameById?.get(token)
+      return (mapped && mapped.trim()) || token
+    })
+    .filter(Boolean)
+}
+
+function extractTaskToken(raw: string): string {
+  const v = String(raw || '').trim()
+  if (!v) return ''
+  const parts = v.split('::')
+  return (parts.length > 1 ? parts[1] : parts[0]).trim()
+}
+
+function isUuidLike(v: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
 }
 
 function skillMatchForStaff(
@@ -198,6 +226,26 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
 
   const schedules = (schedulesData ?? []) as ScheduleRow[]
   const scheduleById = new Map(schedules.map((s) => [s.id, s]))
+
+  const taskIdTokens = Array.from(
+    new Set(
+      schedules
+        .flatMap((s) => s.adl_codes ?? [])
+        .map((raw) => extractTaskToken(raw))
+        .filter((token) => token && isUuidLike(token))
+    )
+  )
+  const taskNameById = new Map<string, string>()
+  if (taskIdTokens.length > 0) {
+    const { data: taskRows } = await supabase.from('task_catalog').select('id, name, code').in('id', taskIdTokens)
+    for (const row of taskRows ?? []) {
+      const r = row as { id?: string | null; name?: string | null; code?: string | null }
+      const id = (r.id ?? '').trim()
+      if (!id) continue
+      const label = (r.name ?? '').trim() || (r.code ?? '').trim()
+      if (label) taskNameById.set(id, label)
+    }
+  }
 
   const patientIds = Array.from(new Set(schedules.map((s) => s.patient_id)))
   const staffIds = new Set<string>()
@@ -303,7 +351,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
 
     visits.push({
       id: sched.id,
-      visitTitle: visitTitleFromSchedule(sched),
+      visitTitle: visitTitleFromSchedule(sched, taskNameById),
       clientName: patient.full_name ?? 'Client',
       dateLabel: formatScheduleDate(sched.date),
       timeLabel: formatTimeRange(sched.start_time, sched.end_time),
@@ -331,7 +379,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
       id: row.id,
       kind: row.status === 'approved' ? 'approved' : 'declined',
       caregiverName,
-      visitTitle: visitTitleFromSchedule(sched),
+      visitTitle: visitTitleFromSchedule(sched, taskNameById),
       clientName: patient.full_name ?? 'Client',
       visitDateLabel: formatScheduleDate(sched.date),
       resolvedAtLabel: formatResolvedAt(row.resolved_at),

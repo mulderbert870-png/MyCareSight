@@ -21,6 +21,7 @@ import { signOut } from '@/app/actions/auth'
 import LoadingSpinner from './LoadingSpinner'
 import UserDropdown from './UserDropdown'
 import NotificationDropdown from './NotificationDropdown'
+import { createClient } from '@/lib/supabase/client'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
@@ -48,7 +49,7 @@ export default function DashboardLayout({
   user, 
   profile,
   unreadNotifications = 0,
-  careVisitsPendingCount = 0,
+  careVisitsPendingCount,
   application = null
 }: DashboardLayoutProps) {
   const pathname = usePathname()
@@ -56,6 +57,7 @@ export default function DashboardLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [currentPath, setCurrentPath] = useState(pathname)
+  const [resolvedCareVisitsPendingCount, setResolvedCareVisitsPendingCount] = useState(careVisitsPendingCount ?? 0)
   const isApplicationDetailPage = pathname?.startsWith('/pages/agency/applications/') && pathname !== '/pages/agency/applications'
 
   // Track pathname changes to show/hide loading
@@ -65,6 +67,29 @@ export default function DashboardLayout({
       setIsLoading(false)
     }
   }, [pathname, currentPath])
+
+  useEffect(() => {
+    if (typeof careVisitsPendingCount === 'number') {
+      setResolvedCareVisitsPendingCount(careVisitsPendingCount)
+      return
+    }
+    if (profile?.role !== 'care_coordinator') return
+
+    let isMounted = true
+    const supabase = createClient()
+    ;(async () => {
+      const { count, error } = await supabase
+        .from('schedule_assignment_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'pending')
+      if (!isMounted || error) return
+      setResolvedCareVisitsPendingCount(count ?? 0)
+    })()
+
+    return () => {
+      isMounted = false
+    }
+  }, [careVisitsPendingCount, profile?.role, pathname])
 
   // Handle link clicks to show loading
   const handleLinkClick = (href: string) => {
@@ -203,18 +228,18 @@ export default function DashboardLayout({
                     >
                       <div className="relative flex-shrink-0">
                         <Icon className="w-5 h-5" />
-                        {sidebarCollapsed && item.href === '/pages/agency/care-visits' && careVisitsPendingCount > 0 ? (
+                        {sidebarCollapsed && item.href === '/pages/agency/care-visits' && resolvedCareVisitsPendingCount > 0 ? (
                           <span className="absolute -top-2 -right-2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-semibold px-1.5 py-0.5 min-w-[1rem] text-center leading-none">
-                            {careVisitsPendingCount}
+                            {resolvedCareVisitsPendingCount}
                           </span>
                         ) : null}
                       </div>
                       {!sidebarCollapsed ? (
                         <div className="flex items-center justify-between min-w-0 w-full">
                           <span>{item.label}</span>
-                          {item.href === '/pages/agency/care-visits' && careVisitsPendingCount > 0 ? (
+                          {item.href === '/pages/agency/care-visits' && resolvedCareVisitsPendingCount > 0 ? (
                             <span className="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 min-w-[1.25rem] text-center">
-                              {careVisitsPendingCount}
+                              {resolvedCareVisitsPendingCount}
                             </span>
                           ) : null}
                         </div>
