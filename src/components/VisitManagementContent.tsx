@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition, useEffect } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Bell,
@@ -191,10 +191,25 @@ export default function VisitManagementContent({
     return Array.from(map.entries()).map(([date, v]) => ({ date, ...v }))
   }, [filteredAllVisits])
 
-  useEffect(() => {
-    console.log('groupvisits', groupedVisits)
-  }, [groupedVisits])
+  const hasActiveFilters = useMemo(
+    () =>
+      search.trim() !== '' ||
+      statusFilter !== 'all' ||
+      dateFilter !== 'all' ||
+      clientFilter !== 'all' ||
+      caregiverFilter !== 'all' ||
+      sortOrder !== 'oldest',
+    [search, statusFilter, dateFilter, clientFilter, caregiverFilter, sortOrder]
+  )
 
+  const clearAllFilters = () => {
+    setSearch('')
+    setStatusFilter('all')
+    setDateFilter('all')
+    setClientFilter('all')
+    setCaregiverFilter('all')
+    setSortOrder('oldest')
+  }
 
   const handleApprove = (request: AssignmentRequestCardDTO) => void runAction(() => approveScheduleAssignmentRequestAction(request.id))
   const confirmDecline = (reason: string) => {
@@ -278,7 +293,18 @@ export default function VisitManagementContent({
             </select>
           </div>
 
-          <p className="text-sm text-gray-600">Showing {filteredAllVisits.length} of {allVisits.length} visits</p>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-gray-600">Showing {filteredAllVisits.length} of {allVisits.length} visits</p>
+            {hasActiveFilters ? (
+              <button
+                type="button"
+                onClick={clearAllFilters}
+                className="text-sm font-medium text-blue-700 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-lg px-3 py-1.5 transition-colors"
+              >
+                Clear filters
+              </button>
+            ) : null}
+          </div>
 
           <div className="space-y-6">
             {groupedVisits.map((group) => {

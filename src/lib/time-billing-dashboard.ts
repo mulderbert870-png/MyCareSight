@@ -3,10 +3,8 @@ import type { Supabase } from '@/lib/supabase/types'
 export type TimeBillingStatus = 'pending' | 'approved' | 'voided'
 
 export type TimeBillingRow = {
-  /** Stable row key (visit id or time-entry id prefix). */
+  /** Row key = scheduled visit id. */
   id: string
-  /** Present when a `visit_time_entries` row exists for this visit. */
-  timeEntryId: string | null
   scheduledVisitId: string
   date: string
   clientName: string
@@ -54,9 +52,9 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
 
-function billingStatusFromEntry(entryStatus: string | null | undefined): TimeBillingStatus {
-  if (entryStatus === 'approved') return 'approved'
-  if (entryStatus === 'rejected') return 'voided'
+function billingStatusFromVisit(billingState: string | null | undefined): TimeBillingStatus {
+  if (billingState === 'approved') return 'approved'
+  if (billingState === 'voided') return 'voided'
   return 'pending'
 }
 
@@ -64,7 +62,7 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
   const { data: visits, error: visitsErr } = await supabase
     .from('scheduled_visits')
     .select(
-      'id, patient_id, caregiver_member_id, visit_date, scheduled_start_time, scheduled_end_time, service_type'
+      'id, patient_id, caregiver_member_id, visit_date, scheduled_start_time, scheduled_end_time, service_type, billing_state, billing_hours, billing_note'
     )
     .eq('status', 'completed')
     .order('visit_date', { ascending: false })
@@ -73,25 +71,9 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
   const visitList = visits ?? []
   if (visitList.length === 0) return { rows: [] }
 
-  const visitIds = visitList.map((v) => v.id)
-
-  const { data: entries, error: entriesErr } = await supabase
-    .from('visit_time_entries')
-    .select('id, scheduled_visit_id, patient_id, caregiver_member_id, actual_hours, adjustment_comment, entry_status')
-    .in('scheduled_visit_id', visitIds)
-  if (entriesErr) return { rows: [], error: entriesErr.message }
-
-  const entryByVisitId = new Map((entries ?? []).map((e) => [e.scheduled_visit_id, e]))
-
   const patientIds = Array.from(new Set(visitList.map((v) => v.patient_id)))
   const caregiverIds = Array.from(
-    new Set(
-      visitList.flatMap((v) => {
-        const e = entryByVisitId.get(v.id)
-        const cg = e?.caregiver_member_id ?? v.caregiver_member_id
-        return cg ? [cg] : []
-      })
-    )
+    new Set(visitList.flatMap((v) => (v.caregiver_member_id ? [v.caregiver_member_id] : [])))
   )
 
   const [patRes, cgRes, contractsRes, payRatesRes] = await Promise.all([
@@ -149,13 +131,12 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
       .sort((a, b) => b.effective_start.localeCompare(a.effective_start))[0]
 
   const rows: TimeBillingRow[] = visitList.map((sv) => {
-    const e = entryByVisitId.get(sv.id)
     const date = sv.visit_date ?? ''
     const serviceType = (sv.service_type === 'skilled' ? 'skilled' : 'non_skilled') as 'non_skilled' | 'skilled'
-    const caregiverId = e?.caregiver_member_id ?? sv.caregiver_member_id ?? ''
-    const hours = e
-      ? Number(e.actual_hours ?? 0)
-      : hoursFromSchedule(sv.scheduled_start_time, sv.scheduled_end_time)
+    const caregiverId = sv.caregiver_member_id ?? ''
+    const scheduleHours = hoursFromSchedule(sv.scheduled_start_time, sv.scheduled_end_time)
+    const bh = sv.billing_hours != null ? Number(sv.billing_hours) : NaN
+    const hours = Number.isFinite(bh) ? round2(bh) : scheduleHours
 
     const pay = caregiverId && date ? pickPayRate(caregiverId, serviceType, date) : null
     const contract = sv.patient_id && date ? pickContract(sv.patient_id, serviceType, date) : null
@@ -164,17 +145,16 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
     const payAmount = round2(calcAmount(hours, payRate, pay?.unit_type))
     const billAmount = round2(calcAmount(hours, billRate, contract?.bill_unit_type))
 
-    const status: TimeBillingStatus = e ? billingStatusFromEntry(e.entry_status) : 'pending'
-    const timeEntryId = e?.id ?? null
-    const rowId = timeEntryId ?? `sv-${sv.id}`
+    const status: TimeBillingStatus = billingStatusFromVisit(
+      (sv as { billing_state?: string | null }).billing_state
+    )
 
     const caregiverLabel = caregiverId
       ? caregiverNameById.get(caregiverId) ?? 'Caregiver'
       : '—'
 
     return {
-      id: rowId,
-      timeEntryId,
+      id: sv.id,
       scheduledVisitId: sv.id,
       date,
       clientName: patientNameById.get(sv.patient_id) ?? 'Client',
@@ -186,7 +166,7 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
       payAmount,
       billRate,
       billAmount,
-      note: e?.adjustment_comment ?? null,
+      note: (sv as { billing_note?: string | null }).billing_note ?? null,
       status,
     }
   })

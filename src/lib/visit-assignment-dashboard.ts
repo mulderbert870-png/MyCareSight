@@ -127,6 +127,11 @@ function isUuidLike(v: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v)
 }
 
+/** Drop null/undefined/string "null" so `.in('id', ids)` never sends invalid uuid text to Postgres. */
+function sanitizeUuidList(ids: unknown[]): string[] {
+  return Array.from(new Set(ids.filter((x): x is string => typeof x === 'string' && x.length > 0 && x !== 'null')))
+}
+
 function skillMatchForStaff(
   requiredSkills: string[],
   caregiverSkills: string[]
@@ -206,14 +211,14 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   const pendingRows = (pendingRes.data ?? []) as ScheduleAssignmentRequestRow[]
   const resolvedRows = (resolvedRes.data ?? []) as ScheduleAssignmentRequestRow[]
 
-  const scheduleIds = Array.from(new Set(pendingRows.map((r) => r.schedule_id)))
-  const resolvedScheduleIds = Array.from(new Set(resolvedRows.map((r) => r.schedule_id)))
+  const scheduleIds = sanitizeUuidList(pendingRows.map((r) => r.schedule_id))
+  const resolvedScheduleIds = sanitizeUuidList(resolvedRows.map((r) => r.schedule_id))
 
   if (scheduleIds.length === 0 && resolvedScheduleIds.length === 0) {
     return { visits: [], resolved: [], approvedTotal, declinedTotal }
   }
 
-  const allScheduleIds = Array.from(new Set(scheduleIds.concat(resolvedScheduleIds)))
+  const allScheduleIds = sanitizeUuidList(scheduleIds.concat(resolvedScheduleIds))
 
   const { data: schedulesData, error: schedErr } = await q.getScheduledVisitsByIdsAsScheduleRows(
     supabase,
@@ -247,24 +252,35 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
     }
   }
 
-  const patientIds = Array.from(new Set(schedules.map((s) => s.patient_id)))
+  const patientIds = sanitizeUuidList(schedules.map((s) => s.patient_id))
   const staffIds = new Set<string>()
-  pendingRows.forEach((r) => staffIds.add(r.caregiver_member_id))
-  resolvedRows.forEach((r) => staffIds.add(r.caregiver_member_id))
+  for (const r of pendingRows) {
+    if (r.caregiver_member_id) staffIds.add(r.caregiver_member_id)
+  }
+  for (const r of resolvedRows) {
+    if (r.caregiver_member_id) staffIds.add(r.caregiver_member_id)
+  }
+  const staffIdList = sanitizeUuidList(Array.from(staffIds))
 
-  const { data: patientsData, error: patErr } = await supabase
-    .from('patients')
-    .select('id, full_name, zip_code, state, city, street_address')
-    .in('id', patientIds)
+  const { data: patientsData, error: patErr } =
+    patientIds.length === 0
+      ? { data: [] as PatientRow[], error: null }
+      : await supabase
+          .from('patients')
+          .select('id, full_name, zip_code, state, city, street_address')
+          .in('id', patientIds)
 
   if (patErr) {
     return { visits: [], resolved: [], approvedTotal, declinedTotal, error: patErr.message }
   }
 
-  const { data: staffData, error: staffErr } = await supabase
-    .from('caregiver_members')
-    .select('id, first_name, last_name, zip_code, skills, role, job_title')
-    .in('id', Array.from(staffIds))
+  const { data: staffData, error: staffErr } =
+    staffIdList.length === 0
+      ? { data: [] as StaffRow[], error: null }
+      : await supabase
+          .from('caregiver_members')
+          .select('id, first_name, last_name, zip_code, skills, role, job_title')
+          .in('id', staffIdList)
 
   if (staffErr) {
     return { visits: [], resolved: [], approvedTotal, declinedTotal, error: staffErr.message }
@@ -388,4 +404,18 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   }
 
   return { visits, resolved, approvedTotal, declinedTotal }
+}
+
+/**
+ * Count of pending assignment requests shown in Visit Management (Assignment Requests tab + sidebar badge).
+ * Matches {@link fetchVisitAssignmentDashboardData} filtering (unassigned visit, patient/caregiver data, proximity).
+ * Do not use a raw `schedule_assignment_requests` count — it will disagree with the UI.
+ */
+export async function getPendingAssignmentRequestCountForBadge(
+  supabase: Supabase
+): Promise<{ count: number; error?: string }> {
+  const data = await fetchVisitAssignmentDashboardData(supabase)
+  if (data.error) return { count: 0, error: data.error }
+  const count = data.visits.reduce((sum, v) => sum + v.requests.length, 0)
+  return { count }
 }

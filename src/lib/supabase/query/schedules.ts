@@ -204,8 +204,9 @@ export async function getAllScheduledVisitsAsScheduleRows(supabase: Supabase) {
 
 /** Visits by primary key (e.g. assignment requests referencing schedule_id = visit id). */
 export async function getScheduledVisitsByIdsAsScheduleRows(supabase: Supabase, ids: string[]) {
-  if (ids.length === 0) return { data: [], error: null }
-  const { data, error } = await supabase.from('scheduled_visits').select(visitSelect).in('id', ids)
+  const clean = Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.length > 0 && id !== 'null')))
+  if (clean.length === 0) return { data: [], error: null }
+  const { data, error } = await supabase.from('scheduled_visits').select(visitSelect).in('id', clean)
   if (error) return { data: null, error }
   const rows = (data ?? []) as ScheduledVisitDbRow[]
   const mapped = await attachAdlCodes(supabase, rows)

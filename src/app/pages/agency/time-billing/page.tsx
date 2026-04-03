@@ -17,9 +17,15 @@ export default async function TimeBillingPage() {
 
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
   const dashboard = await fetchTimeBillingRows(supabase)
+  const timeBillingPendingCount = dashboard.rows.filter((r) => r.status === 'pending').length
 
   return (
-    <DashboardLayout user={session.user} profile={profile} unreadNotifications={unreadNotifications ?? 0}>
+    <DashboardLayout
+      user={session.user}
+      profile={profile}
+      unreadNotifications={unreadNotifications ?? 0}
+      timeBillingPendingCount={timeBillingPendingCount}
+    >
       <TimeBillingContent rows={dashboard.rows} loadError={dashboard.error} />
     </DashboardLayout>
   )

@@ -92,7 +92,6 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
     const edit = getEdit(row)
     return {
       scheduledVisitId: row.scheduledVisitId,
-      timeEntryId: row.timeEntryId,
       hours: Number(edit.hours),
       note: edit.note,
       serviceType: edit.serviceType,
@@ -225,13 +224,13 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
                     </td>
                     <td className="px-3 py-2">
                       {activeTab === 'pending' ? (
-                        <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                        <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100/80 p-0.5 gap-0.5">
                           <button
                             type="button"
-                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
                               edit.serviceType === 'non_skilled'
-                                ? 'bg-white text-gray-900 shadow-sm'
-                                : 'text-gray-500 hover:text-gray-700'
+                                ? 'bg-amber-400 text-amber-950 shadow-sm ring-1 ring-amber-500/40'
+                                : 'text-gray-500 hover:bg-amber-100/60 hover:text-amber-900'
                             }`}
                             onClick={() =>
                               setPendingEdits((prev) => ({
@@ -244,10 +243,10 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
                           </button>
                           <button
                             type="button"
-                            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+                            className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors ${
                               edit.serviceType === 'skilled'
-                                ? 'bg-white text-gray-900 shadow-sm'
-                                : 'text-gray-500 hover:text-gray-700'
+                                ? 'bg-blue-600 text-white shadow-sm ring-1 ring-blue-700/30'
+                                : 'text-gray-500 hover:bg-blue-50 hover:text-blue-700'
                             }`}
                             onClick={() =>
                               setPendingEdits((prev) => ({

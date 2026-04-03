@@ -2303,6 +2303,7 @@ export default function ClientDetailContent({ client, allClients, representative
       const { data, error } = await supabase
         .from('billing_codes')
         .select('id, code, name, unit_type')
+        .eq('is_active', true)
         .order('code', { ascending: true })
       if (!isMounted || error) return
       setBillingCodeOptions((data ?? []) as BillingCodeOption[])
@@ -2324,6 +2325,10 @@ export default function ClientDetailContent({ client, allClients, representative
       .filter((row): row is BillingCodeOption => !!row)
     const remaining = billingCodeOptions.filter((row) => !BILLING_CODE_PICKLIST_ORDER.includes(row.code.toUpperCase() as (typeof BILLING_CODE_PICKLIST_ORDER)[number]))
     return [...ordered, ...remaining]
+  }, [billingCodeOptions])
+
+  useEffect(() => {
+    console.log('billingcodes', billingCodeOptions)
   }, [billingCodeOptions])
 
   const handleSaveServiceContract = async () => {

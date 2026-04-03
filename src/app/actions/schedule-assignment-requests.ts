@@ -24,11 +24,19 @@ function mapRpcError(code: string | undefined): string {
 
 type RpcPayload = { ok?: boolean; error?: string }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function isValidRequestId(id: string): boolean {
+  return typeof id === 'string' && id.length > 0 && id !== 'null' && UUID_RE.test(id)
+}
+
 export async function approveScheduleAssignmentRequestAction(
   requestId: string
 ): Promise<{ ok?: true; error?: string }> {
   const session = await getSession()
   if (!session?.user?.id) return { error: 'You must be signed in.' }
+  if (!isValidRequestId(requestId)) return { error: 'Invalid request. Refresh the page and try again.' }
 
   const supabase = await createClient()
   const { data, error } = await q.approveScheduleAssignmentRequestRpc(supabase, requestId)
@@ -52,6 +60,7 @@ export async function declineScheduleAssignmentRequestAction(
 ): Promise<{ ok?: true; error?: string }> {
   const session = await getSession()
   if (!session?.user?.id) return { error: 'You must be signed in.' }
+  if (!isValidRequestId(requestId)) return { error: 'Invalid request. Refresh the page and try again.' }
 
   const supabase = await createClient()
   const { data, error } = await q.declineScheduleAssignmentRequestRpc(supabase, requestId, reason)
