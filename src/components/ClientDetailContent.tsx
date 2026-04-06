@@ -5226,7 +5226,7 @@ export default function ClientDetailContent({ client, allClients, representative
                                 const specificSlots = getSpecificTimesSlots(s)
                                 const type = s?.schedule_type ?? 'never'
                                 return (
-                                  <td key={d.value} className="px-2 py-3 align-top min-w-0">
+                                  <td key={d.value} className="px-2 py-3 align-middle min-w-0">
                                     <button
                                       type="button"
                                       onClick={() => openSkilledSelectTimeModal(taskRow, d.value, DAY_LABELS[d.value])}
