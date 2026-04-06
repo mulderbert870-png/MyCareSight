@@ -5154,12 +5154,20 @@ export default function ClientDetailContent({ client, allClients, representative
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
+                    <table className="w-full table-fixed text-left text-sm">
+                      <colgroup>
+                        <col className="w-[15rem]" />
+                        {ADL_DAYS.map((d) => (
+                          <col key={d.value} />
+                        ))}
+                        <col className="w-14" />
+                        <col className="w-14" />
+                      </colgroup>
                       <thead>
                         <tr className="border-b border-gray-200 text-xs font-semibold uppercase tracking-wider text-gray-600">
                           <th className="px-4 py-3 bg-gray-50">Name</th>
                           {ADL_DAYS.map((d) => (
-                            <th key={d.value} className="px-2 py-3 text-center bg-gray-50">
+                            <th key={d.value} className="px-2 py-3 text-left bg-gray-50">
                               {d.label}
                             </th>
                           ))}
@@ -5218,11 +5226,11 @@ export default function ClientDetailContent({ client, allClients, representative
                                 const specificSlots = getSpecificTimesSlots(s)
                                 const type = s?.schedule_type ?? 'never'
                                 return (
-                                  <td key={d.value} className="px-2 py-3 text-left align-center">
+                                  <td key={d.value} className="px-2 py-3 align-top min-w-0">
                                     <button
                                       type="button"
                                       onClick={() => openSkilledSelectTimeModal(taskRow, d.value, DAY_LABELS[d.value])}
-                                      className="inline-flex flex-row items-start gap-1.5 p-1 rounded hover:bg-gray-100 focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 min-w-0"
+                                      className="inline-flex w-full min-w-0 flex-row items-start gap-1.5 p-1 rounded text-left hover:bg-gray-100 focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
                                       aria-label={`Set schedule for ${taskRow.name} on ${d.label}`}
                                     >
                                       {type === 'never' && (
@@ -5244,7 +5252,7 @@ export default function ClientDetailContent({ client, allClients, representative
                                             <Check className="w-3.5 h-3.5" />
                                           </span>
                                           {specificSlots && (
-                                            <div className="flex flex-col items-start text-[10px] text-gray-600 leading-tight text-left">
+                                            <div className="flex min-w-0 flex-1 flex-col items-start break-words text-[10px] text-gray-600 leading-tight">
                                               {specificSlots.labels.map((label) => (
                                                 <span key={label}>{label}</span>
                                               ))}
@@ -5254,7 +5262,9 @@ export default function ClientDetailContent({ client, allClients, representative
                                         </>
                                       )}
                                       {summary && !specificSlots && (
-                                        <span className="text-[10px] text-gray-600 leading-tight block">{summary}</span>
+                                        <span className="min-w-0 flex-1 break-words text-[10px] text-gray-600 leading-tight">
+                                          {summary}
+                                        </span>
                                       )}
                                     </button>
                                   </td>
