@@ -46,12 +46,15 @@ import type { PatientIncident } from '@/lib/supabase/query/patient-incidents'
 import type { PatientAdl, PatientAdlDaySchedule } from '@/lib/supabase/query/patient-adls'
 import type { ScheduleRow } from '@/lib/supabase/query/schedules'
 import type { PatientContractedHoursRow } from '@/lib/supabase/query/patient-contracted-hours'
-import type { SkilledCarePlanTask } from '@/lib/supabase/query/skilled-care-plan'
+import type { PatientSkilledTaskDaySchedule, SkilledCarePlanTask } from '@/lib/supabase/query/skilled-care-plan'
 import type { PatientServiceContractRow } from '@/lib/supabase/query/patient-service-contracts'
 import Modal from '@/components/Modal'
 import zipcodes from 'zipcodes'
 
 const VISIT_TYPES = ['Routine', 'Medical', 'Therapy', 'Social', 'Other'] as const
+
+/** Stable fallback when `skilledSchedules` prop is omitted — avoid `= []` default (new ref every render) clobbering local state in useEffect. */
+const EMPTY_SKILLED_SCHEDULES: PatientSkilledTaskDaySchedule[] = []
 
 /** Safe filename for the browser download attribute (original name minus illegal characters). */
 function sanitizeDownloadFilename(name: string): string {
@@ -67,8 +70,13 @@ const ADL_VISIT_TIME_SLOTS = [
   { key: 'night' as const, label: 'Night' },
 ]
 
+type ScheduleSlotFields = Pick<
+  PatientAdlDaySchedule,
+  'schedule_type' | 'slot_morning' | 'slot_afternoon' | 'slot_evening' | 'slot_night'
+>
+
 function scheduleHasAdlSlot(
-  schedule: PatientAdlDaySchedule | undefined,
+  schedule: ScheduleSlotFields | undefined,
   slotKey: (typeof ADL_VISIT_TIME_SLOTS)[number]['key']
 ): boolean {
   if (!schedule || schedule.schedule_type !== 'specific_times') return false
@@ -114,24 +122,56 @@ function expandLegacyVisitAdlToken(
   return encodeVisitAdlSlotKey('any', adlCode)
 }
 
-function normalizeScheduleAdlToken(
-  token: string,
-  dayOfWeekDb: number,
-  schedules: PatientAdlDaySchedule[]
-): string {
-  if (token.includes(VISIT_ADL_SLOT_SEP)) return token
-  return expandLegacyVisitAdlToken(token, dayOfWeekDb, schedules)
+function isUuidTaskToken(s: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s.trim())
 }
 
-function buildAssignedVisitAdlSlotSet(
+function expandLegacySkilledVisitToken(
+  taskId: string,
+  dayOfWeekDb: number,
+  schedules: PatientSkilledTaskDaySchedule[]
+): string {
+  const s = schedules.find((x) => x.task_id === taskId && x.day_of_week === dayOfWeekDb)
+  if (!s || s.schedule_type === 'never') return encodeVisitAdlSlotKey('any', taskId)
+  if (s.schedule_type === 'always') return encodeVisitAdlSlotKey('any', taskId)
+  if (s.schedule_type === 'as_needed') return encodeVisitAdlSlotKey('as_needed', taskId)
+  for (const { key } of ADL_VISIT_TIME_SLOTS) {
+    if (scheduleHasAdlSlot(s, key)) return encodeVisitAdlSlotKey(key, taskId)
+  }
+  return encodeVisitAdlSlotKey('any', taskId)
+}
+
+function normalizeScheduleTaskToken(
+  token: string,
+  dayOfWeekDb: number,
+  adlSchedules: PatientAdlDaySchedule[],
+  skilledSchedules: PatientSkilledTaskDaySchedule[]
+): string {
+  const trimmed = token.trim()
+  const skilledPrefix = 'skilled::'
+  if (trimmed.toLowerCase().startsWith(skilledPrefix)) {
+    const id = trimmed.slice(skilledPrefix.length)
+    return expandLegacySkilledVisitToken(id, dayOfWeekDb, skilledSchedules)
+  }
+  if (!trimmed.includes(VISIT_ADL_SLOT_SEP)) {
+    if (isUuidTaskToken(trimmed)) {
+      return expandLegacySkilledVisitToken(trimmed, dayOfWeekDb, skilledSchedules)
+    }
+    return expandLegacyVisitAdlToken(trimmed, dayOfWeekDb, adlSchedules)
+  }
+  return trimmed
+}
+
+function buildAssignedVisitTaskSlotSet(
   rows: ScheduleRow[],
-  schedules: PatientAdlDaySchedule[]
+  adlSchedules: PatientAdlDaySchedule[],
+  skilledSchedules: PatientSkilledTaskDaySchedule[]
 ): Set<string> {
   const set = new Set<string>()
   for (const row of rows) {
     const dow = dayOfWeekDbFromDateStr(row.date)
     for (const token of row.adl_codes ?? []) {
-      set.add(normalizeScheduleAdlToken(token, dow, schedules))
+      set.add(normalizeScheduleTaskToken(token, dow, adlSchedules, skilledSchedules))
     }
   }
   return set
@@ -182,13 +222,16 @@ interface ClientDetailContentProps {
   staff?: StaffMember[] | null
   contractedHours?: PatientContractedHoursRow[] | null
   skilledCarePlanTasks?: SkilledCarePlanTask[] | null
+  skilledSchedules?: PatientSkilledTaskDaySchedule[] | null
   serviceContracts?: PatientServiceContractRow[] | null
 }
 
 export default function ClientDetailContent({ client, allClients, representatives = [], caregiverRequirements: initialCaregiverRequirements = null, 
   incidents: initialIncidents = [], adls: initialAdls = [], adlSchedules: initialAdlSchedules = [], staff: staffList = [], 
   contractedHours: initialContractedHours = [], skilledCarePlanTasks: initialSkilledCarePlanTasks = [],
+  skilledSchedules: skilledSchedulesProp,
   serviceContracts: initialServiceContracts = [] }: ClientDetailContentProps) {
+  const initialSkilledSchedules = skilledSchedulesProp ?? EMPTY_SKILLED_SCHEDULES
   const router = useRouter()
   const searchParams = useSearchParams()
   const tab = searchParams.get('tab')
@@ -267,6 +310,10 @@ export default function ClientDetailContent({ client, allClients, representative
     Array<{ id: string; code: string; name: string; category: string; description: string | null }>
   >([])
   const [localAdlSchedules, setLocalAdlSchedules] = useState<PatientAdlDaySchedule[]>(initialAdlSchedules ?? [])
+  const [localSkilledSchedules, setLocalSkilledSchedules] = useState<PatientSkilledTaskDaySchedule[]>(
+    () => skilledSchedulesProp ?? EMPTY_SKILLED_SCHEDULES
+  )
+  const [pendingSkilledDeletes, setPendingSkilledDeletes] = useState<string[]>([])
   const [addAdlModalOpen, setAddAdlModalOpen] = useState(false)
   const [addAdlSearch, setAddAdlSearch] = useState('')
   const [addAdlSelected, setAddAdlSelected] = useState<Set<string>>(new Set())
@@ -299,6 +346,10 @@ export default function ClientDetailContent({ client, allClients, representative
   const [pendingSkilledTaskIds, setPendingSkilledTaskIds] = useState<Set<string>>(new Set())
   const [isSavingSkilledTasks, setIsSavingSkilledTasks] = useState(false)
   const [skilledTasksError, setSkilledTasksError] = useState<string | null>(null)
+  const [selectTimeSkilledTask, setSelectTimeSkilledTask] = useState<SkilledCarePlanTask | null>(null)
+  const [skilledNoteModalOpen, setSkilledNoteModalOpen] = useState(false)
+  const [skilledNoteTarget, setSkilledNoteTarget] = useState<SkilledCarePlanTask | null>(null)
+  const [skilledNoteDraft, setSkilledNoteDraft] = useState('')
 
   const getMonday = (d: Date) => {
     const date = new Date(d)
@@ -466,7 +517,9 @@ export default function ClientDetailContent({ client, allClients, representative
 
   useEffect(() => {
     setLocalSkilledCarePlanTasks(initialSkilledCarePlanTasks ?? [])
-  }, [client.id, initialSkilledCarePlanTasks])
+    setLocalSkilledSchedules(initialSkilledSchedules)
+    setPendingSkilledDeletes([])
+  }, [client.id, initialSkilledCarePlanTasks, initialSkilledSchedules])
 
   useEffect(() => {
     const supabase = createClient()
@@ -1227,7 +1280,7 @@ export default function ClientDetailContent({ client, allClients, representative
       setAddAdlModalOpen(false)
       router.refresh()
     } catch (err: unknown) {
-      setAddAdlError(err instanceof Error ? err.message : 'Failed to add ADLs.')
+      setAddAdlError(err instanceof Error ? err.message : 'Failed to add NON-SKILLED TASKS.')
     } finally {
       setIsSavingAddAdl(false)
     }
@@ -1235,6 +1288,7 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const openSelectTimeModal = (adl: { name: string; group: string }, dayOfWeek: number, dayLabel: string) => {
     const existing = getSchedule(adl.name, dayOfWeek)
+    setSelectTimeSkilledTask(null)
     setSelectTimeAdl(adl)
     setSelectTimeDay(dayOfWeek)
     setSelectTimeDayLabel(dayLabel)
@@ -1271,8 +1325,53 @@ export default function ClientDetailContent({ client, allClients, representative
     }
     setSelectTimeModalOpen(true)
   }
+  const getSkilledSchedule = (taskId: string, dayOfWeek: number) =>
+    localSkilledSchedules.find((s) => s.task_id === taskId && s.day_of_week === dayOfWeek)
+
+  const openSkilledSelectTimeModal = (task: SkilledCarePlanTask, dayOfWeek: number, dayLabel: string) => {
+    const existing = getSkilledSchedule(task.task_id, dayOfWeek)
+    setSelectTimeAdl(null)
+    setSelectTimeSkilledTask(task)
+    setSelectTimeDay(dayOfWeek)
+    setSelectTimeDayLabel(dayLabel)
+    if (existing && existing.schedule_type === 'specific_times') {
+      const slots = {
+        morning: !!existing.slot_morning,
+        afternoon: !!existing.slot_afternoon,
+        evening: !!existing.slot_evening,
+        night: !!existing.slot_night,
+      }
+      setSelectTimeForm({
+        timesPerDay: Math.min(4, Math.max(1, existing.times_per_day ?? 1)) as 1 | 2 | 3 | 4,
+        morning: slots.morning,
+        afternoon: slots.afternoon,
+        evening: slots.evening,
+        night: slots.night,
+        slotMorning: (existing.slot_morning === 'as_needed' ? 'as_needed' : 'always') as 'always' | 'as_needed',
+        slotAfternoon: (existing.slot_afternoon === 'as_needed' ? 'as_needed' : 'always') as 'always' | 'as_needed',
+        slotEvening: (existing.slot_evening === 'as_needed' ? 'as_needed' : 'always') as 'always' | 'as_needed',
+        slotNight: (existing.slot_night === 'as_needed' ? 'as_needed' : 'always') as 'always' | 'as_needed',
+      })
+    } else {
+      setSelectTimeForm({
+        timesPerDay: 1,
+        morning: false,
+        afternoon: false,
+        evening: false,
+        night: false,
+        slotMorning: 'always',
+        slotAfternoon: 'always',
+        slotEvening: 'always',
+        slotNight: 'always',
+      })
+    }
+    setSelectTimeModalOpen(true)
+  }
+
   const closeSelectTimeModal = () => {
     setSelectTimeModalOpen(false)
+    setSelectTimeSkilledTask(null)
+    setSelectTimeAdl(null)
   }
   const openAdlNoteModal = (adl: { name: string; group: string }) => {
     setAdlNoteTarget(adl)
@@ -1321,7 +1420,7 @@ export default function ClientDetailContent({ client, allClients, representative
     if (!adlNoteTarget) return
     applyAdlNoteToLocalSchedule(adlNoteTarget.name, '')
   }
-  /** Updates local ADL day schedule only; DB is updated on Save ADL Plan. */
+  /** Updates local ADL or skilled day schedule; DB is updated on Save ADL / Skilled plan. */
   const applySelectTimeSchedule = (
     scheduleType: 'never' | 'always' | 'as_needed' | 'specific_times',
     payload?: {
@@ -1332,6 +1431,52 @@ export default function ClientDetailContent({ client, allClients, representative
       slot_night?: string | null
     }
   ) => {
+    if (selectTimeSkilledTask) {
+      const task = selectTimeSkilledTask
+      const existing = localSkilledSchedules.find(
+        (s) => s.task_id === task.task_id && s.day_of_week === selectTimeDay
+      )
+      const now = new Date().toISOString()
+      const base = {
+        id: existing?.id ?? `temp-${task.task_id}-${selectTimeDay}`,
+        patient_id: localClient.id,
+        task_id: task.task_id,
+        day_of_week: selectTimeDay,
+        task_note: existing?.task_note ?? null,
+        display_order: existing?.display_order ?? task.display_order ?? 0,
+        created_at: existing?.created_at || now,
+        updated_at: now,
+      }
+      let row: PatientSkilledTaskDaySchedule
+      if (scheduleType === 'specific_times' && payload) {
+        row = {
+          ...base,
+          schedule_type: 'specific_times',
+          times_per_day: payload.times_per_day ?? null,
+          slot_morning: payload.slot_morning ?? null,
+          slot_afternoon: payload.slot_afternoon ?? null,
+          slot_evening: payload.slot_evening ?? null,
+          slot_night: payload.slot_night ?? null,
+        }
+      } else {
+        row = {
+          ...base,
+          schedule_type: scheduleType,
+          times_per_day: null,
+          slot_morning: null,
+          slot_afternoon: null,
+          slot_evening: null,
+          slot_night: null,
+        }
+      }
+      setLocalSkilledSchedules((prev) => {
+        const rest = prev.filter((s) => !(s.task_id === task.task_id && s.day_of_week === selectTimeDay))
+        return [...rest, row]
+      })
+      setSelectTimeModalOpen(false)
+      setSelectTimeSkilledTask(null)
+      return
+    }
     if (!selectTimeAdl) return
     const existing = localAdlSchedules.find(
       (s) => s.adl_code === selectTimeAdl.name && s.day_of_week === selectTimeDay
@@ -1378,6 +1523,23 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const handleDoneSelectTime = (e: React.FormEvent) => {
     e.preventDefault()
+    if (selectTimeSkilledTask) {
+      const hasSlots = selectTimeForm.morning || selectTimeForm.afternoon || selectTimeForm.evening || selectTimeForm.night
+      const scheduleType = hasSlots ? 'specific_times' : 'never'
+      applySelectTimeSchedule(
+        scheduleType,
+        hasSlots
+          ? {
+              times_per_day: selectTimeForm.timesPerDay,
+              slot_morning: selectTimeForm.morning ? selectTimeForm.slotMorning : null,
+              slot_afternoon: selectTimeForm.afternoon ? selectTimeForm.slotAfternoon : null,
+              slot_evening: selectTimeForm.evening ? selectTimeForm.slotEvening : null,
+              slot_night: selectTimeForm.night ? selectTimeForm.slotNight : null,
+            }
+          : undefined
+      )
+      return
+    }
     if (!selectTimeAdl) return
     const hasSlots = selectTimeForm.morning || selectTimeForm.afternoon || selectTimeForm.evening || selectTimeForm.night
     const scheduleType = hasSlots ? 'specific_times' : 'never'
@@ -1498,14 +1660,52 @@ export default function ClientDetailContent({ client, allClients, representative
     return JSON.stringify(localSchedSig) !== JSON.stringify(initSchedSig)
   }, [localAdls, localAdlSchedules, initialAdls, initialAdlSchedules])
 
-  const formatAdlDaySummary = (schedule: PatientAdlDaySchedule | undefined): string | null => {
+  const hasSkilledPlanChanges = useMemo(() => {
+    if (pendingSkilledDeletes.length > 0) return true
+    const initTasks = initialSkilledCarePlanTasks ?? []
+    const initSched = initialSkilledSchedules
+    const sortT = (a: SkilledCarePlanTask, b: SkilledCarePlanTask) => a.task_id.localeCompare(b.task_id)
+    const localTSig = [...localSkilledCarePlanTasks].sort(sortT).map((t) => ({ id: t.task_id, o: t.display_order }))
+    const initTSig = [...initTasks].sort(sortT).map((t) => ({ id: t.task_id, o: t.display_order }))
+    if (JSON.stringify(localTSig) !== JSON.stringify(initTSig)) return true
+    const schedKey = (s: PatientSkilledTaskDaySchedule) => ({
+      task_id: s.task_id,
+      day_of_week: s.day_of_week,
+      schedule_type: s.schedule_type,
+      times_per_day: s.times_per_day,
+      slot_morning: s.slot_morning,
+      slot_afternoon: s.slot_afternoon,
+      slot_evening: s.slot_evening,
+      slot_night: s.slot_night,
+      task_note: s.task_note,
+      display_order: s.display_order,
+    })
+    const sortSched = (a: PatientSkilledTaskDaySchedule, b: PatientSkilledTaskDaySchedule) =>
+      a.task_id.localeCompare(b.task_id) || a.day_of_week - b.day_of_week
+    const localSchedSig = [...localSkilledSchedules].sort(sortSched).map(schedKey)
+    const initSchedSig = [...initSched].sort(sortSched).map(schedKey)
+    return JSON.stringify(localSchedSig) !== JSON.stringify(initSchedSig)
+  }, [
+    pendingSkilledDeletes,
+    localSkilledCarePlanTasks,
+    localSkilledSchedules,
+    initialSkilledCarePlanTasks,
+    initialSkilledSchedules,
+  ])
+
+  type DayScheduleLike = Pick<
+    PatientAdlDaySchedule,
+    'schedule_type' | 'times_per_day' | 'slot_morning' | 'slot_afternoon' | 'slot_evening' | 'slot_night'
+  >
+
+  const formatAdlDaySummary = (schedule: DayScheduleLike | undefined): string | null => {
     if (!schedule || schedule.schedule_type === 'never') return null
     if (schedule.schedule_type === 'always') return 'Always'
     if (schedule.schedule_type === 'as_needed') return 'As Needed'
     return null
   }
 
-  const getSpecificTimesSlots = (schedule: PatientAdlDaySchedule | undefined): { labels: string[]; timesPerDay: number } | null => {
+  const getSpecificTimesSlots = (schedule: DayScheduleLike | undefined): { labels: string[]; timesPerDay: number } | null => {
     if (!schedule || schedule.schedule_type !== 'specific_times') return null
     const labels: string[] = []
     if (schedule.slot_morning) labels.push('Morning')
@@ -1713,19 +1913,22 @@ export default function ClientDetailContent({ client, allClients, representative
     return d === 0 ? 7 : d
   }
 
-  const getDueAdlCountForDay = (dateStr: string) => {
+  const getDueTaskCountForDay = (dateStr: string) => {
     const dayOfWeekDb = getDayOfWeekDb(dateStr)
     let count = 0
     for (const a of localAdls) {
       const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
       if (s && s.schedule_type !== 'never') count += 1
     }
+    for (const t of localSkilledCarePlanTasks) {
+      const s = localSkilledSchedules.find((x) => x.task_id === t.task_id && x.day_of_week === dayOfWeekDb)
+      if (s && s.schedule_type !== 'never') count += 1
+    }
     return count
   }
 
-  const getUnassignedAdlCountForDay = (dateStr: string) => {
+  const getUnassignedTaskCountForDay = (dateStr: string) => {
     const dayOfWeekDb = getDayOfWeekDb(dateStr)
-    // Expected slots = sum over ADLs scheduled this day of (morning + afternoon + evening + night slots)
     let expectedSlots = 0
     for (const a of localAdls) {
       const s = localAdlSchedules.find((x) => x.adl_code === a.adl_code && x.day_of_week === dayOfWeekDb)
@@ -1736,10 +1939,22 @@ export default function ClientDetailContent({ client, allClients, representative
       }
       expectedSlots += [s.slot_morning, s.slot_afternoon, s.slot_evening, s.slot_night].filter(Boolean).length
     }
-    // Assigned slots = each schedule row on this date counts one slot per adl_code in it
-    const assignedSlots = weekSchedules
-      .filter((s) => s.date === dateStr && s.adl_codes?.length)
-      .reduce((sum, s) => sum + (s.adl_codes as string[]).length, 0)
+    for (const t of localSkilledCarePlanTasks) {
+      const s = localSkilledSchedules.find((x) => x.task_id === t.task_id && x.day_of_week === dayOfWeekDb)
+      if (!s || s.schedule_type === 'never') continue
+      if (s.schedule_type === 'always' || s.schedule_type === 'as_needed') {
+        expectedSlots += 1
+        continue
+      }
+      expectedSlots += [s.slot_morning, s.slot_afternoon, s.slot_evening, s.slot_night].filter(Boolean).length
+    }
+    const dayRows = weekSchedules.filter((s) => s.date === dateStr && s.adl_codes?.length)
+    let assignedSlots = 0
+    for (const row of dayRows) {
+      for (const token of row.adl_codes ?? []) {
+        assignedSlots += 1
+      }
+    }
     return Math.max(0, expectedSlots - assignedSlots)
   }
 
@@ -1824,7 +2039,7 @@ export default function ClientDetailContent({ client, allClients, representative
     if (rowEntries.length === 0) {
       return (
         <p className="text-sm text-gray-500 py-4 text-center">
-          No ADLs available for this day of the week. Add ADLs in the ADLs tab and set them for this day, or all are already assigned to visits on this date.
+          No ADLs available for this day of the week. Add NON-SKILLED in the NON-SKILLED TASKS tab and set them for this day, or all are already assigned to visits on this date.
         </p>
       )
     }
@@ -1851,6 +2066,120 @@ export default function ClientDetailContent({ client, allClients, representative
               <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{groupName}</h4>
               <div className="space-y-2">
                 {grouped[groupName].map((item) => renderRow(item.adl, item.rowKey, [item.periodLabel], item.storageSlot))}
+              </div>
+            </div>
+          ))
+        })()}
+      </div>
+    )
+  }
+
+  /** Add/Edit Visit — skilled contract: same slot×task pattern as ADLs; tokens are `slotKey::taskId`. */
+  const renderVisitSkilledSelectionList = (dayOfWeekDb: number | null, assignedSlots: Set<string>) => {
+    const dow = dayOfWeekDb ?? 1
+    const candidates = localSkilledCarePlanTasks.filter((t) => {
+      if (!dayOfWeekDb) return true
+      const s = localSkilledSchedules.find((x) => x.task_id === t.task_id && x.day_of_week === dayOfWeekDb)
+      return !!(s && s.schedule_type !== 'never')
+    })
+
+    const rowEntries: Array<{
+      task: SkilledCarePlanTask
+      rowKey: string
+      periodLabel: string
+      storageSlot: string
+      groupName: string
+    }> = []
+    for (const t of candidates) {
+      const s = localSkilledSchedules.find((x) => x.task_id === t.task_id && x.day_of_week === dow)
+      const groupName = t.category || 'General'
+      if (s?.schedule_type === 'always') {
+        const token = encodeVisitAdlSlotKey('any', t.task_id)
+        if (!assignedSlots.has(token)) {
+          rowEntries.push({ task: t, rowKey: `always-${t.task_id}`, periodLabel: 'Any time', storageSlot: 'any', groupName })
+        }
+      } else if (s?.schedule_type === 'as_needed') {
+        const token = encodeVisitAdlSlotKey('as_needed', t.task_id)
+        if (!assignedSlots.has(token)) {
+          rowEntries.push({ task: t, rowKey: `needed-${t.task_id}`, periodLabel: 'As needed', storageSlot: 'as_needed', groupName })
+        }
+      } else if (s?.schedule_type === 'specific_times') {
+        for (const { key, label } of ADL_VISIT_TIME_SLOTS) {
+          if (!scheduleHasAdlSlot(s, key)) continue
+          const token = encodeVisitAdlSlotKey(key, t.task_id)
+          if (assignedSlots.has(token)) continue
+          rowEntries.push({ task: t, rowKey: `${key}-${t.task_id}`, periodLabel: label, storageSlot: key, groupName })
+        }
+      }
+    }
+
+    const periodBadgeClass =
+      'inline-flex items-center gap-0.5 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 border border-gray-200/80'
+
+    const renderRow = (t: SkilledCarePlanTask, rowKey: string, periodBadges: string[], storageSlot: string) => {
+      const token = encodeVisitAdlSlotKey(storageSlot, t.task_id)
+      const isChecked = visitAdlSelected.has(token)
+      return (
+        <label
+          key={rowKey}
+          className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}
+        >
+          <input
+            type="checkbox"
+            checked={isChecked}
+            onChange={(e) => {
+              setVisitAdlSelected((prev) => {
+                const next = new Set(prev)
+                if (e.target.checked) next.add(token)
+                else next.delete(token)
+                return next
+              })
+            }}
+            className="mt-1 rounded border-gray-300"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-gray-900">{t.name}</div>
+            <div className="text-xs text-gray-500 mt-0.5">{t.category}</div>
+            <div className="flex flex-wrap gap-1 mt-1.5 items-center">
+              <span
+                className={`inline-flex items-center rounded px-1.5 py-0.5 text-xs text-gray-600 border border-gray-100 ${skilledTaskBadgeClassByCategory(t.category)}`}
+              >
+                {t.category}
+              </span>
+              {periodBadges.map((b) => (
+                <span key={b} className={periodBadgeClass}>
+                  <Clock className="w-3 h-3 shrink-0 opacity-70" aria-hidden />
+                  {b}
+                </span>
+              ))}
+            </div>
+          </div>
+        </label>
+      )
+    }
+
+    if (rowEntries.length === 0) {
+      return (
+        <p className="text-sm text-gray-500 py-4 text-center">
+          No skilled tasks available for this day. Add tasks in the Skilled Tasks tab and set their schedule for this day, or all are already assigned to visits on this date.
+        </p>
+      )
+    }
+
+    return (
+      <div className="space-y-4">
+        {(() => {
+          const grouped = rowEntries.reduce<Record<string, typeof rowEntries>>((acc, item) => {
+            if (!acc[item.groupName]) acc[item.groupName] = []
+            acc[item.groupName].push(item)
+            return acc
+          }, {})
+          const groups = Object.keys(grouped).sort((a, b) => a.localeCompare(b))
+          return groups.map((groupName) => (
+            <div key={groupName}>
+              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{groupName}</h4>
+              <div className="space-y-2">
+                {grouped[groupName].map((item) => renderRow(item.task, item.rowKey, [item.periodLabel], item.storageSlot))}
               </div>
             </div>
           ))
@@ -1892,7 +2221,7 @@ export default function ClientDetailContent({ client, allClients, representative
             : 'text-gray-600 hover:text-gray-800'
         }`}
       >
-        {selectedVisitContract?.service_type === 'skilled' ? 'Skilled Tasks' : 'ADLs & IADLs'}
+        Tasks
         {visitAdlSelected.size > 0 && (
           <span className="rounded-full bg-green-100 text-green-800 text-xs px-1.5 py-0.5 font-semibold tabular-nums">
             {visitAdlSelected.size}
@@ -2271,7 +2600,7 @@ export default function ClientDetailContent({ client, allClients, representative
       const dow = getDayOfWeekDb(schedule.date)
       const next = new Set<string>()
       for (const t of schedule.adl_codes ?? []) {
-        next.add(normalizeScheduleAdlToken(t, dow, localAdlSchedules))
+        next.add(normalizeScheduleTaskToken(t, dow, localAdlSchedules, localSkilledSchedules))
       }
       setVisitAdlSelected(next)
     }
@@ -2409,8 +2738,8 @@ export default function ClientDetailContent({ client, allClients, representative
     if (visitAdlSelected.size === 0) {
       setVisitError(
         selectedVisitContract?.service_type === 'skilled'
-          ? 'Please select at least one skilled task in the ADLs tab.'
-          : 'Please select at least one ADL task in the ADLs tab.'
+          ? 'Please select at least one skilled task in the Tasks tab.'
+          : 'Please select at least one ADL task in the Tasks tab.'
       )
       return
     }
@@ -2609,8 +2938,8 @@ export default function ClientDetailContent({ client, allClients, representative
     if (visitAdlSelected.size === 0) {
       setVisitError(
         selectedVisitContract?.service_type === 'skilled'
-          ? 'Please select at least one skilled task in the ADLs tab.'
-          : 'Please select at least one ADL task in the ADLs tab.'
+          ? 'Please select at least one skilled task in the Tasks tab.'
+          : 'Please select at least one ADL task in the Tasks tab.'
       )
       return
     }
@@ -3023,7 +3352,7 @@ export default function ClientDetailContent({ client, allClients, representative
     { id: 'medical', label: 'Medical Info' },
     { id: 'representatives', label: 'Representatives' },
     { id: 'schedule', label: 'Schedule' },
-    { id: 'adls', label: 'ADLs' },
+    { id: 'adls', label: 'Non-Skilled Tasks' },
     { id: 'skilled-tasks', label: 'Skilled Tasks' },
     { id: 'documents', label: 'Documents' },
     { id: 'caregiver-requirements', label: 'Caregiver Competencies' },
@@ -3050,6 +3379,33 @@ export default function ClientDetailContent({ client, allClients, representative
       display_order: i,
     }))
     setLocalSkilledCarePlanTasks(next)
+    setLocalSkilledSchedules((prev) => {
+      const kept = prev.filter((s) => next.some((t) => t.task_id === s.task_id))
+      const now = new Date().toISOString()
+      for (const t of next) {
+        const hasRow = kept.some((s) => s.task_id === t.task_id)
+        if (hasRow) continue
+        for (let dow = 1; dow <= 7; dow++) {
+          kept.push({
+            id: `temp-${t.task_id}-${dow}`,
+            patient_id: localClient.id,
+            task_id: t.task_id,
+            day_of_week: dow,
+            task_note: null,
+            schedule_type: 'never',
+            times_per_day: null,
+            slot_morning: null,
+            slot_afternoon: null,
+            slot_evening: null,
+            slot_night: null,
+            display_order: t.display_order,
+            created_at: now,
+            updated_at: now,
+          })
+        }
+      }
+      return kept
+    })
     setSkilledTaskModalOpen(false)
   }
 
@@ -3058,22 +3414,178 @@ export default function ClientDetailContent({ client, allClients, representative
     setIsSavingSkilledTasks(true)
     try {
       const supabase = createClient()
-      const orderedIds = localSkilledCarePlanTasks
-        .slice()
-        .sort((a, b) => a.display_order - b.display_order)
-        .map((t) => t.task_id)
-      const { data, error } = await q.replacePatientSkilledCarePlanTasks(supabase, localClient.id, orderedIds)
-      if (error) {
-        setSkilledTasksError(error.message ?? 'Failed to save care plan.')
-        return
+      for (const taskId of pendingSkilledDeletes) {
+        const { error: delErr } = await q.deleteSkilledTaskPlanRows(supabase, localClient.id, taskId)
+        if (delErr) throw delErr
       }
-      setLocalSkilledCarePlanTasks(data ?? [])
+      setPendingSkilledDeletes([])
+      for (const s of localSkilledSchedules) {
+        const { error: upErr } = await q.upsertPatientSkilledTaskDaySchedule(supabase, {
+          patient_id: s.patient_id,
+          task_id: s.task_id,
+          day_of_week: s.day_of_week,
+          display_order: s.display_order,
+          task_note: s.task_note,
+          schedule_type: s.schedule_type,
+          times_per_day: s.times_per_day,
+          slot_morning: s.slot_morning,
+          slot_afternoon: s.slot_afternoon,
+          slot_evening: s.slot_evening,
+          slot_night: s.slot_night,
+        })
+        if (upErr) throw upErr
+      }
+      const tasksRes = await q.getPatientSkilledCarePlanTasks(supabase, localClient.id)
+      const schedRes = await q.getPatientSkilledDaySchedulesByPatientId(supabase, localClient.id)
+      if (tasksRes.data) setLocalSkilledCarePlanTasks(tasksRes.data)
+      if (schedRes.data) setLocalSkilledSchedules(schedRes.data)
       router.refresh()
     } catch (e) {
       setSkilledTasksError(e instanceof Error ? e.message : 'Failed to save care plan.')
     } finally {
       setIsSavingSkilledTasks(false)
     }
+  }
+
+  const getSkilledTaskNote = (taskId: string): string => {
+    const row =
+      localSkilledSchedules.find((s) => s.task_id === taskId && (s.task_note ?? '').trim() !== '') ??
+      localSkilledSchedules.find((s) => s.task_id === taskId && s.day_of_week === 1)
+    return (row?.task_note ?? '').trim()
+  }
+
+  const applySkilledNoteToLocalSchedule = (taskId: string, note: string) => {
+    const normalized = note.trim()
+    const now = new Date().toISOString()
+    setLocalSkilledSchedules((prev) =>
+      prev.map((s) =>
+        s.task_id !== taskId
+          ? s
+          : {
+              ...s,
+              task_note: normalized || null,
+              updated_at: now,
+            }
+      )
+    )
+    setSkilledNoteModalOpen(false)
+    setSkilledNoteTarget(null)
+  }
+
+  const openSkilledNoteModal = (task: SkilledCarePlanTask) => {
+    setSkilledNoteTarget(task)
+    setSkilledNoteDraft(getSkilledTaskNote(task.task_id))
+    setSkilledNoteModalOpen(true)
+  }
+
+  const closeSkilledNoteModal = () => {
+    setSkilledNoteModalOpen(false)
+    setSkilledNoteTarget(null)
+  }
+
+  const handleSaveSkilledNote = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!skilledNoteTarget) return
+    const taskId = skilledNoteTarget.task_id
+    const id =
+      localSkilledSchedules.find((s) => s.task_id === taskId && s.day_of_week === 1)?.id ?? ''
+    applySkilledNoteToLocalSchedule(taskId, skilledNoteDraft)
+    if (!id || id.startsWith('temp-')) return
+    const supabase = createClient()
+    await q.updatePatientSkilledTaskDayScheduleNote(supabase, { id, task_note: skilledNoteDraft })
+  }
+
+  const handleRemoveSkilledNote = async () => {
+    if (!skilledNoteTarget) return
+    const taskId = skilledNoteTarget.task_id
+    const id =
+      localSkilledSchedules.find((s) => s.task_id === taskId && s.day_of_week === 1)?.id ?? ''
+    applySkilledNoteToLocalSchedule(taskId, '')
+    if (!id || id.startsWith('temp-')) return
+    const supabase = createClient()
+    await q.updatePatientSkilledTaskDayScheduleNote(supabase, { id, task_note: '' })
+  }
+
+  const taskTokenReferencesTaskId = (token: string, taskId: string): boolean => {
+    if (token === taskId) return true
+    if (token === `skilled::${taskId}`) return true
+    if (token.endsWith(`${VISIT_ADL_SLOT_SEP}${taskId}`)) return true
+    return false
+  }
+
+  const handleAttemptRemoveSkilledFromPlan = async (taskId: string) => {
+    setSkilledTasksError(null)
+    try {
+      const supabase = createClient()
+      const { data: schedules, error } = await q.getSchedulesByPatientId(supabase, localClient.id)
+      if (error) throw error
+      const scheduleRows = (schedules ?? []) as ScheduleRow[]
+      const isUsedInSchedules = scheduleRows.some((s: ScheduleRow) =>
+        (s.adl_codes ?? []).some((token: string) => taskTokenReferencesTaskId(token, taskId))
+      )
+      if (isUsedInSchedules) {
+        setSkilledTasksError(
+          'This skilled task is already used in scheduled visits. Remove it from Schedule first before deleting from the care plan.'
+        )
+        return
+      }
+      setPendingSkilledDeletes((prev) => (prev.includes(taskId) ? prev : [...prev, taskId]))
+      setLocalSkilledCarePlanTasks((prev) => prev.filter((t) => t.task_id !== taskId))
+      setLocalSkilledSchedules((prev) => prev.filter((s) => s.task_id !== taskId))
+    } catch (err: unknown) {
+      setSkilledTasksError(err instanceof Error ? err.message : 'Failed to validate skilled task usage in schedules.')
+    }
+  }
+
+  const isSkilledRowAllSelected = (taskId: string) => {
+    return [1, 2, 3, 4, 5, 6, 7].every((dow) => {
+      const s = localSkilledSchedules.find((x) => x.task_id === taskId && x.day_of_week === dow)
+      return s && s.schedule_type === 'specific_times' && s.times_per_day === 1 && s.slot_morning
+    })
+  }
+
+  const handleToggleSkilledRowAll = (taskRow: SkilledCarePlanTask) => {
+    const existingForTask = localSkilledSchedules.filter((s) => s.task_id === taskRow.task_id)
+    const isAllSelected = isSkilledRowAllSelected(taskRow.task_id)
+    const displayOrder = existingForTask[0]?.display_order ?? taskRow.display_order ?? 0
+    const rest = localSkilledSchedules.filter((s) => s.task_id !== taskRow.task_id)
+    const newEntries: PatientSkilledTaskDaySchedule[] = []
+    const now = new Date().toISOString()
+    for (let dow = 1; dow <= 7; dow++) {
+      const existing = existingForTask.find((x) => x.day_of_week === dow)
+      const base = {
+        id: existing?.id ?? `temp-${taskRow.task_id}-${dow}`,
+        patient_id: localClient.id,
+        task_id: taskRow.task_id,
+        day_of_week: dow,
+        task_note: existing?.task_note ?? null,
+        display_order: displayOrder,
+        created_at: existing?.created_at ?? now,
+        updated_at: now,
+      }
+      if (isAllSelected) {
+        newEntries.push({
+          ...base,
+          schedule_type: 'never',
+          times_per_day: null,
+          slot_morning: null,
+          slot_afternoon: null,
+          slot_evening: null,
+          slot_night: null,
+        })
+      } else {
+        newEntries.push({
+          ...base,
+          schedule_type: 'specific_times',
+          times_per_day: 1,
+          slot_morning: 'always',
+          slot_afternoon: null,
+          slot_evening: null,
+          slot_night: null,
+        })
+      }
+    }
+    setLocalSkilledSchedules([...rest, ...newEntries])
   }
 
   return (
@@ -4145,7 +4657,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                   <div>
                     <h3 className="text-lg font-bold text-gray-900">Weekly Care Schedule</h3>
-                    <p className="text-sm text-gray-500">Client ADL tasks and appointments</p>
+                    <p className="text-sm text-gray-500">Client tasks (ADLs, skilled) and appointments</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -4192,7 +4704,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   </div>
                 </div>
 
-                {/* Calendar grid with Unassigned ADLs row */}
+                {/* Calendar grid with unassigned task counts */}
                 <div className="relative border border-gray-200 rounded overflow-hidden">
                   <table className="w-full border-collapse text-sm table-fixed">
                     <colgroup>
@@ -4208,12 +4720,12 @@ export default function ClientDetailContent({ client, allClients, representative
                     <thead>
                       <tr className="bg-gray-100 text-center w-full">
                         <th className="w-24 border-b border-r border-gray-200 p-2 text-xs font-medium text-gray-500 align-middle text-center">
-                          Unassigned ADLs
+                          Unassigned tasks
                         </th>
                         {getWeekDates().map((d) => {
                           const dateStr = toLocalDateString(d)
-                          const dueCount = getDueAdlCountForDay(dateStr)
-                          const unassignedCount = getUnassignedAdlCountForDay(dateStr)
+                          const dueCount = getDueTaskCountForDay(dateStr)
+                          const unassignedCount = getUnassignedTaskCountForDay(dateStr)
                           const isToday =
                             dateStr === toLocalDateString(new Date())
                           return (
@@ -4224,7 +4736,7 @@ export default function ClientDetailContent({ client, allClients, representative
                               {dueCount === 0 ? (
                                 <span className="text-gray-400">—</span>
                               ) : unassignedCount === 0 ? (
-                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-green-100 text-green-600" aria-label="ADL quota achieved">
+                                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-green-100 text-green-600" aria-label="Task quota achieved">
                                   <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
                                 </span>
                               ) : (
@@ -4393,7 +4905,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
                 >
                   <Plus className="w-4 h-4" />
-                  ADD ADL
+                  ADD NON-SKILLED TASK
                 </button>
               </div>
 
@@ -4408,7 +4920,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   <div className="p-12 flex flex-col items-center justify-center text-center">
                     <ClipboardList className="w-12 h-12 text-gray-300 mb-4" aria-hidden />
                     <p className="text-gray-700 font-medium mb-1">No ADL tasks added yet</p>
-                    <p className="text-sm text-gray-500 mb-0">Click &quot;ADD ADL&quot; to get started.</p>
+                    <p className="text-sm text-gray-500 mb-0">Click &quot;ADD NON-SKILLED TASKS&quot; to get started.</p>
                   </div>
                 ) : (
                   <div className="overflow-x-auto">
@@ -4602,104 +5114,217 @@ export default function ClientDetailContent({ client, allClients, representative
                   className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
                 >
                   {isSavingAdlPlan && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Save ADL Plan
+                  Save NON-SKILLED Plan
                 </button>
               </div>
             </div>
           )}
 
           {activeTab === 'skilled-tasks' && (
-            <div className="space-y-5">
-              <div className="rounded-xl border border-purple-200 bg-purple-50 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-xl font-semibold text-gray-900">Skilled Care Plan</h3>
-                    <p className="text-sm text-gray-600">
-                      {localSkilledCarePlanTasks.length > 0
-                        ? `${localSkilledCarePlanTasks.length} skilled task${localSkilledCarePlanTasks.length > 1 ? 's' : ''} on care plan`
-                        : 'No skilled tasks configured'}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={openSkilledTaskModal}
-                    className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium hover:bg-gray-50"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add Task
-                  </button>
+            <div className="w-full space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">
+                    Skilled Tasks ({localSkilledCarePlanTasks.length})
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Manage skilled care tasks and weekly schedule. Scheduled visits use a <strong>Skilled</strong> service contract.
+                  </p>
                 </div>
-                <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 px-3 py-2 text-xs text-purple-800">
-                  Skilled tasks are billed under <strong>Skilled</strong> service contracts only. They are separate from ADLs which apply to Non-Skilled contracts.
-                </div>
+                <button
+                  type="button"
+                  onClick={openSkilledTaskModal}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                  ADD SKILLED TASK
+                </button>
               </div>
 
-              {localSkilledCarePlanTasks.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-10 text-center">
-                  <ClipboardList className="mx-auto h-10 w-10 text-gray-300" />
-                  <p className="mt-3 text-base font-medium text-gray-700">No skilled tasks on care plan</p>
-                  <p className="mt-1 text-sm text-gray-500">Add skilled nursing or therapy tasks from the library</p>
-                  <button
-                    type="button"
-                    onClick={openSkilledTaskModal}
-                    className="mt-6 inline-flex items-center gap-2 rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-gray-800"
-                  >
-                    <Plus className="w-4 h-4" />
-                    Add First Task
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {Object.entries(
-                    localSkilledCarePlanTasks.reduce<Record<string, SkilledCarePlanTask[]>>((acc, t) => {
-                      if (!acc[t.category]) acc[t.category] = []
-                      acc[t.category].push(t)
-                      return acc
-                    }, {})
-                  ).map(([category, tasks]) => (
-                    <div key={category} className="space-y-2">
-                      <div
-                        className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${skilledTaskBadgeClassByCategory(
-                          category
-                        )}`}
-                      >
-                        {category}
-                        <span className="ml-2 text-gray-500">{tasks.length} task{tasks.length > 1 ? 's' : ''}</span>
-                      </div>
-                      {tasks.map((task) => (
-                        <div key={`${task.task_id}-${task.display_order}`} className="rounded-xl border border-gray-200 bg-white p-3">
-                          <div className="font-medium text-gray-900">{task.name}</div>
-                          {task.description ? <div className="mt-0.5 text-xs text-gray-500">{task.description}</div> : null}
-                        </div>
-                      ))}
-                    </div>
-                  ))}
-                </div>
+              {skilledTasksError && (
+                <div className="p-3 bg-yellow-50 border border-yellow-200 text-yellow-700 rounded-lg text-sm">{skilledTasksError}</div>
               )}
 
-              {skilledTasksError ? (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{skilledTasksError}</div>
-              ) : null}
+              <div className="border border-gray-200 rounded-lg bg-white overflow-hidden">
+                {localSkilledCarePlanTasks.length === 0 ? (
+                  <div className="p-12 flex flex-col items-center justify-center text-center">
+                    <ClipboardList className="w-12 h-12 text-gray-300 mb-4" aria-hidden />
+                    <p className="text-gray-700 font-medium mb-1">No skilled tasks added yet</p>
+                    <p className="text-sm text-gray-500 mb-0">Click &quot;ADD SKILLED TASK&quot; to get started.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-200 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                          <th className="px-4 py-3 bg-gray-50">Name</th>
+                          {ADL_DAYS.map((d) => (
+                            <th key={d.value} className="px-2 py-3 text-center bg-gray-50">
+                              {d.label}
+                            </th>
+                          ))}
+                          <th className="px-2 py-3 text-center w-14 bg-gray-100 text-gray-800 font-medium">ALL</th>
+                          <th className="px-2 py-3 text-center w-14 bg-gray-50">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200">
+                        {localSkilledCarePlanTasks.map((taskRow) => {
+                          const taskNote = getSkilledTaskNote(taskRow.task_id)
+                          return (
+                            <tr key={taskRow.task_id} className="bg-white hover:bg-gray-50">
+                              <td className="px-4 py-3 w-[15rem] max-w-full">
+                                <div className="font-semibold text-gray-900">{taskRow.name}</div>
+                                <div
+                                  className={`text-xs py-1 px-2 rounded-full w-fit flex justify-center items-center mt-1 ${skilledTaskBadgeClassByCategory(taskRow.category)}`}
+                                >
+                                  {taskRow.category}
+                                </div>
+                                {taskRow.description ? (
+                                  <div className="text-xs text-gray-500 mt-1 line-clamp-2">{taskRow.description}</div>
+                                ) : null}
+                                <div className="mt-2">
+                                  {taskNote ? (
+                                    <div className="w-[240px] max-w-full rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-900">
+                                      <div className="flex items-start justify-between gap-2">
+                                        <div className="flex min-w-0 items-start gap-1.5">
+                                          <FileText className="mt-0.5 h-3 w-3 shrink-0 text-amber-500" />
+                                          <p className="leading-snug break-words">{taskNote}</p>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => openSkilledNoteModal(taskRow)}
+                                          className="p-0.5 text-amber-500 hover:text-amber-700 rounded"
+                                          aria-label={`Edit note for ${taskRow.name}`}
+                                        >
+                                          <Edit className="h-3.5 w-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => openSkilledNoteModal(taskRow)}
+                                      className="text-xs text-amber-700 hover:text-amber-900 inline-flex items-center gap-1"
+                                    >
+                                      <FileText className="h-3 w-3" />
+                                      Add client note...
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                              {ADL_DAYS.map((d) => {
+                                const s = getSkilledSchedule(taskRow.task_id, d.value)
+                                const summary = formatAdlDaySummary(s)
+                                const specificSlots = getSpecificTimesSlots(s)
+                                const type = s?.schedule_type ?? 'never'
+                                return (
+                                  <td key={d.value} className="px-2 py-3 text-left align-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => openSkilledSelectTimeModal(taskRow, d.value, DAY_LABELS[d.value])}
+                                      className="inline-flex flex-row items-start gap-1.5 p-1 rounded hover:bg-gray-100 focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 min-w-0"
+                                      aria-label={`Set schedule for ${taskRow.name} on ${d.label}`}
+                                    >
+                                      {type === 'never' && (
+                                        <span className="w-6 h-6 rounded-full border-2 border-gray-300 bg-white inline-block shrink-0" />
+                                      )}
+                                      {type === 'always' && (
+                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center shrink-0">
+                                          <Infinity className="w-3.5 h-3.5" />
+                                        </span>
+                                      )}
+                                      {type === 'as_needed' && (
+                                        <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center text-xs font-bold shrink-0">
+                                          *
+                                        </span>
+                                      )}
+                                      {type === 'specific_times' && (
+                                        <>
+                                          <span className="w-6 h-6 rounded-full bg-blue-600 text-white inline-flex items-center justify-center shrink-0">
+                                            <Check className="w-3.5 h-3.5" />
+                                          </span>
+                                          {specificSlots && (
+                                            <div className="flex flex-col items-start text-[10px] text-gray-600 leading-tight text-left">
+                                              {specificSlots.labels.map((label) => (
+                                                <span key={label}>{label}</span>
+                                              ))}
+                                              <span className="text-blue-600 font-medium mt-0.5">{specificSlots.timesPerDay}x</span>
+                                            </div>
+                                          )}
+                                        </>
+                                      )}
+                                      {summary && !specificSlots && (
+                                        <span className="text-[10px] text-gray-600 leading-tight block">{summary}</span>
+                                      )}
+                                    </button>
+                                  </td>
+                                )
+                              })}
+                              <td className="px-2 py-3 text-center align-middle border-l border-gray-200 bg-gray-100">
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSkilledRowAll(taskRow)}
+                                  className={`inline-flex items-center justify-center w-8 h-8 rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1 ${
+                                    isSkilledRowAllSelected(taskRow.task_id) ? 'bg-blue-600' : 'bg-gray-300'
+                                  }`}
+                                  aria-label={
+                                    isSkilledRowAllSelected(taskRow.task_id)
+                                      ? `Unselect all days for ${taskRow.name}`
+                                      : `Select all days (morning 1x) for ${taskRow.name}`
+                                  }
+                                >
+                                  <span
+                                    className={`w-3 h-3 rounded-full border-2 ${
+                                      isSkilledRowAllSelected(taskRow.task_id)
+                                        ? 'border-white bg-white'
+                                        : 'border-gray-400 bg-white/80'
+                                    }`}
+                                  />
+                                </button>
+                              </td>
+                              <td className="px-2 py-3 text-center align-middle">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleAttemptRemoveSkilledFromPlan(taskRow.task_id)
+                                  }}
+                                  className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors inline-flex items-center justify-center"
+                                  aria-label={`Remove ${taskRow.name}`}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
 
-              <div className="flex justify-end gap-2 pt-1">
+              <div className="flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     setLocalSkilledCarePlanTasks(initialSkilledCarePlanTasks ?? [])
+                    setLocalSkilledSchedules(initialSkilledSchedules)
+                    setPendingSkilledDeletes([])
                     setSkilledTasksError(null)
+                    router.refresh()
                   }}
-                  className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleSaveSkilledCarePlan}
-                  disabled={isSavingSkilledTasks}
-                  className="inline-flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-60"
+                  disabled={isSavingSkilledTasks || !hasSkilledPlanChanges}
+                  className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
                 >
-                  {isSavingSkilledTasks ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                  Save Care Plan
+                  {isSavingSkilledTasks && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Save Skilled Plan
                 </button>
               </div>
             </div>
@@ -5333,7 +5958,7 @@ export default function ClientDetailContent({ client, allClients, representative
       <Modal
         isOpen={addAdlModalOpen}
         onClose={closeAddAdlModal}
-        title="Add ADL Task"
+        title="Non-Skilled Task Library"
         size="md"
       >
         <form onSubmit={handleSaveAddAdl} className="space-y-4">
@@ -5437,9 +6062,9 @@ export default function ClientDetailContent({ client, allClients, representative
         size="md"
       >
         <form onSubmit={handleDoneSelectTime} className="space-y-4">
-          {selectTimeAdl && (
+          {(selectTimeAdl || selectTimeSkilledTask) && (
             <p className="text-sm text-gray-600">
-              Choose when this task should happen on {selectTimeDayLabel}
+              Choose when <span className="font-medium">{selectTimeSkilledTask?.name ?? selectTimeAdl?.name}</span> should happen on {selectTimeDayLabel}
             </p>
           )}
           
@@ -5586,6 +6211,46 @@ export default function ClientDetailContent({ client, allClients, representative
             <button
               type="button"
               onClick={handleRemoveAdlNote}
+              className="px-4 py-2 text-sm font-medium text-red-500 hover:text-red-600"
+            >
+              Remove
+            </button>
+            <button
+              type="submit"
+              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800"
+            >
+              Save Note
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={skilledNoteModalOpen}
+        onClose={closeSkilledNoteModal}
+        title={`Note — ${skilledNoteTarget?.name ?? ''}`}
+        subtitle="Add client-specific instructions for this skilled task. Caregivers will see this note during the visit."
+        size="md"
+      >
+        <form onSubmit={handleSaveSkilledNote} className="space-y-4">
+          <textarea
+            value={skilledNoteDraft}
+            onChange={(e) => setSkilledNoteDraft(e.target.value)}
+            rows={4}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-[inset_0_1px_2px_rgba(0,0,0,0.08)] focus:ring-2 focus:ring-amber-400 focus:border-amber-400"
+            placeholder="Add note for caregivers..."
+          />
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeSkilledNoteModal}
+              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleRemoveSkilledNote}
               className="px-4 py-2 text-sm font-medium text-red-500 hover:text-red-600"
             >
               Remove
@@ -5913,33 +6578,27 @@ export default function ClientDetailContent({ client, allClients, representative
             </div>
             <div className="max-h-160 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
               {selectedVisitContract?.service_type === 'skilled'
-                ? localSkilledCarePlanTasks.length === 0
-                  ? <p className="text-sm text-gray-500 p-3">No skilled tasks configured. Add them in Skilled Tasks tab first.</p>
-                  : localSkilledCarePlanTasks.map((t) => {
-                      const token = `skilled::${t.task_id}`
-                      const isChecked = visitAdlSelected.has(token)
-                      return (
-                        <label key={token} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={(e) => {
-                              setVisitAdlSelected((prev) => {
-                                const next = new Set(prev)
-                                if (e.target.checked) next.add(token)
-                                else next.delete(token)
-                                return next
-                              })
-                            }}
-                            className="mt-1 rounded border-gray-300"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="font-medium text-gray-900">{t.name}</div>
-                            <div className="text-xs text-gray-500 mt-0.5">{t.category}</div>
-                          </div>
-                        </label>
+                ? localSkilledCarePlanTasks.length === 0 ? (
+                    <p className="text-sm text-gray-500 p-3">
+                      No skilled tasks configured. Add them in the Skilled Tasks tab and set days/times first.
+                    </p>
+                  ) : (
+                    (() => {
+                      const visitDate = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
+                      const dayOfWeekDb = visitDate
+                        ? (() => {
+                            const d = new Date(visitDate + 'T12:00:00').getDay()
+                            return d === 0 ? 7 : d
+                          })()
+                        : null
+                      const assignedSlots = buildAssignedVisitTaskSlotSet(
+                        visitDateSchedules ?? [],
+                        localAdlSchedules,
+                        localSkilledSchedules
                       )
-                    })
+                      return renderVisitSkilledSelectionList(dayOfWeekDb, assignedSlots)
+                    })()
+                  )
                 : (() => {
                     const visitDate = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
                     const dayOfWeekDb = visitDate
@@ -5948,13 +6607,19 @@ export default function ClientDetailContent({ client, allClients, representative
                           return d === 0 ? 7 : d
                         })()
                       : null
-                    const assignedSlots = buildAssignedVisitAdlSlotSet(visitDateSchedules ?? [], localAdlSchedules)
+                    const assignedSlots = buildAssignedVisitTaskSlotSet(
+                      visitDateSchedules ?? [],
+                      localAdlSchedules,
+                      localSkilledSchedules
+                    )
                     return renderVisitAdlSelectionList(dayOfWeekDb, assignedSlots)
                   })()}
             </div>
             {(visitForm.isRecurring ? visitForm.repeatStart : visitForm.date) && (
               <p className="text-xs text-gray-500">
-                Only showing ADLs that are not already assigned to other visits on{' '}
+                {selectedVisitContract?.service_type === 'skilled'
+                  ? 'Only showing skilled task slots that are not already assigned to other visits on '
+                  : 'Only showing ADL/IADL slots that are not already assigned to other visits on '}
                 {new Date((visitForm.isRecurring ? visitForm.repeatStart : visitForm.date)! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.
               </p>
             )}
@@ -6298,33 +6963,28 @@ export default function ClientDetailContent({ client, allClients, representative
             </div>
             <div className="max-h-160 overflow-y-auto space-y-2 border border-gray-200 rounded-lg p-2">
               {selectedVisitContract?.service_type === 'skilled'
-                ? localSkilledCarePlanTasks.length === 0
-                  ? <p className="text-sm text-gray-500 p-3">No skilled tasks configured. Add them in Skilled Tasks tab first.</p>
-                  : localSkilledCarePlanTasks.map((t) => {
-                      const token = `skilled::${t.task_id}`
-                      const isChecked = visitAdlSelected.has(token)
-                      return (
-                        <label key={token} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${isChecked ? 'border-green-500 bg-green-50/50' : 'border-gray-200 hover:bg-gray-50'}`}>
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={(e) => {
-                              setVisitAdlSelected((prev) => {
-                                const next = new Set(prev)
-                                if (e.target.checked) next.add(token)
-                                else next.delete(token)
-                                return next
-                              })
-                            }}
-                            className="mt-1 rounded border-gray-300"
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="font-medium text-gray-900">{t.name}</div>
-                            <div className="text-xs text-gray-500 mt-0.5">{t.category}</div>
-                          </div>
-                        </label>
+                ? localSkilledCarePlanTasks.length === 0 ? (
+                    <p className="text-sm text-gray-500 p-3">
+                      No skilled tasks configured. Add them in the Skilled Tasks tab and set days/times first.
+                    </p>
+                  ) : (
+                    (() => {
+                      const visitDate = visitForm.date
+                      const dayOfWeekDb = visitDate
+                        ? (() => {
+                            const d = new Date(visitDate + 'T12:00:00').getDay()
+                            return d === 0 ? 7 : d
+                          })()
+                        : null
+                      const otherVisitsOnDate = (visitDateSchedules ?? []).filter((s) => s.id !== editingSchedule?.id)
+                      const assignedSlots = buildAssignedVisitTaskSlotSet(
+                        otherVisitsOnDate,
+                        localAdlSchedules,
+                        localSkilledSchedules
                       )
-                    })
+                      return renderVisitSkilledSelectionList(dayOfWeekDb, assignedSlots)
+                    })()
+                  )
                 : (() => {
                     const visitDate = visitForm.date
                     const dayOfWeekDb = visitDate
@@ -6334,13 +6994,19 @@ export default function ClientDetailContent({ client, allClients, representative
                         })()
                       : null
                     const otherVisitsOnDate = (visitDateSchedules ?? []).filter((s) => s.id !== editingSchedule?.id)
-                    const assignedSlots = buildAssignedVisitAdlSlotSet(otherVisitsOnDate, localAdlSchedules)
+                    const assignedSlots = buildAssignedVisitTaskSlotSet(
+                      otherVisitsOnDate,
+                      localAdlSchedules,
+                      localSkilledSchedules
+                    )
                     return renderVisitAdlSelectionList(dayOfWeekDb, assignedSlots)
                   })()}
             </div>
             {(visitForm.isRecurring ? visitForm.repeatStart : visitForm.date) && (
               <p className="text-xs text-gray-500">
-                Only showing ADLs that are not already assigned to other visits on{' '}
+                {selectedVisitContract?.service_type === 'skilled'
+                  ? 'Only showing skilled task slots that are not already assigned to other visits on '
+                  : 'Only showing ADL/IADL slots that are not already assigned to other visits on '}
                 {new Date((visitForm.isRecurring ? visitForm.repeatStart : visitForm.date)! + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.
               </p>
             )}

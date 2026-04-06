@@ -14,7 +14,7 @@ export async function getCaregiverSkillCatalogFromTaskRequirements(supabase: Sup
     .from('task_required_credentials')
     .select(
       `
-      task_catalog:task_id (category),
+      task_catalog:task_id (task_categories(name)),
       credential_catalog:credential_id (name, credential_type)
     `
     )
@@ -23,7 +23,10 @@ export async function getCaregiverSkillCatalogFromTaskRequirements(supabase: Sup
   if (error) return { data: null, error }
 
   type Row = {
-    task_catalog?: { category?: string | null } | Array<{ category?: string | null }> | null
+    task_catalog?:
+      | { task_categories?: { name?: string | null } | Array<{ name?: string | null }> | null }
+      | Array<{ task_categories?: { name?: string | null } | Array<{ name?: string | null }> | null }>
+      | null
     credential_catalog?: { name?: string | null; credential_type?: string | null } | Array<{ name?: string | null; credential_type?: string | null }> | null
   }
 
@@ -32,13 +35,14 @@ export async function getCaregiverSkillCatalogFromTaskRequirements(supabase: Sup
   const seen = new Set<string>()
 
   for (const raw of (data ?? []) as Row[]) {
-    const task = first(raw.task_catalog)
+    const task = first(raw.task_catalog) as { task_categories?: { name?: string | null } | Array<{ name?: string | null }> | null } | null
     const cred = first(raw.credential_catalog)
     const credentialType = (cred?.credential_type ?? '').trim().toLowerCase()
     if (credentialType !== 'skill') continue
     const name = (cred?.name ?? '').trim()
     if (!name) continue
-    const type = (task?.category ?? '').trim() || 'Other'
+    const cat = task ? first(task.task_categories) : null
+    const type = (cat?.name ?? '').trim() || 'Other'
     const key = `${type}::${name}`
     if (seen.has(key)) continue
     seen.add(key)

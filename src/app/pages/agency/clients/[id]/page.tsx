@@ -113,11 +113,17 @@ export default async function ClientDetailPage({
   }
 
   let skilledCarePlanTasks: Awaited<ReturnType<typeof q.getPatientSkilledCarePlanTasks>>['data'] = []
+  let skilledSchedulesList: Awaited<ReturnType<typeof q.getPatientSkilledDaySchedulesByPatientId>>['data'] = []
   try {
-    const res = await q.getPatientSkilledCarePlanTasks(supabase, id)
-    skilledCarePlanTasks = res.data ?? []
+    const [tasksRes, schedRes] = await Promise.all([
+      q.getPatientSkilledCarePlanTasks(supabase, id),
+      q.getPatientSkilledDaySchedulesByPatientId(supabase, id),
+    ])
+    skilledCarePlanTasks = tasksRes.data ?? []
+    skilledSchedulesList = schedRes.data ?? []
   } catch {
     skilledCarePlanTasks = []
+    skilledSchedulesList = []
   }
 
   return (
@@ -137,6 +143,7 @@ export default async function ClientDetailPage({
         staff={staffList}
         contractedHours={contractedHoursList}
         skilledCarePlanTasks={skilledCarePlanTasks}
+        skilledSchedules={skilledSchedulesList}
         serviceContracts={serviceContracts}
       />
     </DashboardLayout>

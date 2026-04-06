@@ -10,6 +10,26 @@ export type SkilledCarePlanTask = {
   display_order: number
 }
 
+/** Per-day schedule row for a skilled task (mirrors patient ADL day rows). */
+export interface PatientSkilledTaskDaySchedule {
+  id: string
+  patient_id: string
+  task_id: string
+  day_of_week: number
+  task_note: string | null
+  schedule_type: 'never' | 'always' | 'as_needed' | 'specific_times'
+  times_per_day: number | null
+  slot_morning: string | null
+  slot_afternoon: string | null
+  slot_evening: string | null
+  slot_night: string | null
+  display_order: number
+  created_at: string
+  updated_at: string
+}
+
+type TaskCategoryNest = { name?: string | null } | null
+
 type SkilledTaskRow = {
   id: string
   patient_id: string
@@ -17,30 +37,76 @@ type SkilledTaskRow = {
   display_order: number | null
   task_catalog:
     | {
-        category: string | null
         name: string | null
         description: string | null
+        task_categories?: TaskCategoryNest | TaskCategoryNest[] | null
       }
     | {
-        category: string | null
         name: string | null
         description: string | null
+        task_categories?: TaskCategoryNest | TaskCategoryNest[] | null
       }[]
     | null
+}
+
+function firstNest<T>(v: T | T[] | null | undefined): T | null {
+  if (!v) return null
+  return Array.isArray(v) ? v[0] ?? null : v
 }
 
 function firstCatalog(
   v: SkilledTaskRow['task_catalog']
 ): { category: string | null; name: string | null; description: string | null } | null {
   if (!v) return null
-  return Array.isArray(v) ? v[0] ?? null : v
+  const row = Array.isArray(v) ? v[0] ?? null : v
+  if (!row) return null
+  const tc = firstNest(row.task_categories)
+  return {
+    category: tc?.name ?? null,
+    name: row.name ?? null,
+    description: row.description ?? null,
+  }
 }
 
 type CatalogRow = {
-    category: string | null
-    name: string | null
-    description: string | null
+  category: string | null
+  name: string | null
+  description: string | null
+}
+
+function mapSkilledDayRow(row: {
+  id: string
+  patient_id: string
+  task_id: string | null
+  day_of_week: number
+  task_note: string | null
+  schedule_type: string | null
+  times_per_day: number | null
+  slot_morning: string | null
+  slot_afternoon: string | null
+  slot_evening: string | null
+  slot_night: string | null
+  display_order: number | null
+  created_at: string
+  updated_at: string
+}): PatientSkilledTaskDaySchedule {
+  return {
+    id: row.id,
+    patient_id: row.patient_id,
+    task_id: row.task_id ?? '',
+    day_of_week: row.day_of_week,
+    task_note: row.task_note,
+    schedule_type: (row.schedule_type as PatientSkilledTaskDaySchedule['schedule_type']) || 'never',
+    times_per_day: row.times_per_day,
+    slot_morning: row.slot_morning,
+    slot_afternoon: row.slot_afternoon,
+    slot_evening: row.slot_evening,
+    slot_night: row.slot_night,
+    display_order: row.display_order ?? 0,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   }
+}
 
 async function requireAgencyIdForPatient(supabase: Supabase, patientId: string): Promise<string> {
   const { data } = await supabase.from('patients').select('agency_id').eq('id', patientId).maybeSingle()
@@ -48,12 +114,14 @@ async function requireAgencyIdForPatient(supabase: Supabase, patientId: string):
   return data.agency_id
 }
 
+/** Skilled tasks on the plan (canonical row per task: day_of_week = 1). */
 export async function getPatientSkilledCarePlanTasks(supabase: Supabase, patientId: string) {
   const { data, error } = await supabase
     .from('patient_care_plan_tasks')
-    .select('id, patient_id, task_id, display_order, task_catalog(category, name, description)')
+    .select('id, patient_id, task_id, display_order, task_catalog(name, description, task_categories(name))')
     .eq('patient_id', patientId)
     .eq('service_type', 'skilled')
+    .eq('day_of_week', 1)
     .order('display_order', { ascending: true })
     .order('created_at', { ascending: true })
   if (error) return { data: null, error }
@@ -72,33 +140,94 @@ export async function getPatientSkilledCarePlanTasks(supabase: Supabase, patient
   return { data: mapped, error: null }
 }
 
-export async function replacePatientSkilledCarePlanTasks(
-  supabase: Supabase,
-  patientId: string,
-  taskIds: string[]
-) {
-  const agencyId = await requireAgencyIdForPatient(supabase, patientId)
+/** All per-day skilled schedule rows (7 rows per task when fully configured). */
+export async function getPatientSkilledDaySchedulesByPatientId(supabase: Supabase, patientId: string) {
+  const { data, error } = await supabase
+    .from('patient_care_plan_tasks')
+    .select('*')
+    .eq('patient_id', patientId)
+    .eq('service_type', 'skilled')
+    .not('task_id', 'is', null)
+    .order('display_order', { ascending: true })
+    .order('day_of_week', { ascending: true })
+  if (error) return { data: null, error }
+  return {
+    data: (data ?? []).map((r) => mapSkilledDayRow(r as Parameters<typeof mapSkilledDayRow>[0])),
+    error: null,
+  }
+}
 
-  const { error: deleteError } = await supabase
+export async function upsertPatientSkilledTaskDaySchedule(
+  supabase: Supabase,
+  data: {
+    patient_id: string
+    task_id: string
+    day_of_week: number
+    display_order?: number
+    task_note?: string | null
+    schedule_type: 'never' | 'always' | 'as_needed' | 'specific_times'
+    times_per_day?: number | null
+    slot_morning?: string | null
+    slot_afternoon?: string | null
+    slot_evening?: string | null
+    slot_night?: string | null
+  }
+) {
+  const agencyId = await requireAgencyIdForPatient(supabase, data.patient_id)
+  const row = {
+    agency_id: agencyId,
+    patient_id: data.patient_id,
+    task_id: data.task_id,
+    legacy_task_code: null as string | null,
+    day_of_week: data.day_of_week,
+    display_order: data.display_order ?? 0,
+    service_type: 'skilled' as const,
+    task_note: data.task_note ?? null,
+    schedule_type: data.schedule_type,
+    times_per_day: data.times_per_day ?? null,
+    slot_morning: data.slot_morning ?? null,
+    slot_afternoon: data.slot_afternoon ?? null,
+    slot_evening: data.slot_evening ?? null,
+    slot_night: data.slot_night ?? null,
+  }
+
+  // Partial unique index (048) does not support PostgREST `upsert` / ON CONFLICT (patient_id, task_id, day_of_week).
+  const { data: existing, error: findErr } = await supabase
+    .from('patient_care_plan_tasks')
+    .select('id')
+    .eq('patient_id', data.patient_id)
+    .eq('task_id', data.task_id)
+    .eq('day_of_week', data.day_of_week)
+    .eq('service_type', 'skilled')
+    .maybeSingle()
+
+  if (findErr) return { data: null, error: findErr }
+
+  if (existing?.id) {
+    return supabase.from('patient_care_plan_tasks').update(row).eq('id', existing.id).select().single()
+  }
+
+  return supabase.from('patient_care_plan_tasks').insert(row).select().single()
+}
+
+export async function updatePatientSkilledTaskDayScheduleNote(
+  supabase: Supabase,
+  data: { id: string; task_note?: string | null }
+) {
+  return supabase
+    .from('patient_care_plan_tasks')
+    .update({ task_note: data.task_note })
+    .eq('id', data.id)
+    .select()
+    .single()
+}
+
+/** Remove all skilled plan rows for one task (all days). */
+export async function deleteSkilledTaskPlanRows(supabase: Supabase, patientId: string, taskId: string) {
+  return supabase
     .from('patient_care_plan_tasks')
     .delete()
     .eq('patient_id', patientId)
+    .eq('task_id', taskId)
     .eq('service_type', 'skilled')
-  if (deleteError) return { data: null, error: deleteError }
-
-  if (taskIds.length === 0) return { data: [], error: null }
-
-  const rows = taskIds.map((taskId, i) => ({
-    agency_id: agencyId,
-    patient_id: patientId,
-    task_id: taskId,
-    day_of_week: 1,
-    schedule_type: 'always',
-    service_type: 'skilled',
-    display_order: i,
-  }))
-  const { error: insertError } = await supabase.from('patient_care_plan_tasks').insert(rows)
-  if (insertError) return { data: null, error: insertError }
-
-  return getPatientSkilledCarePlanTasks(supabase, patientId)
 }
