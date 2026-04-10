@@ -136,25 +136,21 @@ export default async function CertificationDetailPage({
       profile={profile} 
       unreadNotifications={unreadNotifications || 0}
     >
-      <div className="space-y-6 mt-20">
+      <div className="space-y-5 mt-20">
         {/* Back Button */}
         <Link
           href={isApplication ? "/pages/caregiver" : "/pages/caregiver/my-certifications"}
-          className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 transition-colors"
+          className="inline-flex items-center gap-2 text-sm text-gray-600 hover:text-gray-900 transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
           {isApplication ? "Back to Dashboard" : "Back to Certifications"}
         </Link>
 
-        {/* Header */}
+        {/* Header — match My Care Visits page title scale */}
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">
-              {certification.type}
-            </h1>
-            <p className="text-gray-600 text-base md:text-lg">
-              Certification Details
-            </p>
+            <h1 className="text-3xl font-bold text-gray-900">{certification.type}</h1>
+            <p className="text-sm text-gray-600">Certification Details</p>
           </div>
           {getStatusBadge(certification.status, certification.expiration_date)}
         </div>

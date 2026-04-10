@@ -200,13 +200,11 @@ function MyCertificationsContent() {
       profile={profile} 
       unreadNotifications={unreadNotifications}
     >
-      <div className="space-y-6 mt-20">
-        {/* Header */}
+      <div className="space-y-5 mt-20">
+        {/* Header — match My Care Visits typography */}
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">My Certifications</h1>
-          <p className="text-gray-600 text-base md:text-lg">
-            Manage all your professional certifications and licenses
-          </p>
+          <h1 className="text-3xl font-bold text-gray-900">My Certifications</h1>
+          <p className="text-sm text-gray-600">Manage all your professional certifications and licenses</p>
         </div>
 
         {!hasStaffProfile && (
@@ -221,9 +219,9 @@ function MyCertificationsContent() {
         <div className='flex justify-end'>
           <button
             onClick={() => setIsModalOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white text-sm font-semibold rounded-lg hover:bg-gray-800 transition-colors"
           >
-            <Plus className="w-5 h-5" />
+            <Plus className="w-4 h-4" />
             Add New Certification
           </button>
         </div>
@@ -233,50 +231,50 @@ function MyCertificationsContent() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
             <table className="min-w-full table-auto">
               <thead>
-                <tr className="text-left text-sm text-gray-600">
-                  <th className="px-6 py-4">Type
-                    <button onClick={() => toggleSort('type')} className="ml-2 text-xs text-gray-400">{sortBy === 'type' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
+                <tr className="text-left text-xs font-semibold uppercase tracking-wider text-gray-700">
+                  <th className="px-4 py-3">Type
+                    <button onClick={() => toggleSort('type')} className="ml-2 text-xs font-normal normal-case text-gray-400">{sortBy === 'type' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
                   </th>
-                  <th className="px-6 py-4">Status
-                    <button onClick={() => toggleSort('status')} className="ml-2 text-xs text-gray-400">{sortBy === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
+                  <th className="px-4 py-3">Status
+                    <button onClick={() => toggleSort('status')} className="ml-2 text-xs font-normal normal-case text-gray-400">{sortBy === 'status' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
                   </th>
-                  <th className="px-6 py-4">License Number
-                    <button onClick={() => toggleSort('license_number')} className="ml-2 text-xs text-gray-400">{sortBy === 'license_number' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
+                  <th className="px-4 py-3">License Number
+                    <button onClick={() => toggleSort('license_number')} className="ml-2 text-xs font-normal normal-case text-gray-400">{sortBy === 'license_number' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
                   </th>
-                  <th className="px-6 py-4">Issue Date
-                    <button onClick={() => toggleSort('issue_date')} className="ml-2 text-xs text-gray-400">{sortBy === 'issue_date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
+                  <th className="px-4 py-3">Issue Date
+                    <button onClick={() => toggleSort('issue_date')} className="ml-2 text-xs font-normal normal-case text-gray-400">{sortBy === 'issue_date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
                   </th>
-                  <th className="px-6 py-4">Expiration Date
+                  <th className="px-4 py-3">Expiration Date
                     {/* <button onClick={() => toggleSort('expiration_date')} className="ml-2 text-xs text-gray-400">{sortBy === 'expiration_date' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button> */}
                   </th>
-                  <th className="px-6 py-4">State
-                    <button onClick={() => toggleSort('state')} className="ml-2 text-xs text-gray-400">{sortBy === 'state' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
+                  <th className="px-4 py-3">State
+                    <button onClick={() => toggleSort('state')} className="ml-2 text-xs font-normal normal-case text-gray-400">{sortBy === 'state' ? (sortDir === 'asc' ? '▲' : '▼') : ''}</button>
                   </th>
-                  <th className="px-6 py-4">Actions</th>
+                  <th className="px-4 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedCertifications.map((cert) => (
                   <tr key={cert.id} className="border-t">
-                    <td className="px-6 py-4 align-top">
-                      <div className="font-medium text-gray-900">{cert.type}</div>
+                    <td className="px-4 py-3 align-top">
+                      <div className="text-sm font-medium text-gray-900">{cert.type}</div>
                     </td>
-                    <td className="px-6 py-4 align-top">
+                    <td className="px-4 py-3 align-top">
                       {getStatusBadge(cert.status, cert.expiration_date)}
                     </td>
-                    <td className="px-6 py-4 align-top">
+                    <td className="px-4 py-3 align-top">
                       <div className="text-sm text-gray-900">{cert.license_number}</div>
                     </td>
-                    <td className="px-6 py-4 align-top">
+                    <td className="px-4 py-3 align-top">
                       <div className="text-sm text-gray-900">{formatDate(cert.issue_date)}</div>
                     </td>
-                    <td className="px-6 py-4 align-top">
+                    <td className="px-4 py-3 align-top">
                       <div className="text-sm text-gray-900">{formatDate(cert.expiration_date)}</div>
                     </td>
-                    <td className="px-6 py-4 align-top">
+                    <td className="px-4 py-3 align-top">
                       <div className="text-sm text-gray-900">{cert.state ?? '—'}</div>
                     </td>
-                    <td className="px-6 py-4 align-top">
+                    <td className="px-4 py-3 align-top">
                       <div className="flex items-center gap-2">
                         <button 
                           onClick={() => handleEditClick(cert)}
@@ -312,13 +310,13 @@ function MyCertificationsContent() {
         ) : (
           <div className="bg-white rounded-xl p-12 text-center shadow-md border border-gray-100">
             <Award className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No certifications yet</h3>
-            <p className="text-gray-600 mb-6">Get started by adding your first certification</p>
+            <h3 className="text-base font-semibold text-gray-900 mb-2">No certifications yet</h3>
+            <p className="text-sm text-gray-600 mb-6">Get started by adding your first certification</p>
             <button
               onClick={() => setIsModalOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white text-sm font-semibold rounded-lg hover:bg-gray-800 transition-colors"
             >
-              <Plus className="w-5 h-5" />
+              <Plus className="w-4 h-4" />
               Add New Certification
             </button>
           </div>

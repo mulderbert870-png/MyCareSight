@@ -211,47 +211,45 @@ export default async function StaffDashboardPage() {
       profile={profile} 
       unreadNotifications={unreadNotifications}
     >
-      <div className="space-y-6 mt-20">
-        {/* Title and Subtitle */}
+      <div className="space-y-5 mt-20">
+        {/* Title and Subtitle — match My Care Visits typography */}
         <div>
-          <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">My License Dashboard</h1>
-          <p className="text-gray-600 text-base md:text-lg">
-            Track and manage your professional licenses and certifications.
-          </p>
+          <h1 className="text-3xl font-bold text-gray-900">My License Dashboard</h1>
+          <p className="text-sm text-gray-600">Track and manage your professional licenses and certifications.</p>
         </div>
 
         {/* Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 md:gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {/* Active Licenses */}
-          <div className="bg-white rounded-xl p-4 md:p-6 shadow-md border border-gray-100">
+          <div className="bg-white rounded-xl p-4 shadow-md border border-gray-100">
             <div className="flex flex-col items-center text-center">
-              <div className="w-12 h-12 md:w-14 md:h-14 bg-green-100 rounded-full flex items-center justify-center mb-3">
-                <CheckCircle2 className="w-6 h-6 md:w-7 md:h-7 text-green-600" />
+              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mb-3">
+                <CheckCircle2 className="w-6 h-6 text-green-600" />
               </div>
-              <div className="text-3xl md:text-4xl font-bold text-gray-900 mb-1">{activeLicenses}</div>
-              <div className="text-sm md:text-base text-gray-600">Active Licenses</div>
+              <div className="text-3xl font-bold text-gray-900 mb-1">{activeLicenses}</div>
+              <div className="text-sm text-gray-600">Active Licenses</div>
             </div>
           </div>
 
           {/* Expiring Soon */}
-          <div className="bg-white rounded-xl p-4 md:p-6 shadow-md border border-gray-100">
+          <div className="bg-white rounded-xl p-4 shadow-md border border-gray-100">
             <div className="flex flex-col items-center text-center">
-              <div className="w-12 h-12 md:w-14 md:h-14 bg-yellow-100 rounded-full flex items-center justify-center mb-3">
-                <Clock className="w-6 h-6 md:w-7 md:h-7 text-yellow-600" />
+              <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center mb-3">
+                <Clock className="w-6 h-6 text-yellow-600" />
               </div>
-              <div className="text-3xl md:text-4xl font-bold text-gray-900 mb-1">{expiringSoon}</div>
-              <div className="text-sm md:text-base text-gray-600">Expiring Soon</div>
+              <div className="text-3xl font-bold text-gray-900 mb-1">{expiringSoon}</div>
+              <div className="text-sm text-gray-600">Expiring Soon</div>
             </div>
           </div>
 
           {/* Expired Licenses */}
-          <div className="bg-white rounded-xl p-4 md:p-6 shadow-md border border-gray-100">
+          <div className="bg-white rounded-xl p-4 shadow-md border border-gray-100">
             <div className="flex flex-col items-center text-center">
-              <div className="w-12 h-12 md:w-14 md:h-14 bg-red-100 rounded-full flex items-center justify-center mb-3">
-                <AlertCircle className="w-6 h-6 md:w-7 md:h-7 text-red-600" />
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mb-3">
+                <AlertCircle className="w-6 h-6 text-red-600" />
               </div>
-              <div className="text-3xl md:text-4xl font-bold text-gray-900 mb-1">{expiredLicenses}</div>
-              <div className="text-sm md:text-base text-gray-600">Expired Licenses</div>
+              <div className="text-3xl font-bold text-gray-900 mb-1">{expiredLicenses}</div>
+              <div className="text-sm text-gray-600">Expired Licenses</div>
             </div>
           </div>
         </div>
@@ -287,14 +285,14 @@ export default async function StaffDashboardPage() {
         )} */}
 
         {/* All Licenses & Certifications */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-4 md:p-6">
+        <div className="bg-white rounded-xl shadow-md border border-gray-100 p-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-            <h2 className="text-xl md:text-2xl font-bold text-gray-900">All Licenses & Certifications</h2>
+            <h2 className="text-lg font-bold text-gray-900">All Licenses & Certifications</h2>
             <Link
               href="/pages/caregiver/my-certifications?action=add"
-              className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors text-sm md:text-base"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors text-sm"
             >
-              <Plus className="w-4 h-4 md:w-5 md:h-5" />
+              <Plus className="w-4 h-4" />
               Add License
             </Link>
           </div>
@@ -394,7 +392,7 @@ export default async function StaffDashboardPage() {
                           
                           <Link
                             href={`/pages/caregiver/my-certifications/${license.id}`}
-                            className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors text-sm md:text-base whitespace-nowrap"
+                            className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors text-sm whitespace-nowrap"
                           >
                             Renew
                           </Link>
@@ -408,11 +406,11 @@ export default async function StaffDashboardPage() {
           ) : (
             <div className="text-center py-12">
               <FileText className="w-16 h-16 mx-auto mb-4 text-gray-300" />
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">No licenses yet</h3>
-              <p className="text-gray-600 mb-4">Get started by adding your first license or certification</p>
+              <h3 className="text-base font-semibold text-gray-900 mb-2">No licenses yet</h3>
+              <p className="text-sm text-gray-600 mb-4">Get started by adding your first license or certification</p>
               <Link
                 href="/pages/caregiver/my-certifications?action=add"
-                className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white font-semibold rounded-lg hover:bg-gray-800 transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-black text-white text-sm font-semibold rounded-lg hover:bg-gray-800 transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 Add License
