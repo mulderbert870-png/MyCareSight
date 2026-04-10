@@ -163,7 +163,11 @@ export default function StaffLayout({
 
             <nav className="space-y-1">
               {menuItems.map((item) => {
-                const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
+                // Dashboard href is a prefix of other menu routes; only exact match counts as active.
+                const isActive =
+                  item.href === '/pages/caregiver'
+                    ? pathname === '/pages/caregiver'
+                    : pathname === item.href || pathname.startsWith(`${item.href}/`)
                 const Icon = item.icon
                 return (
                   <Link
