@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Bell,
   CalendarDays,
@@ -102,6 +102,12 @@ function isPastVisitDate(date: string): boolean {
   return d < today
 }
 
+const CARE_VISITS_PATH = '/pages/agency/care-visits'
+
+function tabFromSearchParams(searchParams: { get: (key: string) => string | null }): 'all' | 'requests' {
+  return searchParams.get('tab') === 'requests' ? 'requests' : 'all'
+}
+
 function relativeDateHeader(date: string, fallbackLabel: string): string {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -124,7 +130,20 @@ export default function VisitManagementContent({
   loadError,
 }: VisitManagementContentProps) {
   const router = useRouter()
-  const [tab, setTab] = useState<'all' | 'requests'>('all')
+  const searchParams = useSearchParams()
+  const [tab, setTab] = useState<'all' | 'requests'>(() => tabFromSearchParams(searchParams))
+
+  useEffect(() => {
+    setTab(tabFromSearchParams(searchParams))
+  }, [searchParams])
+
+  const goToVisitTab = (next: 'all' | 'requests') => {
+    if (next === 'requests') {
+      router.replace(`${CARE_VISITS_PATH}?tab=requests`, { scroll: false })
+    } else {
+      router.replace(CARE_VISITS_PATH, { scroll: false })
+    }
+  }
   const [actionError, setActionError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [declineModal, setDeclineModal] = useState<{ requestId: string; caregiverName: string; clientName: string } | null>(null)
@@ -243,8 +262,8 @@ export default function VisitManagementContent({
           <p className="text-sm text-gray-600 mt-1">View, sort, and manage all care visits. Assign caregivers and track visit status.</p>
         </div>
         <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100/80 p-1 shadow-inner">
-          <button type="button" onClick={() => setTab('all')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'all' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}>All Visits</button>
-          <button type="button" onClick={() => setTab('requests')} className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'requests' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}>
+          <button type="button" onClick={() => goToVisitTab('all')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'all' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}>All Visits</button>
+          <button type="button" onClick={() => goToVisitTab('requests')} className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'requests' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}>
             Assignment Requests
             {pendingRequestCount > 0 ? <span className="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 min-w-[1.25rem] text-center">{pendingRequestCount}</span> : null}
           </button>
@@ -255,7 +274,7 @@ export default function VisitManagementContent({
         <>
           <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center justify-between gap-3">
             <span>{pendingRequestCount} assignment requests awaiting your review</span>
-            <button type="button" onClick={() => setTab('requests')} className="text-amber-700 font-semibold hover:underline">Click to review</button>
+            <button type="button" onClick={() => goToVisitTab('requests')} className="text-amber-700 font-semibold hover:underline">Click to review</button>
           </div>
 
           <div className="bg-white border border-gray-200 rounded-xl p-3 flex flex-wrap gap-2 items-center">

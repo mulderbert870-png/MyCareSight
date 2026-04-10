@@ -3,6 +3,7 @@ import type { Supabase } from '../types'
 /** Shape expected by visit dashboards and client visit UI (maps from scheduled_visits + tasks). */
 export interface ScheduleRow {
   id: string
+  agency_id: string
   patient_id: string
   caregiver_id: string | null
   contract_id: string | null
@@ -28,6 +29,7 @@ export interface ScheduleRow {
 
 const visitSelect = `
   id,
+  agency_id,
   patient_id,
   caregiver_member_id,
   contract_id,
@@ -52,6 +54,7 @@ const visitSelect = `
 
 type ScheduledVisitDbRow = {
   id: string
+  agency_id: string
   patient_id: string
   caregiver_member_id: string | null
   contract_id: string | null
@@ -90,6 +93,7 @@ function parseMonthlyRules(raw: unknown): { ordinal: number; weekday: number }[]
 function toScheduleRow(v: ScheduledVisitDbRow, adlCodes: string[]): ScheduleRow {
   return {
     id: v.id,
+    agency_id: v.agency_id,
     patient_id: v.patient_id,
     caregiver_id: v.caregiver_member_id,
     contract_id: v.contract_id,
@@ -450,10 +454,10 @@ export async function updateSchedule(
     .from('scheduled_visits')
     .select('id, agency_id, patient_id')
     .eq('id', id)
-    .single()
+    .maybeSingle()
 
   if (fetchErr) return { data: null, error: fetchErr }
-  if (!existing) return { data: null, error: { message: 'Visit not found' } }
+  if (!existing) return { data: null, error: { message: 'Visit not found or not accessible.' } }
 
   const ex = existing as { id: string; agency_id: string; patient_id: string }
 
@@ -487,9 +491,15 @@ export async function updateSchedule(
     .update(patch)
     .eq('id', id)
     .select(visitSelect)
-    .single()
+    .maybeSingle()
 
-  if (error || !visit) return { data: null, error }
+  if (error) return { data: null, error }
+  if (!visit) {
+    return {
+      data: null,
+      error: { message: 'Visit could not be updated. It may not exist or you may not have permission.' },
+    }
+  }
   const v = visit as ScheduledVisitDbRow
 
   if (data.adl_codes !== undefined) {

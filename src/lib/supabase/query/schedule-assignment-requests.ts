@@ -63,7 +63,29 @@ export async function declineScheduleAssignmentRequestRpc(
   })
 }
 
-/** Caregiver submits a request (RLS enforces open schedule + same agency). */
+/** Caregiver submits a request via RPC (bypasses brittle INSERT RLS; server validates agency + open visit). */
+export async function submitScheduleAssignmentRequestRpc(
+  supabase: Supabase,
+  scheduleId: string,
+  caregiverNote: string | null
+) {
+  return supabase.rpc('submit_schedule_assignment_request', {
+    p_schedule_id: scheduleId,
+    p_caregiver_note: caregiverNote ?? '',
+  })
+}
+
+/** Caregiver withdraws their pending request (RLS: own row, status pending). Returns deleted row ids. */
+export async function deletePendingScheduleAssignmentRequest(supabase: Supabase, requestId: string) {
+  return supabase
+    .from('schedule_assignment_requests')
+    .delete()
+    .eq('id', requestId)
+    .eq('status', 'pending')
+    .select('id')
+}
+
+/** Direct insert (coordinator tooling / tests). Prefer {@link submitScheduleAssignmentRequestRpc} for caregivers. */
 export async function insertScheduleAssignmentRequest(
   supabase: Supabase,
   data: { schedule_id: string; caregiver_member_id: string; caregiver_note?: string | null }

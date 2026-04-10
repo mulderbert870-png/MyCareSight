@@ -6,6 +6,13 @@ import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 
 const COORDINATOR_PATH = '/pages/agency/care-visits'
+const CAREGIVER_PATH = '/pages/caregiver/my-care-visits'
+
+function revalidateVisitsPages() {
+  revalidatePath(COORDINATOR_PATH)
+  revalidatePath(CAREGIVER_PATH)
+  revalidatePath(CAREGIVER_PATH, 'layout')
+}
 
 function mapRpcError(code: string | undefined): string {
   switch (code) {
@@ -50,7 +57,7 @@ export async function approveScheduleAssignmentRequestAction(
     return { error: mapRpcError(body?.error) }
   }
 
-  revalidatePath(COORDINATOR_PATH)
+  revalidateVisitsPages()
   return { ok: true }
 }
 
@@ -74,11 +81,24 @@ export async function declineScheduleAssignmentRequestAction(
     return { error: mapRpcError(body?.error) }
   }
 
-  revalidatePath(COORDINATOR_PATH)
+  revalidateVisitsPages()
   return { ok: true }
 }
 
-/** Logged-in caregiver requests an open visit (same agency, schedule.caregiver_id must be null). */
+function mapSubmitAssignmentRequestError(code: string | undefined): string {
+  switch (code) {
+    case 'not_authenticated':
+      return 'You must be signed in.'
+    case 'cannot_request':
+      return 'You cannot request this visit. It may be assigned, missing agency data, or not in your agency.'
+    case 'duplicate_pending':
+      return 'You already have a pending request for this visit.'
+    default:
+      return 'Could not submit request.'
+  }
+}
+
+/** Logged-in caregiver requests an open visit (same agency; visit must be unassigned). Uses DB RPC to avoid INSERT RLS issues. */
 export async function requestScheduleAssignmentAction(
   scheduleId: string,
   caregiverNote?: string | null
@@ -87,26 +107,41 @@ export async function requestScheduleAssignmentAction(
   if (!session?.user?.id) return { error: 'You must be signed in.' }
 
   const supabase = await createClient()
-  const { data: staffRow, error: staffErr } = await q.getStaffMemberByUserId(supabase, session.user.id)
-  if (staffErr || !staffRow?.id) {
-    return { error: 'Only caregivers can request a visit assignment.' }
-  }
-
-  const note = caregiverNote?.trim() ? caregiverNote.trim() : null
-  const { error } = await q.insertScheduleAssignmentRequest(supabase, {
-    schedule_id: scheduleId,
-    caregiver_member_id: staffRow.id,
-    caregiver_note: note,
-  })
+  const note = caregiverNote?.trim() ? caregiverNote.trim() : ''
+  const { data, error } = await q.submitScheduleAssignmentRequestRpc(supabase, scheduleId, note || null)
 
   if (error) {
-    if (error.code === '23505') {
-      return { error: 'You already have a pending request for this visit.' }
-    }
     return { error: error.message || 'Could not submit request.' }
   }
 
-  revalidatePath(COORDINATOR_PATH)
+  const body = data as { ok?: boolean; error?: string } | null
+  if (!body?.ok) {
+    return { error: mapSubmitAssignmentRequestError(body?.error) }
+  }
+
+  revalidateVisitsPages()
+  return { ok: true }
+}
+
+/** Caregiver cancels their own pending assignment request. */
+export async function cancelScheduleAssignmentRequestAction(
+  requestId: string
+): Promise<{ ok?: true; error?: string }> {
+  const session = await getSession()
+  if (!session?.user?.id) return { error: 'You must be signed in.' }
+  if (!isValidRequestId(requestId)) return { error: 'Invalid request. Refresh the page and try again.' }
+
+  const supabase = await createClient()
+  const { error, data } = await q.deletePendingScheduleAssignmentRequest(supabase, requestId)
+  if (error) {
+    return { error: error.message || 'Could not cancel request.' }
+  }
+  const deleted = (data ?? []) as { id: string }[]
+  if (deleted.length === 0) {
+    return { error: 'Request was not found or is no longer pending.' }
+  }
+
+  revalidateVisitsPages()
   return { ok: true }
 }
 
@@ -125,7 +160,7 @@ export async function markScheduleMissedAction(
   if ((data?.status ?? '').toLowerCase().trim() !== 'missed') {
     return { error: 'Visit status was not updated to missed. Please refresh and try again.' }
   }
-  revalidatePath(COORDINATOR_PATH)
+  revalidateVisitsPages()
   return { ok: true }
 }
 
@@ -141,7 +176,7 @@ export async function assignCaregiverToScheduleAction(
     status: 'scheduled',
   })
   if (error) return { error: error.message || 'Could not assign caregiver.' }
-  revalidatePath(COORDINATOR_PATH)
+  revalidateVisitsPages()
   return { ok: true }
 }
 
@@ -156,6 +191,6 @@ export async function unassignCaregiverFromScheduleAction(
     status: 'scheduled',
   })
   if (error) return { error: error.message || 'Could not unassign caregiver.' }
-  revalidatePath(COORDINATOR_PATH)
+  revalidateVisitsPages()
   return { ok: true }
 }

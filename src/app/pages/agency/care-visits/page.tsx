@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
@@ -32,16 +33,18 @@ export default async function CareVisitsPage() {
       unreadNotifications={unreadNotifications ?? 0}
       careVisitsPendingCount={pendingRequestCount}
     >
-      <VisitManagementContent
-        visits={dashboard.visits}
-        allVisits={allVisits.allVisits}
-        allClients={allVisits.allClients}
-        allCaregivers={allVisits.allCaregivers}
-        resolved={dashboard.resolved}
-        approvedTotal={dashboard.approvedTotal}
-        declinedTotal={dashboard.declinedTotal}
-        loadError={dashboard.error}
-      />
+      <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading care visits…</div>}>
+        <VisitManagementContent
+          visits={dashboard.visits}
+          allVisits={allVisits.allVisits}
+          allClients={allVisits.allClients}
+          allCaregivers={allVisits.allCaregivers}
+          resolved={dashboard.resolved}
+          approvedTotal={dashboard.approvedTotal}
+          declinedTotal={dashboard.declinedTotal}
+          loadError={dashboard.error}
+        />
+      </Suspense>
     </DashboardLayout>
   )
 }

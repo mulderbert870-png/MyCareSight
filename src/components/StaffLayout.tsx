@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation'
 import { 
   Home,
   Award,
+  CalendarDays,
   LogOut, 
   ChevronLeft,
   Menu,
@@ -59,6 +60,7 @@ export default function StaffLayout({
 
   const menuItems = [
     { href: '/pages/caregiver', label: 'Dashboard', icon: Home },
+    { href: '/pages/caregiver/my-care-visits', label: 'My Care Visits', icon: CalendarDays },
     { href: '/pages/caregiver/my-certifications', label: 'My Certifications', icon: Award },
   ]
 
@@ -161,7 +163,7 @@ export default function StaffLayout({
 
             <nav className="space-y-1">
               {menuItems.map((item) => {
-                const isActive = pathname === item.href
+                const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
                 const Icon = item.icon
                 return (
                   <Link
