@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Bell,
@@ -145,7 +145,8 @@ export default function VisitManagementContent({
     }
   }
   const [actionError, setActionError] = useState<string | null>(null)
-  const [isPending, startTransition] = useTransition()
+  /** Scoped pending key so one request's approve/decline (and per-visit actions) do not disable all controls. */
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null)
   const [declineModal, setDeclineModal] = useState<{ requestId: string; caregiverName: string; clientName: string } | null>(null)
   const [detailVisit, setDetailVisit] = useState<AllVisitCardDTO | null>(null)
   const [reassignVisit, setReassignVisit] = useState<AllVisitCardDTO | null>(null)
@@ -165,16 +166,19 @@ export default function VisitManagementContent({
     [pendingRequestCount, approvedTotal, declinedTotal]
   )
 
-  const runAction = async (fn: () => Promise<{ ok?: true; error?: string }>) => {
+  const runAction = async (key: string, fn: () => Promise<{ ok?: true; error?: string }>) => {
     setActionError(null)
-    startTransition(async () => {
+    setPendingActionKey(key)
+    try {
       const result = await fn()
       if (result.error) {
         setActionError(result.error)
         return
       }
       router.refresh()
-    })
+    } finally {
+      setPendingActionKey(null)
+    }
   }
 
   const clientOptions = useMemo(() => allClients, [allClients])
@@ -230,17 +234,19 @@ export default function VisitManagementContent({
     setSortOrder('oldest')
   }
 
-  const handleApprove = (request: AssignmentRequestCardDTO) => void runAction(() => approveScheduleAssignmentRequestAction(request.id))
+  const handleApprove = (request: AssignmentRequestCardDTO) =>
+    void runAction(`approve:${request.id}`, () => approveScheduleAssignmentRequestAction(request.id))
   const confirmDecline = (reason: string) => {
     if (!declineModal) return
     const id = declineModal.requestId
     setDeclineModal(null)
-    void runAction(() => declineScheduleAssignmentRequestAction(id, reason))
+    void runAction(`decline:${id}`, () => declineScheduleAssignmentRequestAction(id, reason))
   }
-  const handleUnassign = (visit: AllVisitCardDTO) => void runAction(() => unassignCaregiverFromScheduleAction(visit.id))
+  const handleUnassign = (visit: AllVisitCardDTO) =>
+    void runAction(`unassign:${visit.id}`, () => unassignCaregiverFromScheduleAction(visit.id))
   const handleAssign = (visit: AllVisitCardDTO, caregiverId: string) => {
     setReassignVisit(null)
-    void runAction(() => assignCaregiverToScheduleAction(visit.id, caregiverId))
+    void runAction(`assign:${visit.id}`, () => assignCaregiverToScheduleAction(visit.id, caregiverId))
   }
   const handleMiss = () => {
     if (!missVisit) return
@@ -248,8 +254,11 @@ export default function VisitManagementContent({
     const reason = missReason
     setMissVisit(null)
     setMissReason('')
-    void runAction(() => markScheduleMissedAction(id, reason))
+    void runAction(`miss:${id}`, () => markScheduleMissedAction(id, reason))
   }
+
+  const requestActionBusy = (requestId: string) =>
+    pendingActionKey === `approve:${requestId}` || pendingActionKey === `decline:${requestId}`
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -365,13 +374,32 @@ export default function VisitManagementContent({
                           <button type="button" onClick={() => setDetailVisit(visit)} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium hover:bg-gray-50">Details</button>
                           {!isPastVisit && !isLockedStatus ? (
                             <>
-                              <button type="button" disabled={isPending} onClick={() => setReassignVisit(visit)} className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-60">
+                              <button
+                                type="button"
+                                disabled={pendingActionKey === `assign:${visit.id}`}
+                                onClick={() => setReassignVisit(visit)}
+                                className="rounded-lg bg-blue-600 text-white px-3 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-60"
+                              >
                                 {visit.caregiverId ? 'Reassign' : 'Assign'}
                               </button>
                               {visit.caregiverId ? (
-                                <button type="button" disabled={isPending} onClick={() => handleUnassign(visit)} className="rounded-lg border border-red-200 text-red-600 px-3 py-2 text-sm font-medium hover:bg-red-50 disabled:opacity-60">Unassign</button>
+                                <button
+                                  type="button"
+                                  disabled={pendingActionKey === `unassign:${visit.id}`}
+                                  onClick={() => handleUnassign(visit)}
+                                  className="rounded-lg border border-red-200 text-red-600 px-3 py-2 text-sm font-medium hover:bg-red-50 disabled:opacity-60"
+                                >
+                                  Unassign
+                                </button>
                               ) : null}
-                              <button type="button" disabled={isPending} onClick={() => setMissVisit(visit)} className="rounded-lg border border-orange-200 text-orange-700 px-3 py-2 text-sm font-medium hover:bg-orange-50 disabled:opacity-60">Miss</button>
+                              <button
+                                type="button"
+                                disabled={pendingActionKey === `miss:${visit.id}`}
+                                onClick={() => setMissVisit(visit)}
+                                className="rounded-lg border border-orange-200 text-orange-700 px-3 py-2 text-sm font-medium hover:bg-orange-50 disabled:opacity-60"
+                              >
+                                Miss
+                              </button>
                             </>
                           ) : null}
                         </div>
@@ -441,8 +469,30 @@ export default function VisitManagementContent({
                                 </div>
                               </div>
                               <div className="flex lg:flex-col gap-2 shrink-0 lg:items-stretch">
-                                <button type="button" disabled={isPending} onClick={() => handleApprove(req)} className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"><ThumbsUp className="h-4 w-4" aria-hidden />Approve & Assign</button>
-                                <button type="button" disabled={isPending} onClick={() => setDeclineModal({ requestId: req.id, caregiverName: req.caregiverName, clientName: visit.clientName })} className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg border-2 border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"><ThumbsDown className="h-4 w-4" aria-hidden />Decline</button>
+                                <button
+                                  type="button"
+                                  disabled={requestActionBusy(req.id)}
+                                  onClick={() => handleApprove(req)}
+                                  className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                >
+                                  <ThumbsUp className="h-4 w-4" aria-hidden />
+                                  Approve & Assign
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={requestActionBusy(req.id)}
+                                  onClick={() =>
+                                    setDeclineModal({
+                                      requestId: req.id,
+                                      caregiverName: req.caregiverName,
+                                      clientName: visit.clientName,
+                                    })
+                                  }
+                                  className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg border-2 border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                                >
+                                  <ThumbsDown className="h-4 w-4" aria-hidden />
+                                  Decline
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -519,16 +569,19 @@ export default function VisitManagementContent({
                       <div className="mt-2 text-xs text-gray-600">{formatDistance(cand.distanceMiles)} away</div>
                       {cand.matchedSkills.length ? <div className="flex flex-wrap gap-2 mt-2">{cand.matchedSkills.map((sk) => <span key={sk} className="rounded-full border border-emerald-200 text-emerald-700 bg-emerald-50 px-2 py-0.5 text-xs">{sk}</span>)}</div> : null}
                     </div>
-                    <button type="button" 
+                    <button
+                      type="button"
+                      disabled={pendingActionKey === `assign:${reassignVisit.id}`}
                       onClick={() => {
                         if (cand.isCurrent) {
                           setReassignVisit(null)
                         } else {
                           handleAssign(reassignVisit, cand.id)
-                        }         
+                        }
                       }}
-                      className={`rounded-lg text-white px-3 py-2 text-sm font-medium ${cand.isCurrent ? 'bg-blue-600 hover:bg-blue-700' : 'bg-black hover:bg-gray-800 '}`}>
-                        {cand.isCurrent ? 'Keep' : 'Assign'}
+                      className={`rounded-lg text-white px-3 py-2 text-sm font-medium disabled:opacity-60 ${cand.isCurrent ? 'bg-blue-600 hover:bg-blue-700' : 'bg-black hover:bg-gray-800 '}`}
+                    >
+                      {cand.isCurrent ? 'Keep' : 'Assign'}
                     </button>
                   </div>
                 </div>
@@ -554,7 +607,14 @@ export default function VisitManagementContent({
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">This will be logged with your name and timestamp and will appear in missed-visit reports.</div>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => { setMissVisit(null); setMissReason('') }} className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium">Cancel</button>
-              <button type="button" disabled={isPending} onClick={handleMiss} className="rounded-lg bg-orange-600 text-white px-4 py-2 text-sm font-medium hover:bg-orange-700 disabled:opacity-60">Confirm Missed</button>
+              <button
+                type="button"
+                disabled={missVisit != null && pendingActionKey === `miss:${missVisit.id}`}
+                onClick={handleMiss}
+                className="rounded-lg bg-orange-600 text-white px-4 py-2 text-sm font-medium hover:bg-orange-700 disabled:opacity-60"
+              >
+                Confirm Missed
+              </button>
             </div>
           </div>
         ) : null}

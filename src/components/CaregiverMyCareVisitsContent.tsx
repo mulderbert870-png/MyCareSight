@@ -116,7 +116,8 @@ export default function CaregiverMyCareVisitsContent({
   const [search, setSearch] = useState('')
   const [statsOpen, setStatsOpen] = useState(false)
   const statsDropdownRef = useRef<HTMLDivElement>(null)
-  const [isPending, startTransition] = useTransition()
+  /** Scoped pending key so one visit's request/cancel/unassign/missed does not disable all rows. */
+  const [pendingActionKey, setPendingActionKey] = useState<string | null>(null)
   const [summaryPending, startSummaryTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [visitSummaryOpen, setVisitSummaryOpen] = useState(false)
@@ -289,12 +290,14 @@ export default function CaregiverMyCareVisitsContent({
     setUnassignModalVisit(null)
   }
 
-  const submitRequestFromModal = () => {
+  const submitRequestFromModal = async () => {
     if (!requestModalVisit || requestModalVisit.hasMyPendingRequest) return
     const scheduleId = requestModalVisit.id
     const note = requestNoteDraft.trim() || null
     setError(null)
-    startTransition(async () => {
+    const key = `request:${scheduleId}`
+    setPendingActionKey(key)
+    try {
       const res = await requestScheduleAssignmentAction(scheduleId, note)
       if (res.error) {
         setError(res.error)
@@ -302,33 +305,47 @@ export default function CaregiverMyCareVisitsContent({
       }
       closeRequestModal()
       router.refresh()
-    })
+    } finally {
+      setPendingActionKey(null)
+    }
   }
 
   const doCancelRequest = (requestId: string, onSuccess?: () => void) => {
     setError(null)
-    startTransition(async () => {
-      const res = await cancelScheduleAssignmentRequestAction(requestId)
-      if (res.error) {
-        setError(res.error)
-        return
+    const key = `cancel:${requestId}`
+    setPendingActionKey(key)
+    void (async () => {
+      try {
+        const res = await cancelScheduleAssignmentRequestAction(requestId)
+        if (res.error) {
+          setError(res.error)
+          return
+        }
+        onSuccess?.()
+        router.refresh()
+      } finally {
+        setPendingActionKey(null)
       }
-      onSuccess?.()
-      router.refresh()
-    })
+    })()
   }
 
   const doUnassign = (scheduleId: string, onSuccess?: () => void) => {
     setError(null)
-    startTransition(async () => {
-      const res = await unassignCaregiverFromScheduleAction(scheduleId)
-      if (res.error) {
-        setError(res.error)
-        return
+    const key = `unassign:${scheduleId}`
+    setPendingActionKey(key)
+    void (async () => {
+      try {
+        const res = await unassignCaregiverFromScheduleAction(scheduleId)
+        if (res.error) {
+          setError(res.error)
+          return
+        }
+        onSuccess?.()
+        router.refresh()
+      } finally {
+        setPendingActionKey(null)
       }
-      onSuccess?.()
-      router.refresh()
-    })
+    })()
   }
 
   const submitUnassignFromModal = () => {
@@ -351,14 +368,20 @@ export default function CaregiverMyCareVisitsContent({
   const doMarkMissed = (visitId: string) => {
     if (!window.confirm('Mark this visit as missed?')) return
     setError(null)
-    startTransition(async () => {
-      const res = await markScheduleMissedAction(visitId)
-      if (res.error) {
-        setError(res.error)
-        return
+    const key = `missed:${visitId}`
+    setPendingActionKey(key)
+    void (async () => {
+      try {
+        const res = await markScheduleMissedAction(visitId)
+        if (res.error) {
+          setError(res.error)
+          return
+        }
+        router.refresh()
+      } finally {
+        setPendingActionKey(null)
       }
-      router.refresh()
-    })
+    })()
   }
 
   const showSchedulingCalendar = mainTab === 'scheduling' && schedulingView === 'calendar'
@@ -485,7 +508,10 @@ export default function CaregiverMyCareVisitsContent({
                   <button
                     type="button"
                     onClick={closeRequestModal}
-                    disabled={isPending}
+                    disabled={
+                      !!requestModalVisit.myPendingRequestId &&
+                      pendingActionKey === `cancel:${requestModalVisit.myPendingRequestId}`
+                    }
                     className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-60"
                   >
                     Close
@@ -496,7 +522,7 @@ export default function CaregiverMyCareVisitsContent({
                       onClick={() =>
                         doCancelRequest(requestModalVisit.myPendingRequestId!, closeRequestModal)
                       }
-                      disabled={isPending}
+                      disabled={pendingActionKey === `cancel:${requestModalVisit.myPendingRequestId}`}
                       className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-blue-700 hover:bg-gray-50 disabled:opacity-60"
                     >
                       Cancel Request
@@ -508,15 +534,15 @@ export default function CaregiverMyCareVisitsContent({
                   <button
                     type="button"
                     onClick={closeRequestModal}
-                    disabled={isPending}
+                    disabled={pendingActionKey === `request:${requestModalVisit.id}`}
                     className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-60"
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
-                    onClick={submitRequestFromModal}
-                    disabled={isPending}
+                    onClick={() => void submitRequestFromModal()}
+                    disabled={pendingActionKey === `request:${requestModalVisit.id}`}
                     className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
                   >
                     <Send className="h-4 w-4" aria-hidden />
@@ -547,7 +573,7 @@ export default function CaregiverMyCareVisitsContent({
               <button
                 type="button"
                 onClick={closeUnassignModal}
-                disabled={isPending}
+                disabled={pendingActionKey === `unassign:${unassignModalVisit.id}`}
                 className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-60"
               >
                 Cancel
@@ -555,7 +581,7 @@ export default function CaregiverMyCareVisitsContent({
               <button
                 type="button"
                 onClick={submitUnassignFromModal}
-                disabled={isPending}
+                disabled={pendingActionKey === `unassign:${unassignModalVisit.id}`}
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
               >
                 <UserMinus className="h-4 w-4" aria-hidden />
@@ -1138,7 +1164,7 @@ export default function CaregiverMyCareVisitsContent({
                         <button
                           type="button"
                           onClick={() => doMarkMissed(visit.id)}
-                          disabled={isPending}
+                          disabled={pendingActionKey === `missed:${visit.id}`}
                           className="inline-flex items-center justify-center gap-2 rounded-lg border border-orange-300 bg-white px-3 py-2 text-sm font-medium text-orange-700 hover:bg-orange-50 disabled:opacity-60"
                         >
                           <CircleX className="h-4 w-4" aria-hidden />
@@ -1148,7 +1174,11 @@ export default function CaregiverMyCareVisitsContent({
                       <button
                         type="button"
                         onClick={() => openUnassignModal(visit)}
-                        disabled={isPending || visit.status === 'completed' || visit.status === 'missed'}
+                        disabled={
+                          pendingActionKey === `unassign:${visit.id}` ||
+                          visit.status === 'completed' ||
+                          visit.status === 'missed'
+                        }
                         className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60"
                       >
                         <UserMinus className="h-4 w-4" aria-hidden />
@@ -1173,7 +1203,7 @@ export default function CaregiverMyCareVisitsContent({
                           <button
                             type="button"
                             onClick={() => openRequestModal(visit)}
-                            disabled={isPending}
+                            disabled={pendingActionKey === `request:${visit.id}`}
                             className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
                           >
                             Request Assignment
@@ -1183,7 +1213,7 @@ export default function CaregiverMyCareVisitsContent({
                           <button
                             type="button"
                             onClick={() => doCancelRequest(visit.myPendingRequestId!)}
-                            disabled={isPending}
+                            disabled={pendingActionKey === `cancel:${visit.myPendingRequestId}`}
                             className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-gray-50 disabled:opacity-60"
                           >
                             Cancel Request
@@ -1193,7 +1223,11 @@ export default function CaregiverMyCareVisitsContent({
                           <button
                             type="button"
                             onClick={() => openUnassignModal(visit)}
-                            disabled={isPending || visit.status === 'completed' || visit.status === 'missed'}
+                            disabled={
+                              pendingActionKey === `unassign:${visit.id}` ||
+                              visit.status === 'completed' ||
+                              visit.status === 'missed'
+                            }
                             className="rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
                           >
                             Unassign
