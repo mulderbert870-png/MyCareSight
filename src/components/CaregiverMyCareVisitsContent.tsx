@@ -39,7 +39,6 @@ type Props = {
   mineCount: number
   openCount: number
   todayCount: number
-  pendingRequestCount: number
 }
 
 type MainTab = 'my_visits' | 'scheduling'
@@ -108,7 +107,6 @@ export default function CaregiverMyCareVisitsContent({
   mineCount,
   openCount,
   todayCount,
-  pendingRequestCount,
 }: Props) {
   const router = useRouter()
   const [mainTab, setMainTab] = useState<MainTab>('my_visits')
@@ -169,6 +167,14 @@ export default function CaregiverMyCareVisitsContent({
     if (schedulingTab === 'requests') return upcoming.filter((v) => v.hasMyPendingRequest)
     return upcoming.filter((v) => v.status === 'open' || v.isMine)
   }, [filteredBySearch, schedulingTab])
+
+  const myRequestsTabCount = useMemo(
+    () =>
+      filteredBySearch.filter(
+        (v) => !isVisitPastForCaregiverMyVisits(v) && v.hasMyPendingRequest
+      ).length,
+    [filteredBySearch]
+  )
 
   const completedTasksCount = useMemo(
     () => pastMineVisits.reduce((sum, row) => sum + row.adlTasksCompleted, 0),
@@ -284,7 +290,7 @@ export default function CaregiverMyCareVisitsContent({
   }
 
   const submitRequestFromModal = () => {
-    if (!requestModalVisit) return
+    if (!requestModalVisit || requestModalVisit.hasMyPendingRequest) return
     const scheduleId = requestModalVisit.id
     const note = requestNoteDraft.trim() || null
     setError(null)
@@ -299,7 +305,7 @@ export default function CaregiverMyCareVisitsContent({
     })
   }
 
-  const doCancelRequest = (requestId: string) => {
+  const doCancelRequest = (requestId: string, onSuccess?: () => void) => {
     setError(null)
     startTransition(async () => {
       const res = await cancelScheduleAssignmentRequestAction(requestId)
@@ -307,6 +313,7 @@ export default function CaregiverMyCareVisitsContent({
         setError(res.error)
         return
       }
+      onSuccess?.()
       router.refresh()
     })
   }
@@ -334,7 +341,7 @@ export default function CaregiverMyCareVisitsContent({
       openUnassignModal(visit)
       return
     }
-    if (visit.status === 'open' && !visit.hasMyPendingRequest) {
+    if (visit.status === 'open') {
       openRequestModal(visit)
     }
   }
@@ -372,12 +379,23 @@ export default function CaregiverMyCareVisitsContent({
         onClose={closeRequestModal}
         size="md"
         title={
-          <span className="inline-flex items-center gap-2 text-blue-700">
-            <Send className="h-5 w-5 shrink-0" aria-hidden />
-            Request Visit Assignment
-          </span>
+          requestModalVisit?.hasMyPendingRequest ? (
+            <span className="inline-flex items-center gap-2 text-gray-900">
+              <FileText className="h-5 w-5 shrink-0 text-gray-600" aria-hidden />
+              Visit details
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-2 text-blue-700">
+              <Send className="h-5 w-5 shrink-0" aria-hidden />
+              Request Visit Assignment
+            </span>
+          )
         }
-        subtitle="Your request will be sent to the Care Coordinator for review. You will be notified of their decision."
+        subtitle={
+          requestModalVisit?.hasMyPendingRequest
+            ? 'Your assignment request is pending coordinator review. You will be notified of their decision.'
+            : 'Your request will be sent to the Care Coordinator for review. You will be notified of their decision.'
+        }
       >
         {requestModalVisit ? (
           <div className="space-y-4">
@@ -423,45 +441,89 @@ export default function CaregiverMyCareVisitsContent({
               </div>
             ) : null}
 
-            <div>
-              <label htmlFor="request-coordinator-note" className="mb-1 block text-sm font-medium text-gray-900">
-                Note to Coordinator (optional)
-              </label>
-              <textarea
-                id="request-coordinator-note"
-                value={requestNoteDraft}
-                onChange={(e) => setRequestNoteDraft(e.target.value)}
-                rows={3}
-                placeholder="e.g. I have experience with this client, I'm available all day, I live nearby..."
-                className="w-full rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
-              />
-            </div>
+            {requestModalVisit.hasMyPendingRequest ? (
+              <>
+                {requestModalVisit.myRequestNote ? (
+                  <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-900">
+                    <span className="font-medium text-sky-800">Your note to coordinator: </span>
+                    {requestModalVisit.myRequestNote}
+                  </div>
+                ) : null}
+                <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+                  <Clock3 className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" aria-hidden />
+                  <p>Request pending — you cannot submit another request for this visit until the coordinator decides.</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label htmlFor="request-coordinator-note" className="mb-1 block text-sm font-medium text-gray-900">
+                    Note to Coordinator (optional)
+                  </label>
+                  <textarea
+                    id="request-coordinator-note"
+                    value={requestNoteDraft}
+                    onChange={(e) => setRequestNoteDraft(e.target.value)}
+                    rows={3}
+                    placeholder="e.g. I have experience with this client, I'm available all day, I live nearby..."
+                    className="w-full rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                  />
+                </div>
 
-            <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
-              <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" aria-hidden />
-              <p>
-                Other caregivers may also request this visit. The coordinator will choose and all parties will be notified.
-              </p>
-            </div>
+                <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+                  <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 mt-0.5" aria-hidden />
+                  <p>
+                    Other caregivers may also request this visit. The coordinator will choose and all parties will be notified.
+                  </p>
+                </div>
+              </>
+            )}
 
             <div className="flex flex-col-reverse gap-2 border-t border-gray-100 pt-4 sm:flex-row sm:justify-end">
-              <button
-                type="button"
-                onClick={closeRequestModal}
-                disabled={isPending}
-                className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-60"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={submitRequestFromModal}
-                disabled={isPending}
-                className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-              >
-                <Send className="h-4 w-4" aria-hidden />
-                Submit Request
-              </button>
+              {requestModalVisit.hasMyPendingRequest ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={closeRequestModal}
+                    disabled={isPending}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    Close
+                  </button>
+                  {requestModalVisit.myPendingRequestId ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        doCancelRequest(requestModalVisit.myPendingRequestId!, closeRequestModal)
+                      }
+                      disabled={isPending}
+                      className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-blue-700 hover:bg-gray-50 disabled:opacity-60"
+                    >
+                      Cancel Request
+                    </button>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={closeRequestModal}
+                    disabled={isPending}
+                    className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitRequestFromModal}
+                    disabled={isPending}
+                    className="inline-flex items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                  >
+                    <Send className="h-4 w-4" aria-hidden />
+                    Submit Request
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ) : null}
@@ -765,7 +827,7 @@ export default function CaregiverMyCareVisitsContent({
               ['all', `All (${openCount + mineCount})`],
               ['open', `Open (${openCount})`],
               ['mine', `Mine (${mineCount})`],
-              ['requests', `My Requests (${pendingRequestCount})`],
+              ['requests', `My Requests (${myRequestsTabCount})`],
             ] as Array<[SchedulingTab, string]>).map(([id, label]) => (
               <button
                 key={id}
@@ -831,7 +893,7 @@ export default function CaregiverMyCareVisitsContent({
                   </div>
                   <div className="max-h-52 space-y-1 overflow-y-auto">
                     {items.map((visit) => {
-                      const openClickable = visit.status === 'open' && !visit.hasMyPendingRequest
+                      const openClickable = visit.status === 'open'
                       const mineClickable = visit.isMine && visit.status !== 'completed' && visit.status !== 'missed'
                       const clickable = openClickable || mineClickable
                       return (

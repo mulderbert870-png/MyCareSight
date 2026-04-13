@@ -37,6 +37,8 @@ import {
   SquareArrowOutUpRight
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { getThreeWeekRollingWindowPacific } from '@/lib/pct-week-horizon'
+import { expandSeriesOccurrences } from '@/lib/recurrence-dates'
 import * as q from '@/lib/supabase/query'
 import { updatePatientDocumentsAction } from '@/app/actions/patients'
 import type { PatientRepresentative } from '@/lib/supabase/query/patients-representatives'
@@ -1798,99 +1800,6 @@ export default function ClientDetailContent({ client, allClients, representative
       ? `Monthly on every ${WEEKDAY_NAMES[weekday]}`
       : `Monthly on the ${MONTHLY_ORDINAL_LABELS[(ordinal as 1 | 2 | 3 | 4 | 5) - 1]} ${WEEKDAY_NAMES[weekday]}`
 
-  const datesBetween = (startStr: string, endStr: string): string[] => {
-    const out: string[] = []
-    const start = new Date(startStr + 'T12:00:00')
-    const end = new Date(endStr + 'T12:00:00')
-    const d = new Date(start)
-    while (d <= end && out.length < 365) {
-      out.push(toLocalDateString(d))
-      d.setDate(d.getDate() + 1)
-    }
-    return out
-  }
-
-  const datesWeeklyBetween = (startStr: string, endStr: string, daysOfWeek: number[]): string[] => {
-    const set = new Set(daysOfWeek)
-    return datesBetween(startStr, endStr).filter((dateStr) => {
-      const d = new Date(dateStr + 'T12:00:00')
-      return set.has(d.getDay())
-    })
-  }
-
-  const getOrdinalWeekdayInMonth = (year: number, month: number, ordinal: 1 | 2 | 3 | 4 | 5, weekday: number): string | null => {
-    const lastDay = new Date(year, month + 1, 0).getDate()
-    const sameWeekdayDates: number[] = []
-    for (let date = 1; date <= lastDay; date++) {
-      if (new Date(year, month, date).getDay() === weekday) sameWeekdayDates.push(date)
-    }
-    if (sameWeekdayDates.length === 0) return null
-    const index = ordinal === 5 ? sameWeekdayDates.length - 1 : Math.min(ordinal - 1, sameWeekdayDates.length - 1)
-    const day = sameWeekdayDates[index]
-    const y = year
-    const m = String(month + 1).padStart(2, '0')
-    const dd = String(day).padStart(2, '0')
-    return `${y}-${m}-${dd}`
-  }
-
-  const getAllWeekdayDatesInMonth = (year: number, month: number, weekday: number): string[] => {
-    const lastDay = new Date(year, month + 1, 0).getDate()
-    const out: string[] = []
-    for (let date = 1; date <= lastDay; date++) {
-      if (new Date(year, month, date).getDay() === weekday) {
-        const m = String(month + 1).padStart(2, '0')
-        const dd = String(date).padStart(2, '0')
-        out.push(`${year}-${m}-${dd}`)
-      }
-    }
-    return out
-  }
-
-  const datesMonthlyBetween = (startStr: string, endStr: string, ordinal: number, weekday: number): string[] => {
-    const out: string[] = []
-    const start = new Date(startStr + 'T12:00:00')
-    const end = new Date(endStr + 'T12:00:00')
-    let y = start.getFullYear()
-    let m = start.getMonth()
-    const wd = Math.min(6, Math.max(0, weekday))
-    while (out.length < 365) {
-      if (ordinal === 0) {
-        for (const dateStr of getAllWeekdayDatesInMonth(y, m, wd)) {
-          const d = new Date(dateStr + 'T12:00:00')
-          if (d >= start && d <= end) out.push(dateStr)
-        }
-      } else {
-        const ord = Math.min(5, Math.max(1, ordinal)) as 1 | 2 | 3 | 4 | 5
-        const dateStr = getOrdinalWeekdayInMonth(y, m, ord, wd)
-        if (dateStr) {
-          const d = new Date(dateStr + 'T12:00:00')
-          if (d >= start && d <= end) out.push(dateStr)
-        }
-      }
-      m += 1
-      if (m > 11) {
-        m = 0
-        y += 1
-      }
-      if (y > end.getFullYear() || (y === end.getFullYear() && m > end.getMonth())) break
-    }
-    return out
-  }
-
-  const datesMonthlyBetweenFromRules = (
-    startStr: string,
-    endStr: string,
-    rules: { ordinal: number; weekday: number }[]
-  ): string[] => {
-    const set = new Set<string>()
-    for (const r of rules) {
-      const ord = r.ordinal
-      const wd = Math.min(6, Math.max(0, r.weekday))
-      for (const d of datesMonthlyBetween(startStr, endStr, ord, wd)) set.add(d)
-    }
-    return Array.from(set).sort()
-  }
-
   const getSundayFromMonday = (monday: Date): Date => {
     const d = new Date(monday)
     d.setDate(d.getDate() + 6)
@@ -2775,32 +2684,32 @@ export default function ClientDetailContent({ client, allClients, representative
       datesToInsert = [visitForm.date]
     } else {
       const repStart = visitForm.repeatStart!
-      const repEnd = visitForm.repeatEnd || repStart
-      if (visitForm.repeatFrequency === 'daily') {
-        datesToInsert = datesBetween(repStart, repEnd)
-      } else if (visitForm.repeatFrequency === 'weekly') {
-        const end = visitForm.repeatEnd || (() => {
-          const d = new Date(repStart + 'T12:00:00')
-          d.setDate(d.getDate() + 6)
-          return toLocalDateString(d)
-        })()
-        datesToInsert = datesWeeklyBetween(repStart, end, visitForm.repeatDays)
-      } else if (visitForm.repeatFrequency === 'monthly') {
-        const monthlyRules = visitForm.repeatMonthlyRules.filter(
+      const { windowStart, horizonEnd } = getThreeWeekRollingWindowPacific()
+      let monthlyRules: { ordinal: number; weekday: number }[] = []
+      if (visitForm.repeatFrequency === 'monthly') {
+        monthlyRules = visitForm.repeatMonthlyRules.filter(
           (r): r is { ordinal: number; weekday: number } => r.ordinal != null && r.weekday != null
         )
         if (monthlyRules.length === 0) {
           setVisitError('Please add at least one week and day for monthly repeat.')
           return
         }
-        const end = visitForm.repeatEnd || (() => {
-          const d = new Date(repStart + 'T12:00:00')
-          d.setMonth(d.getMonth() + 1)
-          d.setDate(0)
-          return toLocalDateString(d)
-        })()
-        datesToInsert = datesMonthlyBetweenFromRules(repStart, end, monthlyRules)
       }
+      datesToInsert = expandSeriesOccurrences(
+        {
+          repeat_frequency: visitForm.repeatFrequency,
+          repeat_start: repStart,
+          repeat_end: visitForm.repeatEnd?.trim() ? visitForm.repeatEnd : null,
+          days_of_week:
+            visitForm.repeatFrequency === 'weekly' && visitForm.repeatDays.length
+              ? visitForm.repeatDays
+              : null,
+          repeat_monthly_rules: visitForm.repeatFrequency === 'monthly' ? monthlyRules : null,
+          rangeStart: windowStart,
+          rangeEnd: horizonEnd,
+        },
+        'initial'
+      )
     }
 
     if (visitForm.isRecurring && datesToInsert.length === 0) {
@@ -2885,12 +2794,13 @@ export default function ClientDetailContent({ client, allClients, representative
       }
       if (visitForm.isRecurring) {
         const repeatStart = visitForm.repeatStart || datesToInsert[0]
-        const repeatEnd = visitForm.repeatEnd || datesToInsert[datesToInsert.length - 1]
+        /** Empty = open-ended (refill fills rolling 21-day window). Set = series stops at that date. */
+        const repeatEndForSeries = visitForm.repeatEnd?.trim() ? visitForm.repeatEnd : null
         const { error } = await q.insertRecurringSchedulesFromSeries(supabase, {
           ...basePayload,
           dates: datesToInsert,
           repeat_start: repeatStart,
-          repeat_end: repeatEnd,
+          repeat_end: repeatEndForSeries,
         })
         if (error) {
           setVisitError(error.message ?? 'Failed to add recurring visit.')
@@ -6427,9 +6337,9 @@ export default function ClientDetailContent({ client, allClients, representative
                           next.repeatEnd = today
                         } else if (v === 'weekly') {
                           const mon = getMonday(new Date())
-                          const sun = getSundayFromMonday(mon)
                           next.repeatStart = toLocalDateString(mon)
-                          next.repeatEnd = toLocalDateString(sun)
+                          /** Open-ended by default; first batch uses 21-day Pacific window. User may set End Date for a fixed range. */
+                          next.repeatEnd = ''
                         } 
                         // else if (v === 'monthly') {
                         //   const d = new Date()
@@ -6812,9 +6722,9 @@ export default function ClientDetailContent({ client, allClients, representative
                           next.repeatEnd = today
                         } else if (v === 'weekly') {
                           const mon = getMonday(new Date())
-                          const sun = getSundayFromMonday(mon)
                           next.repeatStart = toLocalDateString(mon)
-                          next.repeatEnd = toLocalDateString(sun)
+                          /** Open-ended by default; first batch uses 21-day Pacific window. User may set End Date for a fixed range. */
+                          next.repeatEnd = ''
                         } 
                         // else if (v === 'monthly') {
                         //   const d = new Date()

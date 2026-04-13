@@ -24,6 +24,9 @@ interface AdminNotificationItem {
 /** Matches title built in DB: notify_agency_staff_schedule_assignment_request */
 const SCHEDULE_ASSIGNMENT_REQUEST_SNIPPET = 'requested assignment to an open visit'
 
+/** Matches title built in DB: notify_agency_staff_schedule_assignment_request_cancelled */
+const SCHEDULE_ASSIGNMENT_CANCEL_SNIPPET = 'withdrew their assignment request for an open visit'
+
 /** Matches titles from 056_notify_caregiver_assignment_approve_decline.sql */
 const VISIT_ASSIGNMENT_CAREGIVER_PREFIX = 'Visit assignment '
 
@@ -508,7 +511,10 @@ export default function NotificationDropdown({
       console.error('Error marking notification as read:', err)
     }
     setIsOpen(false)
-    if (notif.title.includes(SCHEDULE_ASSIGNMENT_REQUEST_SNIPPET)) {
+    if (
+      notif.title.includes(SCHEDULE_ASSIGNMENT_REQUEST_SNIPPET) ||
+      notif.title.includes(SCHEDULE_ASSIGNMENT_CANCEL_SNIPPET)
+    ) {
       router.push('/pages/agency/care-visits?tab=requests')
       return
     }

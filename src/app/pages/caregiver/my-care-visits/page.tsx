@@ -30,7 +30,6 @@ export default async function CaregiverMyCareVisitsPage() {
         mineCount={data.mineCount}
         openCount={data.openCount}
         todayCount={data.todayCount}
-        pendingRequestCount={data.pendingRequestCount}
       />
     </StaffLayout>
   )

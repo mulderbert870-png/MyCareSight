@@ -75,14 +75,9 @@ export async function submitScheduleAssignmentRequestRpc(
   })
 }
 
-/** Caregiver withdraws their pending request (RLS: own row, status pending). Returns deleted row ids. */
-export async function deletePendingScheduleAssignmentRequest(supabase: Supabase, requestId: string) {
-  return supabase
-    .from('schedule_assignment_requests')
-    .delete()
-    .eq('id', requestId)
-    .eq('status', 'pending')
-    .select('id')
+/** Caregiver withdraws their pending request via RPC (notifies coordinators; same validation as DELETE RLS). */
+export async function cancelScheduleAssignmentRequestRpc(supabase: Supabase, requestId: string) {
+  return supabase.rpc('cancel_schedule_assignment_request', { p_request_id: requestId })
 }
 
 /** Direct insert (coordinator tooling / tests). Prefer {@link submitScheduleAssignmentRequestRpc} for caregivers. */

@@ -35,14 +35,20 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  if (
-    !user &&
-    !request.nextUrl.pathname.startsWith('/pages/auth/login') &&
-    !request.nextUrl.pathname.startsWith('/pages/auth/signup') &&
-    !request.nextUrl.pathname.startsWith('/pages/auth/reset-password') &&
-    !request.nextUrl.pathname.startsWith('/auth/callback') &&
-    request.nextUrl.pathname !== '/'
-  ) {
+  const isFromCallback = request.nextUrl.searchParams.get('from_callback') === 'true'
+  const path = request.nextUrl.pathname
+  const isPublic =
+    path === '/' ||
+    path.startsWith('/pages/auth/login') ||
+    path.startsWith('/pages/auth/signup') ||
+    path.startsWith('/pages/auth/reset-password') ||
+    path.startsWith('/auth/callback') ||
+    // Legacy paths (middleware historically allowed these; keep public to avoid redirect loops)
+    path.startsWith('/login') ||
+    path.startsWith('/signup') ||
+    path.startsWith('/reset-password')
+
+  if (!user && !isPublic && !isFromCallback) {
     const url = request.nextUrl.clone()
     url.pathname = '/pages/auth/login'
     return NextResponse.redirect(url)

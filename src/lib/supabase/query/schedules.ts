@@ -192,11 +192,26 @@ export async function getSchedulesByPatientIdAndDateRange(
   return { data: mapped, error: null }
 }
 
-/** All visits (e.g. coordinator dashboards), newest date first. */
+/** All visits (e.g. cross-tenant admin tooling), newest date first. Prefer {@link getScheduledVisitsAsScheduleRowsForAgency} when agency is known. */
 export async function getAllScheduledVisitsAsScheduleRows(supabase: Supabase) {
   const { data, error } = await supabase
     .from('scheduled_visits')
     .select(visitSelect)
+    .order('visit_date', { ascending: false })
+    .order('scheduled_start_time', { ascending: true })
+
+  if (error) return { data: null, error }
+  const rows = (data ?? []) as ScheduledVisitDbRow[]
+  const mapped = await attachAdlCodes(supabase, rows)
+  return { data: mapped, error: null }
+}
+
+/** Visits for one agency (agency dashboards / caregiver scope), newest date first. */
+export async function getScheduledVisitsAsScheduleRowsForAgency(supabase: Supabase, agencyId: string) {
+  const { data, error } = await supabase
+    .from('scheduled_visits')
+    .select(visitSelect)
+    .eq('agency_id', agencyId)
     .order('visit_date', { ascending: false })
     .order('scheduled_start_time', { ascending: true })
 

@@ -123,7 +123,22 @@ export async function requestScheduleAssignmentAction(
   return { ok: true }
 }
 
-/** Caregiver cancels their own pending assignment request. */
+function mapCancelAssignmentRequestError(code: string | undefined): string {
+  switch (code) {
+    case 'not_authenticated':
+      return 'You must be signed in.'
+    case 'not_found':
+      return 'This request was not found. Refresh the page and try again.'
+    case 'not_pending':
+      return 'This request is no longer pending.'
+    case 'forbidden':
+      return 'You are not allowed to cancel this request.'
+    default:
+      return 'Could not cancel request.'
+  }
+}
+
+/** Caregiver cancels their own pending assignment request (RPC notifies agency staff). */
 export async function cancelScheduleAssignmentRequestAction(
   requestId: string
 ): Promise<{ ok?: true; error?: string }> {
@@ -132,13 +147,14 @@ export async function cancelScheduleAssignmentRequestAction(
   if (!isValidRequestId(requestId)) return { error: 'Invalid request. Refresh the page and try again.' }
 
   const supabase = await createClient()
-  const { error, data } = await q.deletePendingScheduleAssignmentRequest(supabase, requestId)
+  const { error, data } = await q.cancelScheduleAssignmentRequestRpc(supabase, requestId)
   if (error) {
     return { error: error.message || 'Could not cancel request.' }
   }
-  const deleted = (data ?? []) as { id: string }[]
-  if (deleted.length === 0) {
-    return { error: 'Request was not found or is no longer pending.' }
+
+  const body = data as RpcPayload | null
+  if (!body?.ok) {
+    return { error: mapCancelAssignmentRequestError(body?.error) }
   }
 
   revalidateVisitsPages()

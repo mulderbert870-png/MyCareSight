@@ -38,7 +38,6 @@ export type CaregiverCareVisitsDTO = {
   mineCount: number
   openCount: number
   todayCount: number
-  pendingRequestCount: number
 }
 
 type PatientRow = {
@@ -198,7 +197,7 @@ export async function fetchCaregiverCareVisitsData(
 ): Promise<CaregiverCareVisitsDTO> {
   const { data: allRows, error } = await q.getAllScheduledVisitsAsScheduleRows(supabase)
   if (error || !allRows) {
-    return { visits: [], mineCount: 0, openCount: 0, todayCount: 0, pendingRequestCount: 0 }
+    return { visits: [], mineCount: 0, openCount: 0, todayCount: 0 }
   }
 
   const candidateRows = caregiverAgencyId
@@ -312,7 +311,5 @@ export async function fetchCaregiverCareVisitsData(
   const todayCount = visits.filter(
     (v) => isTodayDate(v.date) && !isVisitPastForCaregiverMyVisits(v)
   ).length
-  const pendingRequestCount = visits.filter((v) => v.hasMyPendingRequest).length
-
-  return { visits, mineCount, openCount, todayCount, pendingRequestCount }
+  return { visits, mineCount, openCount, todayCount }
 }

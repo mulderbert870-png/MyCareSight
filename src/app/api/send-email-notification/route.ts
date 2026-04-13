@@ -4,7 +4,6 @@ import { sendDocumentUploadNotification } from '@/lib/email'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    
     const {
       expertEmail,
       expertName,
@@ -38,7 +37,7 @@ export async function POST(request: NextRequest) {
       const isTestingMode = result.error?.isTestingMode || 
                            (result.error?.statusCode === 403 && 
                             result.error?.message?.includes('testing emails'))
-      
+
       // Return 200 with warning for testing mode (don't treat as error)
       // This allows document upload to succeed even if email fails
       if (isTestingMode) {
@@ -49,7 +48,7 @@ export async function POST(request: NextRequest) {
           details: result.error 
         }, { status: 200 }) // Return 200 so client doesn't treat it as an error
       }
-      
+
       return NextResponse.json(
         { error: 'Failed to send email', details: result.error },
         { status: 500 }
