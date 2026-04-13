@@ -58,11 +58,8 @@ export default function NotificationDropdown({
   const dropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const supabase = createClient()
-  
-  // Cache and debounce refetch
-  const lastFetchRef = useRef<number>(0)
+
   const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const CACHE_TTL = 30000 // 30 seconds cache
   const DEBOUNCE_MS = 500 // 500ms debounce for faster badge updates
 
   // Get user role on mount
@@ -80,16 +77,11 @@ export default function NotificationDropdown({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userRole, userId])
 
-  // Fetch applications when dropdown opens (with cache)
+  // Always refetch when the dropdown opens. A 30s cache was skipping this when the list
+  // already had rows, so the badge (updated via realtime + refreshBadgeCount) could show
+  // new unread items while the panel still showed stale notifications (e.g. care coordinators).
   useEffect(() => {
     if (isOpen && userId && userRole) {
-      const now = Date.now()
-      // Use cache if recent and we have content (applications or admin notifications)
-      const hasContent =
-        applications.length > 0 || (roleSeesInAppNotificationList(userRole) && adminNotifications.length > 0)
-      if (now - lastFetchRef.current < CACHE_TTL && hasContent) {
-        return
-      }
       fetchApplicationsWithUnread()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,7 +166,6 @@ export default function NotificationDropdown({
         setAdminNotifications(notificationItems)
         setUnreadCount(notificationItems.length)
         setIsLoading(false)
-        lastFetchRef.current = Date.now()
         return
       }
 
@@ -185,7 +176,6 @@ export default function NotificationDropdown({
         setAdminNotifications(notificationItems)
         setUnreadCount(notificationItems.length)
         setIsLoading(false)
-        lastFetchRef.current = Date.now()
         return
       }
 
@@ -194,7 +184,6 @@ export default function NotificationDropdown({
         setAdminNotifications(notificationItems)
         setUnreadCount(notificationItems.length)
         setIsLoading(false)
-        lastFetchRef.current = Date.now()
         return
       }
 
@@ -210,7 +199,7 @@ export default function NotificationDropdown({
         setIsLoading(false)
         return
       }
-      
+
       const { data: unreadCounts, error: countError } = await q.rpcCountUnreadMessagesForUser(supabase, conversationIds, userId)
 
       if (countError) {
@@ -273,7 +262,6 @@ export default function NotificationDropdown({
       setAdminNotifications(notificationItems)
       totalUnread += notificationItems.length
       setUnreadCount(totalUnread)
-      lastFetchRef.current = Date.now()
     } catch (err) {
       console.error('Error fetching applications with unread:', err)
       setApplications([])
@@ -368,17 +356,12 @@ export default function NotificationDropdown({
       
       // Always refresh badge count when message arrives (even if dropdown is open)
       await refreshBadgeCount()
-      
-      // If dropdown is open, also refresh the full list if cache expired
-      // Add a small delay to ensure database transaction is committed before fetching
+
+      // If the panel is open, reload list content too (same stale-cache issue as on open).
       if (isOpen) {
-        const now = Date.now()
-        if (now - lastFetchRef.current > CACHE_TTL) {
-          // Wait a bit longer to ensure the new message is committed to the database
-          setTimeout(() => {
-            fetchApplicationsWithUnread()
-          }, 500)
-        }
+        setTimeout(() => {
+          fetchApplicationsWithUnread()
+        }, 500)
       }
     }, DEBOUNCE_MS)
   }, [isOpen, refreshBadgeCount, fetchApplicationsWithUnread])
