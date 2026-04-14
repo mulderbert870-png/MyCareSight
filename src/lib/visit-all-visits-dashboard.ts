@@ -142,25 +142,8 @@ function deriveVisitStatus(s: ScheduleRow): VisitStatus {
   if (raw === 'completed') return 'completed'
   if (raw === 'missed') return 'missed'
   if (raw === 'in_progress' || raw === 'in progress') return 'in_progress'
-
-  const now = new Date()
-  const start = s.start_time ? new Date(`${s.date}T${formatTimePart(s.start_time)}:00`) : null
-  const end = s.end_time ? new Date(`${s.date}T${formatTimePart(s.end_time)}:00`) : null
-  const dayStart = new Date(`${s.date}T00:00:00`)
-  const todayStart = new Date(now)
-  todayStart.setHours(0, 0, 0, 0)
-
-  // If current time is within the scheduled window, show in progress.
-  if (start && end && now >= start && now <= end) return 'in_progress'
-
-  // Past visit: "completed" only when DB status is `completed` (handled above).
-  // Past + caregiver but still `scheduled` (or similar) in DB → missed, not completed.
-  if (end) {
-    if (end < now) return 'missed'
-  } else if (dayStart < todayStart) {
-    return 'missed'
-  }
-
+  if (raw === 'unassigned') return 'unassigned'
+  if (raw === 'scheduled') return 'scheduled'
   if (!s.caregiver_id) return 'unassigned'
   return 'scheduled'
 }

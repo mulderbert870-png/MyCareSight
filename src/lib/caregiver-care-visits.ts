@@ -161,6 +161,8 @@ function getStatus(row: ScheduleRow): CaregiverVisitStatus {
   if (status === 'completed') return 'completed'
   if (status === 'missed') return 'missed'
   if (status === 'in_progress' || status === 'in progress') return 'in_progress'
+  if (status === 'unassigned') return 'open'
+  if (status === 'scheduled') return 'assigned'
   return row.caregiver_id ? 'assigned' : 'open'
 }
 

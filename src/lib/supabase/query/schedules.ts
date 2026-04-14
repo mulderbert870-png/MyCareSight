@@ -52,6 +52,22 @@ const visitSelect = `
   legacy_schedule_id
 `
 
+async function syncScheduledVisitStatuses(
+  supabase: Supabase,
+  opts?: {
+    agency_id?: string | null
+    patient_id?: string | null
+    visit_ids?: string[] | null
+  }
+) {
+  const visitIds = (opts?.visit_ids ?? []).filter(Boolean)
+  await supabase.rpc('sync_scheduled_visit_statuses', {
+    p_agency_id: opts?.agency_id ?? null,
+    p_patient_id: opts?.patient_id ?? null,
+    p_visit_ids: visitIds.length > 0 ? visitIds : null,
+  })
+}
+
 type ScheduledVisitDbRow = {
   id: string
   agency_id: string
@@ -157,6 +173,7 @@ async function attachAdlCodes(
 
 /** Get all visits for a patient as ScheduleRow[]. */
 export async function getSchedulesByPatientId(supabase: Supabase, patientId: string) {
+  await syncScheduledVisitStatuses(supabase, { patient_id: patientId })
   const { data, error } = await supabase
     .from('scheduled_visits')
     .select(visitSelect)
@@ -177,6 +194,7 @@ export async function getSchedulesByPatientIdAndDateRange(
   startDate: string,
   endDate: string
 ) {
+  await syncScheduledVisitStatuses(supabase, { patient_id: patientId })
   const { data, error } = await supabase
     .from('scheduled_visits')
     .select(visitSelect)
@@ -194,6 +212,7 @@ export async function getSchedulesByPatientIdAndDateRange(
 
 /** All visits (e.g. cross-tenant admin tooling), newest date first. Prefer {@link getScheduledVisitsAsScheduleRowsForAgency} when agency is known. */
 export async function getAllScheduledVisitsAsScheduleRows(supabase: Supabase) {
+  await syncScheduledVisitStatuses(supabase)
   const { data, error } = await supabase
     .from('scheduled_visits')
     .select(visitSelect)
@@ -208,6 +227,7 @@ export async function getAllScheduledVisitsAsScheduleRows(supabase: Supabase) {
 
 /** Visits for one agency (agency dashboards / caregiver scope), newest date first. */
 export async function getScheduledVisitsAsScheduleRowsForAgency(supabase: Supabase, agencyId: string) {
+  await syncScheduledVisitStatuses(supabase, { agency_id: agencyId })
   const { data, error } = await supabase
     .from('scheduled_visits')
     .select(visitSelect)
@@ -225,6 +245,7 @@ export async function getScheduledVisitsAsScheduleRowsForAgency(supabase: Supaba
 export async function getScheduledVisitsByIdsAsScheduleRows(supabase: Supabase, ids: string[]) {
   const clean = Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.length > 0 && id !== 'null')))
   if (clean.length === 0) return { data: [], error: null }
+  await syncScheduledVisitStatuses(supabase, { visit_ids: clean })
   const { data, error } = await supabase.from('scheduled_visits').select(visitSelect).in('id', clean)
   if (error) return { data: null, error }
   const rows = (data ?? []) as ScheduledVisitDbRow[]

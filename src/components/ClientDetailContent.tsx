@@ -385,6 +385,14 @@ export default function ClientDetailContent({ client, allClients, representative
   })
   const [scheduleHover, setScheduleHover] = useState<{ dateStr: string; startHour: number; endHourExclusive: number } | null>(null)
   const [scheduleLoading, setScheduleLoading] = useState(false)
+  const scheduleGridRef = useRef<HTMLDivElement | null>(null)
+  const [scheduleNowTick, setScheduleNowTick] = useState(() => Date.now())
+  const [scheduleNowIndicator, setScheduleNowIndicator] = useState<{
+    top: number
+    left: number
+    width: number
+    label: string
+  } | null>(null)
   const [addVisitModalOpen, setAddVisitModalOpen] = useState(false)
   const [addVisitTab, setAddVisitTab] = useState<'details' | 'adls'>('details')
   const [visitForm, setVisitForm] = useState({
@@ -565,6 +573,81 @@ export default function ClientDetailContent({ client, allClients, representative
       .then(({ data }) => { setWeekSchedules(data ?? []) })
       .finally(() => setScheduleLoading(false))
   }, [activeTab, localClient.id, scheduleWeekStartStr, scheduleWeekEndStr])
+
+  useEffect(() => {
+    if (activeTab !== 'schedule') return
+    setScheduleNowTick(Date.now())
+    const id = window.setInterval(() => setScheduleNowTick(Date.now()), 60 * 1000)
+    return () => window.clearInterval(id)
+  }, [activeTab, scheduleWeekStartStr])
+
+  useLayoutEffect(() => {
+    if (activeTab !== 'schedule') {
+      setScheduleNowIndicator(null)
+      return
+    }
+    const root = scheduleGridRef.current
+    const table = root?.querySelector('table')
+    if (!root || !table) {
+      setScheduleNowIndicator(null)
+      return
+    }
+
+    const updateIndicator = () => {
+      const now = new Date(scheduleNowTick)
+      const weekDates = getWeekDates()
+      const todayStr = toLocalDateString(now)
+      const todayIdx = weekDates.findIndex((d) => toLocalDateString(d) === todayStr)
+      if (todayIdx < 0) {
+        setScheduleNowIndicator(null)
+        return
+      }
+
+      const rootRect = root.getBoundingClientRect()
+      const currentHour = now.getHours()
+      const currentHourCell = table.querySelector(
+        `tbody td[data-time-hour="${currentHour}"]`
+      ) as HTMLTableCellElement | null
+      const nextHourCell = table.querySelector(
+        `tbody td[data-time-hour="${Math.min(23, currentHour + 1)}"]`
+      ) as HTMLTableCellElement | null
+      const todayHeaderCell = table.querySelector(
+        `thead tr[data-day-header-row="true"] th[data-day-col-index="${todayIdx}"]`
+      ) as HTMLTableCellElement | null
+      if (!currentHourCell || !todayHeaderCell) {
+        setScheduleNowIndicator(null)
+        return
+      }
+      const currentHourRect = currentHourCell.getBoundingClientRect()
+      const nextHourRect = nextHourCell?.getBoundingClientRect() ?? null
+      const todayHeaderRect = todayHeaderCell.getBoundingClientRect()
+
+      const dynamicHourHeight =
+        nextHourRect && nextHourRect.top > currentHourRect.top
+          ? nextHourRect.top - currentHourRect.top
+          : currentHourRect.height || 48
+      const minuteOffsetFromTop = (now.getMinutes() / 60) * dynamicHourHeight
+      const top = currentHourRect.top - rootRect.top + minuteOffsetFromTop
+      const left = todayHeaderRect.left - rootRect.left
+      const width = todayHeaderRect.width
+
+      setScheduleNowIndicator({
+        top,
+        left,
+        width,
+        label: now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      })
+    }
+
+    updateIndicator()
+    const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateIndicator) : null
+    resizeObserver?.observe(root)
+    window.addEventListener('resize', updateIndicator)
+    return () => {
+      resizeObserver?.disconnect()
+      window.removeEventListener('resize', updateIndicator)
+    }
+  }, [activeTab, scheduleNowTick, scheduleWeekStartStr, weekSchedules])
 
   useEffect(() => {
     const dateForFetch = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
@@ -4615,7 +4698,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 </div>
 
                 {/* Calendar grid with unassigned task counts */}
-                <div className="relative border border-gray-200 rounded overflow-hidden">
+                <div ref={scheduleGridRef} className="relative border border-gray-200 rounded overflow-hidden">
                   <table className="w-full border-collapse text-sm table-fixed">
                     <colgroup>
                       <col className="w-24 text-center" />
@@ -4658,9 +4741,9 @@ export default function ClientDetailContent({ client, allClients, representative
                           )
                         })}
                       </tr>
-                      <tr className="bg-gray-50">
+                      <tr className="bg-gray-50" data-day-header-row="true">
                         <th className="w-24 border-b border-r border-gray-200 p-2 text-center text-xs font-medium text-gray-500" />
-                        {getWeekDates().map((d) => {
+                        {getWeekDates().map((d, colIdx) => {
                           const dateStr = toLocalDateString(d)
                           const isToday =
                             dateStr === toLocalDateString(new Date())
@@ -4668,6 +4751,7 @@ export default function ClientDetailContent({ client, allClients, representative
                           return (
                             <th
                               key={dateStr}
+                              data-day-col-index={colIdx}
                               className={`border-b border-r border-gray-200 p-2 text-center text-xs font-medium last:border-r-0 transition-colors ${isToday ? 'text-blue-600' : 'text-gray-700'}`}
                               style={isDayHeaderHighlighted ? { backgroundColor: '#8ab0ed' } : undefined}
                             >
@@ -4695,6 +4779,7 @@ export default function ClientDetailContent({ client, allClients, representative
                         return (
                           <tr key={hour} style={{ height: '3rem' }}>
                             <td
+                              data-time-hour={hour}
                               className="w-24 border-b border-r border-gray-200 p-1 text-center text-xs text-gray-500 align-top transition-colors align-middle"
                               style={{ height: '3rem', ...(isTimeCellHighlighted ? { backgroundColor: '#8ab0ed' } : {}) }}
                             >
@@ -4790,6 +4875,24 @@ export default function ClientDetailContent({ client, allClients, representative
                       })}
                     </tbody>
                   </table>
+                  {scheduleNowIndicator && (
+                    <div
+                      className="pointer-events-none absolute z-20"
+                      style={{
+                        top: `${scheduleNowIndicator.top}px`,
+                        left: `${scheduleNowIndicator.left}px`,
+                        width: `${scheduleNowIndicator.width}px`,
+                      }}
+                    >
+                      <div className="relative">
+                        <div className="w-full border-t-2 border-blue-500/90" />
+                        <span className="absolute -left-1.5 -top-1.5 h-3 w-3 rounded-full border border-white bg-blue-500" />
+                        <span className="absolute right-1 -top-5 rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                          {scheduleNowIndicator.label}
+                        </span>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {scheduleLoading && (
                   <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-white/80">

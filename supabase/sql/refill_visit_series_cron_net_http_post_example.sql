@@ -1,0 +1,25 @@
+-- Example: pg_cron job calling refill-visit-series with a long enough pg_net timeout.
+-- Replace vault secret names, job name, and unschedule any old job first if needed.
+--
+-- Default net.http_post timeout is 2000 ms → caller gives up while the Edge Function still runs
+-- (Dashboard logs: Shutdown reason EarlyDrop). Use timeout_milliseconds := 300000 (5 min) or higher
+-- within your plan’s Edge Function max duration.
+
+-- select cron.unschedule('refill-visit-series-daily');
+
+-- select cron.schedule(
+--   'refill-visit-series-daily',
+--   '0 23 * * *',
+--   $$
+--   select net.http_post(
+--     url := (select decrypted_secret from vault.decrypted_secrets where name = 'refill_project_url')
+--            || '/functions/v1/refill-visit-series',
+--     headers := jsonb_build_object(
+--       'Content-Type', 'application/json',
+--       'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'refill_cron_secret')
+--     ),
+--     body := '{}'::jsonb,
+--     timeout_milliseconds := 300000
+--   );
+--   $$
+-- );
