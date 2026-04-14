@@ -4829,13 +4829,24 @@ export default function ClientDetailContent({ client, allClients, representative
                                       const colors = missed
                                         ? { bg: '#f5e6d3', border: '#a8701d', text: '#5c4a2a' }
                                         : getScheduleBlockColors(block.type)
+                                      const rawStatus = String(block.status ?? '').trim().toLowerCase()
+                                      const statusLabel =
+                                        rawStatus === 'completed'
+                                          ? 'Completed'
+                                          : rawStatus === 'missed'
+                                            ? 'Missed'
+                                            : rawStatus === 'in_progress' || rawStatus === 'in progress'
+                                              ? 'In progress'
+                                              : rawStatus === 'unassigned'
+                                                ? 'Unassigned'
+                                                : 'Scheduled'
                                       return (
                                         <button
                                           type="button"
                                           onClick={() => openEditVisitModal(block)}
                                           onMouseEnter={() => setScheduleHover({ dateStr, startHour: sh, endHourExclusive })}
                                           onMouseLeave={() => setScheduleHover(null)}
-                                          className="w-full flex flex-col rounded border-l-4 p-2 text-left focus:outline-none focus:ring-2 box-border"
+                                          className="relative w-full flex flex-col rounded border-l-4 p-2 pr-24 text-left focus:outline-none focus:ring-2 box-border"
                                           style={{
                                             backgroundColor: colors.bg,
                                             borderLeftColor: colors.border,
@@ -4856,6 +4867,9 @@ export default function ClientDetailContent({ client, allClients, representative
                                               {durationMins >= 60 ? `${Math.floor(durationMins / 60)}h` : `${durationMins}m`}
                                             </div>
                                           </div>
+                                          <span className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center rounded-full border border-blue-300 bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                                            {statusLabel}
+                                          </span>
                                         </button>
                                       )
                                     })()}
