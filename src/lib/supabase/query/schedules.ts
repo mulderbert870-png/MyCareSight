@@ -52,6 +52,69 @@ const visitSelect = `
   legacy_schedule_id
 `
 
+function pad2(n: number): string {
+  return String(n).padStart(2, '0')
+}
+
+function normalizeTimePart(v: string | null | undefined): string | null {
+  if (!v) return null
+  const raw = String(v).trim().slice(0, 5)
+  if (!/^\d{2}:\d{2}$/.test(raw)) return null
+  return raw
+}
+
+function toUtcVisitParts(date: string, startTime: string | null, endTime: string | null): {
+  visitDateUtc: string
+  startTimeUtc: string | null
+  endTimeUtc: string | null
+} {
+  const [yy, mm, dd] = date.split('-').map(Number)
+  const mkUtc = (time: string | null, fallbackHour: number, fallbackMinute: number) => {
+    const t = normalizeTimePart(time)
+    const h = t ? Number(t.slice(0, 2)) : fallbackHour
+    const m = t ? Number(t.slice(3, 5)) : fallbackMinute
+    const local = new Date(yy, (mm ?? 1) - 1, dd ?? 1, h, m, 0, 0)
+    return {
+      date: `${local.getUTCFullYear()}-${pad2(local.getUTCMonth() + 1)}-${pad2(local.getUTCDate())}`,
+      time: `${pad2(local.getUTCHours())}:${pad2(local.getUTCMinutes())}`,
+    }
+  }
+
+  const startUtc = mkUtc(startTime, 0, 0)
+  const endUtc = endTime ? mkUtc(endTime, 0, 0) : null
+  return {
+    visitDateUtc: startUtc.date,
+    startTimeUtc: startTime ? startUtc.time : null,
+    endTimeUtc: endUtc?.time ?? null,
+  }
+}
+
+function toLocalVisitParts(
+  visitDateUtc: string,
+  startTimeUtc: string | null,
+  endTimeUtc: string | null
+): { visitDateLocal: string; startTimeLocal: string | null; endTimeLocal: string | null } {
+  const [yy, mm, dd] = visitDateUtc.split('-').map(Number)
+  const mkLocal = (time: string | null, fallbackHour: number, fallbackMinute: number) => {
+    const t = normalizeTimePart(time)
+    const h = t ? Number(t.slice(0, 2)) : fallbackHour
+    const m = t ? Number(t.slice(3, 5)) : fallbackMinute
+    const utcDate = new Date(Date.UTC(yy, (mm ?? 1) - 1, dd ?? 1, h, m, 0, 0))
+    return {
+      date: `${utcDate.getFullYear()}-${pad2(utcDate.getMonth() + 1)}-${pad2(utcDate.getDate())}`,
+      time: `${pad2(utcDate.getHours())}:${pad2(utcDate.getMinutes())}`,
+    }
+  }
+
+  const startLocal = mkLocal(startTimeUtc, 0, 0)
+  const endLocal = endTimeUtc ? mkLocal(endTimeUtc, 0, 0) : null
+  return {
+    visitDateLocal: startLocal.date,
+    startTimeLocal: startTimeUtc ? startLocal.time : null,
+    endTimeLocal: endLocal?.time ?? null,
+  }
+}
+
 async function syncScheduledVisitStatuses(
   supabase: Supabase,
   opts?: {
@@ -107,6 +170,7 @@ function parseMonthlyRules(raw: unknown): { ordinal: number; weekday: number }[]
 }
 
 function toScheduleRow(v: ScheduledVisitDbRow, adlCodes: string[]): ScheduleRow {
+  const localParts = toLocalVisitParts(v.visit_date, v.scheduled_start_time, v.scheduled_end_time)
   return {
     id: v.id,
     agency_id: v.agency_id,
@@ -115,9 +179,9 @@ function toScheduleRow(v: ScheduledVisitDbRow, adlCodes: string[]): ScheduleRow 
     contract_id: v.contract_id,
     service_type: v.service_type,
     adl_codes: adlCodes,
-    date: v.visit_date,
-    start_time: v.scheduled_start_time,
-    end_time: v.scheduled_end_time,
+    date: localParts.visitDateLocal,
+    start_time: localParts.startTimeLocal,
+    end_time: localParts.endTimeLocal,
     description: v.description,
     type: v.visit_type,
     notes: v.notes,
@@ -338,6 +402,7 @@ export async function insertSchedule(
       ? data.repeat_monthly_rules
       : null
 
+  const utcParts = toUtcVisitParts(data.date, data.start_time ?? null, data.end_time ?? null)
   const { data: visit, error } = await supabase
     .from('scheduled_visits')
     .insert({
@@ -346,9 +411,9 @@ export async function insertSchedule(
       caregiver_member_id: data.caregiver_id ?? null,
       contract_id: data.contract_id ?? null,
       service_type: data.service_type ?? 'non_skilled',
-      visit_date: data.date,
-      scheduled_start_time: data.start_time ?? null,
-      scheduled_end_time: data.end_time ?? null,
+      visit_date: utcParts.visitDateUtc,
+      scheduled_start_time: utcParts.startTimeUtc,
+      scheduled_end_time: utcParts.endTimeUtc,
       description: data.description ?? null,
       notes: data.notes ?? null,
       visit_type: data.type ?? null,
@@ -423,27 +488,30 @@ export async function insertRecurringSchedulesFromSeries(
 
   if (seriesError || !series?.id) return { data: null, error: seriesError ?? { message: 'Failed to create visit series.' } }
 
-  const rows = data.dates.map((dateStr) => ({
-    agency_id: agency.agency_id,
-    visit_series_id: series.id,
-    patient_id: data.patient_id,
-    caregiver_member_id: data.caregiver_id ?? null,
-    contract_id: data.contract_id ?? null,
-    service_type: data.service_type ?? 'non_skilled',
-    visit_date: dateStr,
-    scheduled_start_time: data.start_time ?? null,
-    scheduled_end_time: data.end_time ?? null,
-    description: data.description ?? null,
-    notes: data.notes ?? null,
-    visit_type: data.type ?? null,
-    status: 'scheduled',
-    is_recurring: true,
-    repeat_frequency: data.repeat_frequency ?? null,
-    days_of_week: data.days_of_week?.length ? data.days_of_week.map((n) => Number(n)) : null,
-    repeat_start: data.repeat_start,
-    repeat_end: data.repeat_end ?? null,
-    repeat_monthly_rules: monthly,
-  }))
+  const rows = data.dates.map((dateStr) => {
+    const utcParts = toUtcVisitParts(dateStr, data.start_time ?? null, data.end_time ?? null)
+    return {
+      agency_id: agency.agency_id,
+      visit_series_id: series.id,
+      patient_id: data.patient_id,
+      caregiver_member_id: data.caregiver_id ?? null,
+      contract_id: data.contract_id ?? null,
+      service_type: data.service_type ?? 'non_skilled',
+      visit_date: utcParts.visitDateUtc,
+      scheduled_start_time: utcParts.startTimeUtc,
+      scheduled_end_time: utcParts.endTimeUtc,
+      description: data.description ?? null,
+      notes: data.notes ?? null,
+      visit_type: data.type ?? null,
+      status: 'scheduled',
+      is_recurring: true,
+      repeat_frequency: data.repeat_frequency ?? null,
+      days_of_week: data.days_of_week?.length ? data.days_of_week.map((n) => Number(n)) : null,
+      repeat_start: data.repeat_start,
+      repeat_end: data.repeat_end ?? null,
+      repeat_monthly_rules: monthly,
+    }
+  })
 
   const { data: visits, error: visitsError } = await supabase
     .from('scheduled_visits')
@@ -498,9 +566,28 @@ export async function updateSchedule(
   const ex = existing as { id: string; agency_id: string; patient_id: string }
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
-  if (data.date !== undefined) patch.visit_date = data.date
-  if (data.start_time !== undefined) patch.scheduled_start_time = data.start_time
-  if (data.end_time !== undefined) patch.scheduled_end_time = data.end_time
+  if (data.date !== undefined || data.start_time !== undefined || data.end_time !== undefined) {
+    const { data: currentRow, error: currentErr } = await supabase
+      .from('scheduled_visits')
+      .select('visit_date, scheduled_start_time, scheduled_end_time')
+      .eq('id', id)
+      .maybeSingle()
+    if (currentErr) return { data: null, error: currentErr }
+    if (!currentRow) return { data: null, error: { message: 'Visit not found or not accessible.' } }
+
+    const localCurrent = toLocalVisitParts(
+      String((currentRow as { visit_date: string }).visit_date),
+      ((currentRow as { scheduled_start_time?: string | null }).scheduled_start_time ?? null),
+      ((currentRow as { scheduled_end_time?: string | null }).scheduled_end_time ?? null)
+    )
+    const localDate = data.date ?? localCurrent.visitDateLocal
+    const localStart = data.start_time !== undefined ? data.start_time : localCurrent.startTimeLocal
+    const localEnd = data.end_time !== undefined ? data.end_time : localCurrent.endTimeLocal
+    const utcParts = toUtcVisitParts(localDate, localStart ?? null, localEnd ?? null)
+    patch.visit_date = utcParts.visitDateUtc
+    patch.scheduled_start_time = utcParts.startTimeUtc
+    patch.scheduled_end_time = utcParts.endTimeUtc
+  }
   if (data.description !== undefined) patch.description = data.description
   if (data.type !== undefined) patch.visit_type = data.type
   if (data.caregiver_id !== undefined) patch.caregiver_member_id = data.caregiver_id

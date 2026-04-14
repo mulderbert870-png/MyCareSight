@@ -31,10 +31,37 @@ DECLARE
   day_start_ts timestamptz;
   day_end_ts timestamptz;
 BEGIN
-  day_start_ts := p_visit_date::timestamp AT TIME ZONE current_setting('TIMEZONE');
-  day_end_ts := (p_visit_date::timestamp + interval '1 day') AT TIME ZONE current_setting('TIMEZONE');
-  start_ts := CASE WHEN p_start_time IS NULL THEN NULL ELSE (p_visit_date + p_start_time)::timestamp AT TIME ZONE current_setting('TIMEZONE') END;
-  end_ts := CASE WHEN p_end_time IS NULL THEN NULL ELSE (p_visit_date + p_end_time)::timestamp AT TIME ZONE current_setting('TIMEZONE') END;
+  day_start_ts := make_timestamptz(
+    extract(year from p_visit_date)::int,
+    extract(month from p_visit_date)::int,
+    extract(day from p_visit_date)::int,
+    0, 0, 0, 'UTC'
+  );
+  day_end_ts := day_start_ts + interval '1 day';
+  start_ts := CASE
+    WHEN p_start_time IS NULL THEN NULL
+    ELSE make_timestamptz(
+      extract(year from p_visit_date)::int,
+      extract(month from p_visit_date)::int,
+      extract(day from p_visit_date)::int,
+      extract(hour from p_start_time)::int,
+      extract(minute from p_start_time)::int,
+      0,
+      'UTC'
+    )
+  END;
+  end_ts := CASE
+    WHEN p_end_time IS NULL THEN NULL
+    ELSE make_timestamptz(
+      extract(year from p_visit_date)::int,
+      extract(month from p_visit_date)::int,
+      extract(day from p_visit_date)::int,
+      extract(hour from p_end_time)::int,
+      extract(minute from p_end_time)::int,
+      0,
+      'UTC'
+    )
+  END;
 
   IF start_ts IS NOT NULL AND end_ts IS NOT NULL AND now_ts >= start_ts AND now_ts <= end_ts THEN
     RETURN 'in_progress';
