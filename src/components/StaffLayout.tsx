@@ -8,6 +8,7 @@ import {
   Home,
   Award,
   CalendarDays,
+  Calendar,
   LogOut, 
   ChevronLeft,
   Menu,
@@ -61,7 +62,8 @@ export default function StaffLayout({
   const menuItems = [
     { href: '/pages/caregiver', label: 'Dashboard', icon: Home },
     { href: '/pages/caregiver/my-care-visits', label: 'My Care Visits', icon: CalendarDays },
-    { href: '/pages/caregiver/my-certifications', label: 'My Certifications', icon: Award },
+    { href: '/pages/caregiver/my-calendar', label: 'My Calendar', icon: Calendar },
+    { href: '/pages/caregiver/my-certifications', label: 'My Skills & Certifications', icon: Award },
   ]
 
   const getInitials = (name: string | null | undefined, email: string | null | undefined) => {
@@ -204,8 +206,8 @@ export default function StaffLayout({
           </div>
         </aside>
 
-        {/* Main Content */}
-        <main className={`flex-1 p-4 sm:p-6 w-full transition-all duration-300 ${
+        {/* Main Content — top padding clears fixed header; do not use p-* or it overrides pt */}
+        <main className={`flex-1 w-full pt-[73px] px-4 pb-4 sm:px-6 sm:pb-6 transition-all duration-300 ${
           sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'
         }`}>
           {children}

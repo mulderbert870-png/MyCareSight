@@ -13,9 +13,11 @@ import {
   CircleX,
   ClipboardList,
   Clock3,
+  Eye,
   FileText,
   History,
   List,
+  Loader2,
   MapPin,
   Play,
   Search,
@@ -26,12 +28,18 @@ import { useRouter } from 'next/navigation'
 import { getCaregiverPastVisitSummaryAction } from '@/app/actions/caregiver-visit-execution'
 import {
   cancelScheduleAssignmentRequestAction,
+  cancelScheduleUnassignmentRequestAction,
   markScheduleMissedAction,
   requestScheduleAssignmentAction,
-  unassignCaregiverFromScheduleAction,
+  submitScheduleUnassignmentRequestAction,
 } from '@/app/actions/schedule-assignment-requests'
 import type { CaregiverPastVisitSummaryDTO } from '@/lib/caregiver-visit-execution'
-import { isVisitPastForCaregiverMyVisits, type CaregiverVisitCardDTO } from '@/lib/caregiver-care-visits'
+import {
+  isVisitPastForCaregiverMyVisits,
+  MY_CARE_VISITS_STARTED_VISIT_IDS_KEY,
+  MY_CARE_VISITS_TAB_STORAGE_KEY,
+  type CaregiverVisitCardDTO,
+} from '@/lib/caregiver-care-visits'
 import Modal from '@/components/Modal'
 
 type Props = {
@@ -42,7 +50,8 @@ type Props = {
 }
 
 type MainTab = 'my_visits' | 'scheduling'
-type MyVisitsTab = 'upcoming' | 'past'
+type MyVisitsTab = 'upcoming' | 'in_progress' | 'past'
+
 type SchedulingTab = 'all' | 'open' | 'mine' | 'requests'
 type SchedulingView = 'list' | 'calendar'
 type MyVisitsUpcomingView = 'list' | 'calendar'
@@ -119,6 +128,9 @@ export default function CaregiverMyCareVisitsContent({
   /** Scoped pending key so one visit's request/cancel/unassign/missed does not disable all rows. */
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null)
   const [summaryPending, startSummaryTransition] = useTransition()
+  /** Shared pending state for navigating to `/my-care-visits/[id]` (Start Visit or View Details). */
+  const [visitPageNavPending, visitPageNavTransition] = useTransition()
+  const [visitPageNavId, setVisitPageNavId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [visitSummaryOpen, setVisitSummaryOpen] = useState(false)
   const [visitSummary, setVisitSummary] = useState<CaregiverPastVisitSummaryDTO | null>(null)
@@ -126,6 +138,11 @@ export default function CaregiverMyCareVisitsContent({
   const [requestModalVisit, setRequestModalVisit] = useState<CaregiverVisitCardDTO | null>(null)
   const [requestNoteDraft, setRequestNoteDraft] = useState('')
   const [unassignModalVisit, setUnassignModalVisit] = useState<CaregiverVisitCardDTO | null>(null)
+  /**
+   * Visit IDs opened via "Start Visit". DB `scheduled_visits.status` is usually still `scheduled`/`assigned`
+   * until clock-in sets `in_progress` — without this, the In Progress tab would stay empty until then.
+   */
+  const [startedVisitIds, setStartedVisitIds] = useState<Set<string>>(() => new Set())
   /** Sunday 00:00 of the week shown in Scheduling → Calendar. */
   useEffect(() => {
     if (!statsOpen) return
@@ -138,6 +155,87 @@ export default function CaregiverMyCareVisitsContent({
     return () => document.removeEventListener('pointerdown', onPointerDown, true)
   }, [statsOpen])
 
+  /** After "Start Visit" / Back, restore My Visits sub-tab from storage. */
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(MY_CARE_VISITS_TAB_STORAGE_KEY)
+      if (raw === 'upcoming' || raw === 'in_progress' || raw === 'past') {
+        setMyVisitsTab(raw)
+        sessionStorage.removeItem(MY_CARE_VISITS_TAB_STORAGE_KEY)
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(MY_CARE_VISITS_STARTED_VISIT_IDS_KEY)
+      const arr = raw ? JSON.parse(raw) : []
+      if (Array.isArray(arr)) {
+        setStartedVisitIds(new Set(arr.filter((x): x is string => typeof x === 'string')))
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    setStartedVisitIds((prev) => {
+      let next: Set<string> | null = null
+      for (const v of visits) {
+        if (!prev.has(v.id)) continue
+        if (v.status === 'completed' || v.status === 'missed') {
+          if (!next) next = new Set(prev)
+          next.delete(v.id)
+        }
+      }
+      if (!next) return prev
+      try {
+        sessionStorage.setItem(MY_CARE_VISITS_STARTED_VISIT_IDS_KEY, JSON.stringify(Array.from(next)))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+  }, [visits])
+
+  useEffect(() => {
+    if (!visitPageNavPending && visitPageNavId) {
+      setVisitPageNavId(null)
+    }
+  }, [visitPageNavPending, visitPageNavId])
+
+  const handleViewDetailsNavigate = (visitId: string) => {
+    setVisitPageNavId(visitId)
+    visitPageNavTransition(() => {
+      router.push(`/pages/caregiver/my-care-visits/${visitId}`)
+    })
+  }
+
+  const handleStartVisitNavigate = (visitId: string) => {
+    setMyVisitsTab('in_progress')
+    try {
+      sessionStorage.setItem(MY_CARE_VISITS_TAB_STORAGE_KEY, 'in_progress')
+    } catch {
+      /* ignore */
+    }
+    setStartedVisitIds((prev) => {
+      const next = new Set(prev)
+      next.add(visitId)
+      try {
+        sessionStorage.setItem(MY_CARE_VISITS_STARTED_VISIT_IDS_KEY, JSON.stringify(Array.from(next)))
+      } catch {
+        /* ignore */
+      }
+      return next
+    })
+    setVisitPageNavId(visitId)
+    visitPageNavTransition(() => {
+      router.push(`/pages/caregiver/my-care-visits/${visitId}`)
+    })
+  }
+
   const [calendarWeekStart, setCalendarWeekStart] = useState<Date>(() => weekStartSunday())
   const [myVisitsUpcomingView, setMyVisitsUpcomingView] = useState<MyVisitsUpcomingView>('list')
   const [upcomingCalendarWeekStart, setUpcomingCalendarWeekStart] = useState<Date>(() => weekStartSunday())
@@ -148,13 +246,35 @@ export default function CaregiverMyCareVisitsContent({
     return visits.filter((v) => `${v.clientName} ${v.serviceName} ${v.locationLine} ${v.locationShort}`.toLowerCase().includes(q))
   }, [search, visits])
 
-  const upcomingMineVisits = useMemo(
-    () => filteredBySearch.filter((v) => v.isMine && !isVisitPastForCaregiverMyVisits(v)),
-    [filteredBySearch]
+  /** Assigned upcoming visits not yet opened with Start Visit and not DB-in-progress. */
+  const upcomingMineNotStartedVisits = useMemo(
+    () =>
+      filteredBySearch.filter(
+        (v) =>
+          v.isMine &&
+          !isVisitPastForCaregiverMyVisits(v) &&
+          v.status !== 'in_progress' &&
+          !startedVisitIds.has(v.id)
+      ),
+    [filteredBySearch, startedVisitIds]
+  )
+  /** DB `in_progress` or opened via Start Visit (before clock-in updates the row). */
+  const inProgressMineVisits = useMemo(
+    () =>
+      filteredBySearch.filter(
+        (v) =>
+          v.isMine &&
+          !isVisitPastForCaregiverMyVisits(v) &&
+          (v.status === 'in_progress' || startedVisitIds.has(v.id))
+      ),
+    [filteredBySearch, startedVisitIds]
   )
   const todayMineCount = useMemo(
-    () => upcomingMineVisits.filter((v) => isTodayDateStr(v.date)).length,
-    [upcomingMineVisits]
+    () =>
+      filteredBySearch.filter(
+        (v) => v.isMine && !isVisitPastForCaregiverMyVisits(v) && isTodayDateStr(v.date)
+      ).length,
+    [filteredBySearch]
   )
   const pastMineVisits = useMemo(
     () => filteredBySearch.filter((v) => v.isMine && isVisitPastForCaregiverMyVisits(v)),
@@ -164,15 +284,21 @@ export default function CaregiverMyCareVisitsContent({
   const schedulingList = useMemo(() => {
     const upcoming = filteredBySearch.filter((v) => !isVisitPastForCaregiverMyVisits(v))
     if (schedulingTab === 'open') return upcoming.filter((v) => v.status === 'open')
-    if (schedulingTab === 'mine') return upcoming.filter((v) => v.isMine)
-    if (schedulingTab === 'requests') return upcoming.filter((v) => v.hasMyPendingRequest)
+    if (schedulingTab === 'mine') {
+      return upcoming.filter((v) => v.isMine && !v.hasPendingUnassignmentRequest)
+    }
+    if (schedulingTab === 'requests') {
+      return upcoming.filter((v) => v.hasMyPendingRequest || v.hasPendingUnassignmentRequest)
+    }
     return upcoming.filter((v) => v.status === 'open' || v.isMine)
   }, [filteredBySearch, schedulingTab])
 
   const myRequestsTabCount = useMemo(
     () =>
       filteredBySearch.filter(
-        (v) => !isVisitPastForCaregiverMyVisits(v) && v.hasMyPendingRequest
+        (v) =>
+          !isVisitPastForCaregiverMyVisits(v) &&
+          (v.hasMyPendingRequest || v.hasPendingUnassignmentRequest)
       ).length,
     [filteredBySearch]
   )
@@ -260,13 +386,13 @@ export default function CaregiverMyCareVisitsContent({
 
   const upcomingCalendarMap = useMemo(() => {
     const map = new Map<string, CaregiverVisitCardDTO[]>()
-    for (const v of upcomingMineVisits) {
+    for (const v of upcomingMineNotStartedVisits) {
       const existing = map.get(v.date) ?? []
       existing.push(v)
       map.set(v.date, existing)
     }
     return map
-  }, [upcomingMineVisits])
+  }, [upcomingMineNotStartedVisits])
 
   const openRequestModal = (visit: CaregiverVisitCardDTO) => {
     setError(null)
@@ -335,7 +461,26 @@ export default function CaregiverMyCareVisitsContent({
     setPendingActionKey(key)
     void (async () => {
       try {
-        const res = await unassignCaregiverFromScheduleAction(scheduleId)
+        const res = await submitScheduleUnassignmentRequestAction(scheduleId)
+        if (res.error) {
+          setError(res.error)
+          return
+        }
+        onSuccess?.()
+        router.refresh()
+      } finally {
+        setPendingActionKey(null)
+      }
+    })()
+  }
+
+  const doCancelUnassignmentRequest = (requestId: string, onSuccess?: () => void) => {
+    setError(null)
+    const key = `cancel-unassign:${requestId}`
+    setPendingActionKey(key)
+    void (async () => {
+      try {
+        const res = await cancelScheduleUnassignmentRequestAction(requestId)
         if (res.error) {
           setError(res.error)
           return
@@ -354,6 +499,10 @@ export default function CaregiverMyCareVisitsContent({
   }
 
   const onCalendarVisitClick = (visit: CaregiverVisitCardDTO) => {
+    if (visit.isMine && visit.status === 'in_progress') {
+      router.push(`/pages/caregiver/my-care-visits/${visit.id}`)
+      return
+    }
     if (visit.isMine && visit.status !== 'completed' && visit.status !== 'missed') {
       openUnassignModal(visit)
       return
@@ -363,7 +512,14 @@ export default function CaregiverMyCareVisitsContent({
     }
   }
 
-  const listToRender = mainTab === 'my_visits' ? (myVisitsTab === 'upcoming' ? upcomingMineVisits : pastMineVisits) : schedulingList
+  const listToRender =
+    mainTab === 'my_visits'
+      ? myVisitsTab === 'upcoming'
+        ? upcomingMineNotStartedVisits
+        : myVisitsTab === 'in_progress'
+          ? inProgressMineVisits
+          : pastMineVisits
+      : schedulingList
 
   const doMarkMissed = (visitId: string) => {
     if (!window.confirm('Mark this visit as missed?')) return
@@ -563,7 +719,10 @@ export default function CaregiverMyCareVisitsContent({
       >
         {unassignModalVisit ? (
           <div className="space-y-4">
-            <p className="text-sm text-gray-900">Are you sure you want to unassign yourself from this visit?</p>
+            <p className="text-sm text-gray-900">
+              Request to be removed from this visit. Your care coordinator will approve or decline; you stay assigned
+              until it is approved.
+            </p>
             <div className="rounded-xl border border-amber-300 bg-amber-50/90 px-4 py-3 text-sm text-gray-900 space-y-2">
               <div className="text-base font-semibold text-amber-900">{unassignModalVisit.clientName}</div>
               <div>{unassignModalVisit.dateLabelLong}</div>
@@ -585,7 +744,7 @@ export default function CaregiverMyCareVisitsContent({
                 className="inline-flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
               >
                 <UserMinus className="h-4 w-4" aria-hidden />
-                Unassign Me
+                Send Request
               </button>
             </div>
           </div>
@@ -767,7 +926,20 @@ export default function CaregiverMyCareVisitsContent({
                 onClick={() => setMyVisitsTab('upcoming')}
                 className={`rounded-md px-3 py-1.5 text-sm font-medium ${myVisitsTab === 'upcoming' ? 'bg-gray-900 text-white' : 'text-gray-700'}`}
               >
-                Upcoming <span className="ml-1 rounded-full bg-green-600 px-1.5 py-0.5 text-[11px] text-white">{upcomingMineVisits.length}</span>
+                Upcoming{' '}
+                <span className="ml-1 rounded-full bg-green-600 px-1.5 py-0.5 text-[11px] text-white">
+                  {upcomingMineNotStartedVisits.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMyVisitsTab('in_progress')}
+                className={`rounded-md px-3 py-1.5 text-sm font-medium ${myVisitsTab === 'in_progress' ? 'bg-gray-900 text-white' : 'text-gray-700'}`}
+              >
+                In Progress{' '}
+                <span className="ml-1 rounded-full bg-blue-600 px-1.5 py-0.5 text-[11px] text-white">
+                  {inProgressMineVisits.length}
+                </span>
               </button>
               <button
                 type="button"
@@ -803,9 +975,18 @@ export default function CaregiverMyCareVisitsContent({
             {myVisitsTab === 'upcoming' ? (
               <>
                 <span className="rounded-full border border-green-200 bg-green-50 px-3 py-1 text-green-700">
-                  {upcomingMineVisits.length} assigned
+                  {upcomingMineNotStartedVisits.length} upcoming
                 </span>
                 <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-violet-700">{todayMineCount} today</span>
+              </>
+            ) : myVisitsTab === 'in_progress' ? (
+              <>
+                <span className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-blue-800">
+                  {inProgressMineVisits.length} in progress
+                </span>
+                <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-violet-700">
+                  {inProgressMineVisits.filter((v) => isTodayDateStr(v.date)).length} today
+                </span>
               </>
             ) : (
               <>
@@ -1107,8 +1288,18 @@ export default function CaregiverMyCareVisitsContent({
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="text-xl font-semibold text-gray-900">{visit.clientName}</div>
                     {mainTab === 'my_visits' && myVisitsTab === 'upcoming' ? (
-                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-1 text-xs text-green-700">
-                        <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Assigned to Me
+                      visit.hasPendingUnassignmentRequest ? (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800">
+                          <Clock3 className="h-3.5 w-3.5" aria-hidden /> Request Pending
+                        </span>
+                      ) : (
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-1 text-xs text-green-700">
+                          <CheckCircle2 className="h-3.5 w-3.5" aria-hidden /> Assigned to Me
+                        </span>
+                      )
+                    ) : mainTab === 'my_visits' && myVisitsTab === 'in_progress' ? (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-1 text-xs text-blue-800">
+                        <Clock3 className="h-3.5 w-3.5" aria-hidden /> In progress
                       </span>
                     ) : null}
                   </div>
@@ -1151,16 +1342,26 @@ export default function CaregiverMyCareVisitsContent({
                 <div className="flex gap-2 lg:flex-col lg:items-end">
                   {mainTab === 'my_visits' && myVisitsTab === 'upcoming' ? (
                     <div className="flex w-full flex-col gap-2 sm:w-auto lg:min-w-[11rem]">
-                      {visit.status !== 'completed' && visit.status !== 'missed' ? (
-                        <Link
-                          href={`/pages/caregiver/my-care-visits/${visit.id}`}
-                          className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-gray-800"
+                      {visit.status !== 'completed' &&
+                      visit.status !== 'missed' &&
+                      !visit.hasPendingUnassignmentRequest ? (
+                        <button
+                          type="button"
+                          onClick={() => handleStartVisitNavigate(visit.id)}
+                          disabled={!!visitPageNavId}
+                          className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-70"
                         >
-                          <Play className="h-4 w-4" aria-hidden />
+                          {visitPageNavPending && visitPageNavId === visit.id ? (
+                            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                          ) : (
+                            <Play className="h-4 w-4" aria-hidden />
+                          )}
                           Start Visit
-                        </Link>
+                        </button>
                       ) : null}
-                      {visit.status !== 'completed' && visit.status !== 'missed' ? (
+                      {visit.status !== 'completed' &&
+                      visit.status !== 'missed' &&
+                      !visit.hasPendingUnassignmentRequest ? (
                         <button
                           type="button"
                           onClick={() => doMarkMissed(visit.id)}
@@ -1171,18 +1372,41 @@ export default function CaregiverMyCareVisitsContent({
                           Mark Missed
                         </button>
                       ) : null}
+                      {!visit.hasPendingUnassignmentRequest ? (
+                        <button
+                          type="button"
+                          onClick={() => openUnassignModal(visit)}
+                          disabled={
+                            pendingActionKey === `unassign:${visit.id}` ||
+                            visit.status === 'completed' ||
+                            visit.status === 'missed'
+                          }
+                          className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                        >
+                          <UserMinus className="h-4 w-4" aria-hidden />
+                          Unassign
+                        </button>
+                      ) : (
+                        <span className="inline-flex items-center justify-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+                          <Clock3 className="h-4 w-4" aria-hidden />
+                          Unassignment Requested
+                        </span>
+                      )}
+                    </div>
+                  ) : mainTab === 'my_visits' && myVisitsTab === 'in_progress' ? (
+                    <div className="flex w-full flex-col gap-2 sm:w-auto lg:min-w-[11rem]">
                       <button
                         type="button"
-                        onClick={() => openUnassignModal(visit)}
-                        disabled={
-                          pendingActionKey === `unassign:${visit.id}` ||
-                          visit.status === 'completed' ||
-                          visit.status === 'missed'
-                        }
-                        className="inline-flex items-center justify-center gap-2 rounded-lg border border-rose-300 bg-white px-3 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50 disabled:opacity-60"
+                        onClick={() => handleViewDetailsNavigate(visit.id)}
+                        disabled={!!visitPageNavId}
+                        className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-70"
                       >
-                        <UserMinus className="h-4 w-4" aria-hidden />
-                        Unassign
+                        {visitPageNavPending && visitPageNavId === visit.id ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        ) : (
+                          <Eye className="h-4 w-4" aria-hidden />
+                        )}
+                        View Details
                       </button>
                     </div>
                   ) : mainTab === 'scheduling' ? (
@@ -1191,7 +1415,7 @@ export default function CaregiverMyCareVisitsContent({
                         <span className={`inline-flex items-center rounded-full border px-2 py-1 text-xs font-medium ${statusBadgeClass(visit.status)}`}>
                           {visit.status === 'in_progress' ? 'In Progress' : visit.status === 'open' ? 'Open' : visit.status.replace('_', ' ')}
                         </span>
-                        {visit.hasMyPendingRequest ? (
+                        {visit.hasMyPendingRequest || visit.hasPendingUnassignmentRequest ? (
                           <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800">
                             <Clock3 className="h-3.5 w-3.5" aria-hidden />
                             Request Pending
@@ -1219,7 +1443,17 @@ export default function CaregiverMyCareVisitsContent({
                             Cancel Request
                           </button>
                         ) : null}
-                        {visit.isMine ? (
+                        {visit.hasPendingUnassignmentRequest && visit.myPendingUnassignmentRequestId ? (
+                          <button
+                            type="button"
+                            onClick={() => doCancelUnassignmentRequest(visit.myPendingUnassignmentRequestId!)}
+                            disabled={pendingActionKey === `cancel-unassign:${visit.myPendingUnassignmentRequestId}`}
+                            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-gray-50 disabled:opacity-60"
+                          >
+                            Cancel Request
+                          </button>
+                        ) : null}
+                        {visit.isMine && !visit.hasPendingUnassignmentRequest ? (
                           <button
                             type="button"
                             onClick={() => openUnassignModal(visit)}
@@ -1246,7 +1480,11 @@ export default function CaregiverMyCareVisitsContent({
             )
           })}
           {listToRender.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-gray-500">No visits found.</div>
+            <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-gray-500">
+              {mainTab === 'my_visits' && myVisitsTab === 'in_progress'
+                ? 'No visits in progress.'
+                : 'No visits found.'}
+            </div>
           ) : null}
         </div>
       ) : null}

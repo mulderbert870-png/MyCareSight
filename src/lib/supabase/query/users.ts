@@ -1,5 +1,17 @@
+import type { PostgrestError } from '@supabase/supabase-js'
 import type { Supabase } from '../types'
 import type { PatientDocument } from './patients'
+
+function caregiverMemberUpdateBlockedError(): PostgrestError {
+  return {
+    name: 'PostgrestError',
+    message:
+      'No rows were updated. If you are saving your own skills, apply the database migration that allows caregivers to update their own caregiver_members row, or ask an agency admin to update your profile.',
+    code: 'PGRST116',
+    details: '',
+    hint: '',
+  }
+}
 
 export async function updateUserProfileUpdatedAt(supabase: Supabase, userId: string) {
   return supabase.from('user_profiles').update({ updated_at: new Date().toISOString() }).eq('id', userId)
@@ -63,15 +75,27 @@ export async function insertStaffMemberReturning(
 
 /**
  * Update staff member by id.
- * Must use .select().single() so PostgREST returns an error when RLS blocks the update (0 rows);
- * without SELECT, update() returns { error: null } even when nothing was saved.
+ * Uses `.select('id')` without `.single()` so PostgREST does not return **406** when RLS allows the
+ * statement but updates 0 rows (`.single()` on 0 rows → 406 Not Acceptable). We treat an empty result
+ * as an error so callers still know the update did not apply.
  */
 export async function updateStaffMember(
   supabase: Supabase,
   staffId: string,
   data: Record<string, unknown>
 ) {
-  return supabase.from('caregiver_members').update(data).eq('id', staffId).select('id').single()
+  const { data: rows, error } = await supabase
+    .from('caregiver_members')
+    .update(data)
+    .eq('id', staffId)
+    .select('id')
+
+  if (error) return { data: null, error }
+  const first = rows?.[0]
+  if (!first) {
+    return { data: null, error: caregiverMemberUpdateBlockedError() }
+  }
+  return { data: first, error: null }
 }
 
 /** Update user profile (full_name, role, updated_at). */

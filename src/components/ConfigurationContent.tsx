@@ -34,11 +34,27 @@ interface StaffRole {
   created_at?: string
 }
 
+interface TaskCatalogItem {
+  id: string
+  name: string
+  categoryId: string
+  categoryName: string
+}
+
+interface TaskCategoryItem {
+  id: string
+  name: string
+}
+
 interface ConfigurationContentProps {
   initialPricing: Pricing
   licenseTypes: LicenseType[]
   certificationTypes: CertificationType[]
   staffRoles: StaffRole[]
+  skilledTasks: TaskCatalogItem[]
+  nonSkilledTasks: TaskCatalogItem[]
+  skilledTaskCategories: TaskCategoryItem[]
+  nonSkilledTaskCategories: TaskCategoryItem[]
 }
 
 interface EditingLicenseType {
@@ -53,7 +69,11 @@ export default function ConfigurationContent({
   initialPricing,
   licenseTypes: initialLicenseTypes,
   certificationTypes,
-  staffRoles
+  staffRoles,
+  skilledTasks,
+  nonSkilledTasks,
+  skilledTaskCategories,
+  nonSkilledTaskCategories,
 }: ConfigurationContentProps) {
   const router = useRouter()
   const [pricing, setPricing] = useState(initialPricing)
@@ -455,6 +475,10 @@ export default function ConfigurationContent({
       <SystemListsManagement
         initialCertificationTypes={certificationTypes}
         initialStaffRoles={staffRoles}
+        initialSkilledTasks={skilledTasks}
+        initialNonSkilledTasks={nonSkilledTasks}
+        initialSkilledTaskCategories={skilledTaskCategories}
+        initialNonSkilledTaskCategories={nonSkilledTaskCategories}
       />
     </div>
   )

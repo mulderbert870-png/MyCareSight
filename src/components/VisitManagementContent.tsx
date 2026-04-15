@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Bell,
@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Clock,
   MapPin,
+  Loader2,
   RefreshCw,
   Search,
   ThumbsDown,
@@ -20,8 +21,10 @@ import Modal from './Modal'
 import DeclineAssignmentModal from './DeclineAssignmentModal'
 import {
   approveScheduleAssignmentRequestAction,
+  approveScheduleUnassignmentRequestAction,
   assignCaregiverToScheduleAction,
   declineScheduleAssignmentRequestAction,
+  declineScheduleUnassignmentRequestAction,
   markScheduleMissedAction,
   unassignCaregiverFromScheduleAction,
 } from '@/app/actions/schedule-assignment-requests'
@@ -29,11 +32,14 @@ import type {
   AssignmentRequestCardDTO,
   AssignmentVisitCardDTO,
   ResolvedAssignmentRowDTO,
+  UnassignmentRequestListItemDTO,
 } from '@/lib/visit-assignment-dashboard'
 import type { AllVisitCardDTO, ReassignCandidateDTO, VisitStatus } from '@/lib/visit-all-visits-dashboard'
+import { visitStatusBadgeClass, visitStatusLeftBorderClass } from '@/lib/visit-status-styles'
 
 export type VisitManagementContentProps = {
   visits: AssignmentVisitCardDTO[]
+  unassignmentItems: UnassignmentRequestListItemDTO[]
   allVisits: AllVisitCardDTO[]
   allClients: Array<{ id: string; name: string }>
   allCaregivers: Array<{ id: string; name: string }>
@@ -61,22 +67,6 @@ function ProgressRow({ label, value, barClass }: { label: string; value: number;
       </div>
     </div>
   )
-}
-
-function statusClass(status: VisitStatus): string {
-  if (status === 'completed') return 'bg-emerald-100 text-emerald-700 border-emerald-200'
-  if (status === 'missed') return 'bg-orange-100 text-orange-700 border-orange-200'
-  if (status === 'in_progress') return 'bg-blue-100 text-blue-700 border-blue-200'
-  if (status === 'unassigned') return 'bg-red-100 text-red-700 border-red-200'
-  return 'bg-gray-100 text-gray-700 border-gray-200'
-}
-
-function statusLeftBorderClass(status: VisitStatus): string {
-  if (status === 'completed') return 'border-l-emerald-500'
-  if (status === 'missed') return 'border-l-orange-500'
-  if (status === 'in_progress') return 'border-l-blue-500'
-  if (status === 'unassigned') return 'border-l-red-500'
-  return 'border-l-gray-400'
 }
 
 function dateFilterMatch(date: string, dateFilter: string): boolean {
@@ -108,6 +98,10 @@ function tabFromSearchParams(searchParams: { get: (key: string) => string | null
   return searchParams.get('tab') === 'requests' ? 'requests' : 'all'
 }
 
+function requestsSubtabFromSearchParams(searchParams: { get: (key: string) => string | null }): 'assignment' | 'unassignment' {
+  return searchParams.get('subtab') === 'unassignment' ? 'unassignment' : 'assignment'
+}
+
 function relativeDateHeader(date: string, fallbackLabel: string): string {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -121,6 +115,7 @@ function relativeDateHeader(date: string, fallbackLabel: string): string {
 
 export default function VisitManagementContent({
   visits,
+  unassignmentItems,
   allVisits,
   allClients,
   allCaregivers,
@@ -131,23 +126,54 @@ export default function VisitManagementContent({
 }: VisitManagementContentProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const [tabNavPending, startTabNavTransition] = useTransition()
+  const [tabLoadingKey, setTabLoadingKey] = useState<'all' | 'requests' | 'assignment' | 'unassignment' | null>(null)
   const [tab, setTab] = useState<'all' | 'requests'>(() => tabFromSearchParams(searchParams))
+  const [requestsSubtab, setRequestsSubtab] = useState<'assignment' | 'unassignment'>(() =>
+    requestsSubtabFromSearchParams(searchParams)
+  )
 
   useEffect(() => {
     setTab(tabFromSearchParams(searchParams))
+    setRequestsSubtab(requestsSubtabFromSearchParams(searchParams))
+    setTabLoadingKey(null)
   }, [searchParams])
+
+  const goToRequestsSubtab = (sub: 'assignment' | 'unassignment') => {
+    setTabLoadingKey(sub)
+    startTabNavTransition(() => {
+      router.replace(`${CARE_VISITS_PATH}?tab=requests&subtab=${sub}`, { scroll: false })
+    })
+  }
 
   const goToVisitTab = (next: 'all' | 'requests') => {
     if (next === 'requests') {
-      router.replace(`${CARE_VISITS_PATH}?tab=requests`, { scroll: false })
+      const sub = requestsSubtabFromSearchParams(searchParams)
+      setTabLoadingKey('requests')
+      startTabNavTransition(() => {
+        router.replace(`${CARE_VISITS_PATH}?tab=requests&subtab=${sub}`, { scroll: false })
+      })
     } else {
-      router.replace(CARE_VISITS_PATH, { scroll: false })
+      setTabLoadingKey('all')
+      startTabNavTransition(() => {
+        router.replace(CARE_VISITS_PATH, { scroll: false })
+      })
     }
   }
   const [actionError, setActionError] = useState<string | null>(null)
+  const unassignmentVisibilityLogRef = useRef<{
+    requestId: string
+    action: 'approve' | 'decline'
+    refreshChecks: number
+  } | null>(null)
   /** Scoped pending key so one request's approve/decline (and per-visit actions) do not disable all controls. */
   const [pendingActionKey, setPendingActionKey] = useState<string | null>(null)
-  const [declineModal, setDeclineModal] = useState<{ requestId: string; caregiverName: string; clientName: string } | null>(null)
+  const [declineModal, setDeclineModal] = useState<{
+    requestId: string
+    caregiverName: string
+    clientName: string
+    kind: 'assignment' | 'unassignment'
+  } | null>(null)
   const [detailVisit, setDetailVisit] = useState<AllVisitCardDTO | null>(null)
   const [reassignVisit, setReassignVisit] = useState<AllVisitCardDTO | null>(null)
   const [missVisit, setMissVisit] = useState<AllVisitCardDTO | null>(null)
@@ -159,11 +185,13 @@ export default function VisitManagementContent({
   const [caregiverFilter, setCaregiverFilter] = useState('all')
   const [sortOrder, setSortOrder] = useState<'oldest' | 'newest'>('oldest')
 
-  const pendingRequestCount = useMemo(() => visits.reduce((sum, v) => sum + v.requests.length, 0), [visits])
+  const pendingAssignmentCount = useMemo(() => visits.reduce((sum, v) => sum + v.requests.length, 0), [visits])
+  const pendingUnassignmentCount = unassignmentItems.length
+  const pendingCaregiverRequestTotal = pendingAssignmentCount + pendingUnassignmentCount
 
   const summary = useMemo(
-    () => ({ pending: pendingRequestCount, approved: approvedTotal, declined: declinedTotal }),
-    [pendingRequestCount, approvedTotal, declinedTotal]
+    () => ({ pending: pendingCaregiverRequestTotal, approved: approvedTotal, declined: declinedTotal }),
+    [pendingCaregiverRequestTotal, approvedTotal, declinedTotal]
   )
 
   const runAction = async (key: string, fn: () => Promise<{ ok?: true; error?: string }>) => {
@@ -172,6 +200,15 @@ export default function VisitManagementContent({
     try {
       const result = await fn()
       if (result.error) {
+        if (
+          unassignmentVisibilityLogRef.current &&
+          (key.startsWith('approve-unassign:') || key.startsWith('decline-unassign:'))
+        ) {
+          console.warn(
+            `[UnassignmentRequest][${unassignmentVisibilityLogRef.current.action}] ${unassignmentVisibilityLogRef.current.requestId} failed: ${result.error}`
+          )
+          unassignmentVisibilityLogRef.current = null
+        }
         setActionError(result.error)
         return
       }
@@ -236,11 +273,26 @@ export default function VisitManagementContent({
 
   const handleApprove = (request: AssignmentRequestCardDTO) =>
     void runAction(`approve:${request.id}`, () => approveScheduleAssignmentRequestAction(request.id))
+  const startUnassignmentVisibilityLog = (requestId: string, action: 'approve' | 'decline') => {
+    unassignmentVisibilityLogRef.current = { requestId, action, refreshChecks: 0 }
+    console.info(`[UnassignmentRequest][${action}] ${requestId} clicked. Tracking until removed from UI.`)
+  }
+  const handleApproveUnassign = (requestId: string) => {
+    startUnassignmentVisibilityLog(requestId, 'approve')
+    void runAction(`approve-unassign:${requestId}`, () => approveScheduleUnassignmentRequestAction(requestId))
+  }
   const confirmDecline = (reason: string) => {
     if (!declineModal) return
-    const id = declineModal.requestId
+    const { requestId, kind } = declineModal
     setDeclineModal(null)
-    void runAction(`decline:${id}`, () => declineScheduleAssignmentRequestAction(id, reason))
+    if (kind === 'unassignment') {
+      startUnassignmentVisibilityLog(requestId, 'decline')
+      void runAction(`decline-unassign:${requestId}`, () =>
+        declineScheduleUnassignmentRequestAction(requestId, reason)
+      )
+    } else {
+      void runAction(`decline:${requestId}`, () => declineScheduleAssignmentRequestAction(requestId, reason))
+    }
   }
   const handleUnassign = (visit: AllVisitCardDTO) =>
     void runAction(`unassign:${visit.id}`, () => unassignCaregiverFromScheduleAction(visit.id))
@@ -257,8 +309,57 @@ export default function VisitManagementContent({
     void runAction(`miss:${id}`, () => markScheduleMissedAction(id, reason))
   }
 
-  const requestActionBusy = (requestId: string) =>
-    pendingActionKey === `approve:${requestId}` || pendingActionKey === `decline:${requestId}`
+  const requestActionBusy = (requestId: string, kind: 'assignment' | 'unassignment' = 'assignment') => {
+    if (kind === 'unassignment') {
+      return (
+        pendingActionKey === `approve-unassign:${requestId}` || pendingActionKey === `decline-unassign:${requestId}`
+      )
+    }
+    return pendingActionKey === `approve:${requestId}` || pendingActionKey === `decline:${requestId}`
+  }
+  const visibleResolved = useMemo(
+    () =>
+      resolved.filter((row) =>
+        requestsSubtab === 'assignment' ? row.requestType === 'assignment' : row.requestType === 'unassignment'
+      ),
+    [resolved, requestsSubtab]
+  )
+
+  useEffect(() => {
+    const tracking = unassignmentVisibilityLogRef.current
+    if (!tracking) return
+
+    const stillVisible = unassignmentItems.some((item) => item.requestId === tracking.requestId)
+    if (!stillVisible) {
+      console.info(
+        `[UnassignmentRequest][${tracking.action}] ${tracking.requestId} removed from UI after ${tracking.refreshChecks} check(s).`
+      )
+      unassignmentVisibilityLogRef.current = null
+      return
+    }
+
+    tracking.refreshChecks += 1
+    console.info(
+      `[UnassignmentRequest][${tracking.action}] ${tracking.requestId} still visible (check ${tracking.refreshChecks}).`
+    )
+
+    if (tracking.refreshChecks >= 6) {
+      console.warn(
+        `[UnassignmentRequest][${tracking.action}] ${tracking.requestId} still visible after multiple refresh checks.`
+      )
+      unassignmentVisibilityLogRef.current = null
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      const latest = unassignmentVisibilityLogRef.current
+      if (!latest || latest.requestId !== tracking.requestId) return
+      console.info(`[UnassignmentRequest][${latest.action}] requesting another refresh for ${latest.requestId}.`)
+      router.refresh()
+    }, 700)
+
+    return () => window.clearTimeout(timer)
+  }, [unassignmentItems, router])
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -271,18 +372,40 @@ export default function VisitManagementContent({
           <p className="text-sm text-gray-600 mt-1">View, sort, and manage all care visits. Assign caregivers and track visit status.</p>
         </div>
         <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100/80 p-1 shadow-inner">
-          <button type="button" onClick={() => goToVisitTab('all')} className={`px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'all' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}>All Visits</button>
-          <button type="button" onClick={() => goToVisitTab('requests')} className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'requests' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}>
-            Assignment Requests
-            {pendingRequestCount > 0 ? <span className="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 min-w-[1.25rem] text-center">{pendingRequestCount}</span> : null}
+          <button type="button" disabled={tabNavPending} onClick={() => goToVisitTab('all')} className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'all' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}>
+            {tabNavPending && tabLoadingKey === 'all' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            All Visits
+          </button>
+          <button type="button" disabled={tabNavPending} onClick={() => goToVisitTab('requests')} className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'requests' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}>
+            {tabNavPending && tabLoadingKey === 'requests' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+            Caregiver Requests
+            {pendingCaregiverRequestTotal > 0 ? <span className="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 min-w-[1.25rem] text-center">{pendingCaregiverRequestTotal}</span> : null}
           </button>
         </div>
       </div>
+      {tabNavPending ? (
+        <div className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          Loading {tabLoadingKey === 'all'
+            ? 'All Visits'
+            : tabLoadingKey === 'requests'
+              ? 'Caregiver Requests'
+              : tabLoadingKey === 'assignment'
+                ? 'Assignment Requests'
+                : tabLoadingKey === 'unassignment'
+                  ? 'Unassignment Requests'
+                  : '...'}
+          ...
+        </div>
+      ) : null}
 
       {tab === 'all' ? (
         <>
           <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-center justify-between gap-3">
-            <span>{pendingRequestCount} assignment requests awaiting your review</span>
+            <span>
+              {pendingCaregiverRequestTotal} caregiver request{pendingCaregiverRequestTotal === 1 ? '' : 's'} awaiting
+              your review
+            </span>
             <button type="button" onClick={() => goToVisitTab('requests')} className="text-amber-700 font-semibold hover:underline">Click to review</button>
           </div>
 
@@ -348,7 +471,7 @@ export default function VisitManagementContent({
                     const isPastVisit = isPastVisitDate(visit.date)
                     const isLockedStatus = visit.status === 'completed' || visit.status === 'missed'
                     return (
-                    <div key={visit.id} className={`bg-white border rounded-xl p-4 shadow-sm border-l-4 ${statusLeftBorderClass(visit.status)} ${visit.status === 'unassigned' ? 'border-red-200' : 'border-gray-200'}`}>
+                    <div key={visit.id} className={`bg-white border rounded-xl p-4 shadow-sm border-l-4 ${visitStatusLeftBorderClass(visit.status)} ${visit.status === 'unassigned' ? 'border-red-200' : 'border-gray-200'}`}>
                       <div className="flex flex-col lg:flex-row lg:items-center gap-4">
                         <div className="min-w-[84px] text-sm">
                           <div className="text-xs text-gray-500">{visit.date.slice(5).replace('-', ' / ')}</div>
@@ -358,7 +481,7 @@ export default function VisitManagementContent({
                           {/* <div className="font-semibold text-gray-900">{visit.visitTitle}</div> */}
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="inline-flex items-center px-2 py-0.5 text-lg">{visit.adlTasks.length ? visit.adlTasks.join(', ') : 'No ADL tasks'}</span>
-                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${statusClass(visit.status)}`}>{visit.statusLabel}</span>
+                            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${visitStatusBadgeClass(visit.status)}`}>{visit.statusLabel}</span>
                             <span className="inline-flex items-center rounded-full border border-blue-200 text-blue-700 text-xs px-2 py-0.5">{visit.typeLabel}</span>
                           </div>
                           <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
@@ -419,14 +542,134 @@ export default function VisitManagementContent({
             <div className="rounded-xl border border-emerald-100 bg-emerald-50/80 p-4 flex items-center gap-4 shadow-sm"><div className="rounded-full bg-emerald-100 p-3 text-emerald-700"><CheckCircle2 className="h-6 w-6" aria-hidden /></div><div><div className="text-2xl font-bold text-gray-900">{summary.approved}</div><div className="text-sm text-gray-600">Approved</div></div></div>
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 flex items-center gap-4 shadow-sm"><div className="rounded-full bg-gray-200 p-3 text-gray-600"><ThumbsDown className="h-6 w-6" aria-hidden /></div><div><div className="text-2xl font-bold text-gray-900">{summary.declined}</div><div className="text-sm text-gray-600">Declined</div></div></div>
           </div>
+          <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100/80 p-1 shadow-inner mb-4">
+            <button
+              type="button"
+              disabled={tabNavPending}
+              onClick={() => goToRequestsSubtab('assignment')}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${requestsSubtab === 'assignment' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}
+            >
+              {tabNavPending && tabLoadingKey === 'assignment' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+              Assignment Requests
+              {pendingAssignmentCount > 0 ? (
+                <span className="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 min-w-[1.25rem] text-center">
+                  {pendingAssignmentCount}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              disabled={tabNavPending}
+              onClick={() => goToRequestsSubtab('unassignment')}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${requestsSubtab === 'unassignment' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}
+            >
+              {tabNavPending && tabLoadingKey === 'unassignment' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
+              Unassignment Requests
+              {pendingUnassignmentCount > 0 ? (
+                <span className="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 min-w-[1.25rem] text-center">
+                  {pendingUnassignmentCount}
+                </span>
+              ) : null}
+            </button>
+          </div>
+
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <h2 className="text-lg font-semibold text-gray-900">Pending Requests</h2>
-              {pendingRequestCount > 0 ? <span className="text-xs font-medium text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">{pendingRequestCount} awaiting review</span> : null}
-            </div>
-            {visits.length === 0 ? (
-              <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-gray-500">No pending assignment requests.</div>
+            {requestsSubtab === 'unassignment' ? (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <h2 className="text-lg font-semibold text-gray-900">Unassignment Requests</h2>
+                  {pendingUnassignmentCount > 0 ? (
+                    <span className="text-xs font-medium text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                      {pendingUnassignmentCount} awaiting review
+                    </span>
+                  ) : null}
+                </div>
+                {unassignmentItems.length === 0 ? (
+                  <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-gray-500">
+                    No pending unassignment requests.
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {unassignmentItems.map((item) => (
+                      <div
+                        key={item.requestId}
+                        className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden border-l-4 border-l-amber-300 p-4 sm:p-5"
+                      >
+                        <div className="flex flex-col lg:flex-row gap-4">
+                          <div className="flex-1 min-w-0 space-y-2">
+                            <h3 className="text-lg font-bold text-blue-900">{item.visitTitle}</h3>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-700">
+                              <span className="inline-flex items-center gap-1.5">
+                                <User className="h-4 w-4 text-gray-400 shrink-0" aria-hidden />
+                                {item.clientName}
+                              </span>
+                              <span className="inline-flex items-center gap-1.5">
+                                <CalendarDays className="h-4 w-4 text-gray-400 shrink-0" aria-hidden />
+                                {item.dateLabel}
+                              </span>
+                              <span className="inline-flex items-center gap-1.5">
+                                <Clock className="h-4 w-4 text-gray-400 shrink-0" aria-hidden />
+                                {item.timeLabel}
+                              </span>
+                              <span className="inline-flex items-center gap-1.5">
+                                <MapPin className="h-4 w-4 text-gray-400 shrink-0" aria-hidden />
+                                {item.locationLabel}
+                              </span>
+                            </div>
+                            <div className="pt-1">
+                              <span className="font-semibold text-gray-900">{item.caregiverName}</span>
+                              <span className="text-sm text-gray-600"> — {item.caregiverTitle}</span>
+                            </div>
+                            <p className="text-xs text-gray-400">Requested {item.requestedAtLabel}</p>
+                          </div>
+                          <div className="flex lg:flex-col gap-2 shrink-0 lg:items-stretch">
+                            <button
+                              type="button"
+                              disabled={requestActionBusy(item.requestId, 'unassignment')}
+                              onClick={() => handleApproveUnassign(item.requestId)}
+                              className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                            >
+                              <ThumbsUp className="h-4 w-4" aria-hidden />
+                              Approve Unassign
+                            </button>
+                            <button
+                              type="button"
+                              disabled={requestActionBusy(item.requestId, 'unassignment')}
+                              onClick={() =>
+                                setDeclineModal({
+                                  requestId: item.requestId,
+                                  caregiverName: item.caregiverName,
+                                  clientName: item.clientName,
+                                  kind: 'unassignment',
+                                })
+                              }
+                              className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg border-2 border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
+                            >
+                              <ThumbsDown className="h-4 w-4" aria-hidden />
+                              Decline
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
             ) : (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <h2 className="text-lg font-semibold text-gray-900">Assignment Requests</h2>
+                  {pendingAssignmentCount > 0 ? (
+                    <span className="text-xs font-medium text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                      {pendingAssignmentCount} awaiting review
+                    </span>
+                  ) : null}
+                </div>
+                {visits.length === 0 ? (
+                  <div className="rounded-xl border border-gray-200 bg-white p-10 text-center text-gray-500">
+                    No pending assignment requests.
+                  </div>
+                ) : (
               <div className="space-y-6">
                 {visits.map((visit) => (
                   <div key={visit.id} className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden border-l-4 border-l-amber-300">
@@ -486,6 +729,7 @@ export default function VisitManagementContent({
                                       requestId: req.id,
                                       caregiverName: req.caregiverName,
                                       clientName: visit.clientName,
+                                      kind: 'assignment',
                                     })
                                   }
                                   className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg border-2 border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
@@ -502,13 +746,15 @@ export default function VisitManagementContent({
                   </div>
                 ))}
               </div>
+                )}
+              </>
             )}
           </div>
-          {resolved.length > 0 ? (
+          {visibleResolved.length > 0 ? (
             <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
               <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100 bg-gray-50/80"><RefreshCw className="h-4 w-4 text-gray-500" aria-hidden /><h2 className="text-sm font-semibold text-gray-800">Recently Resolved</h2></div>
               <ul className="divide-y divide-gray-100">
-                {resolved.map((row) => (
+                {visibleResolved.map((row) => (
                   <li key={row.id} className="flex flex-col sm:flex-row sm:items-center gap-2 px-4 py-3 text-sm">
                     <div className="flex items-start gap-3 flex-1 min-w-0">{row.kind === 'approved' ? <CheckCircle2 className="h-5 w-5 text-emerald-600 shrink-0 mt-0.5" aria-hidden /> : <XCircle className="h-5 w-5 text-gray-400 shrink-0 mt-0.5" aria-hidden />}<div className="min-w-0"><span className="font-medium text-gray-900">{row.caregiverName}</span><span className="text-gray-600"> — {row.visitTitle} — {row.clientName} — {row.visitDateLabel}</span></div></div>
                     <div className="flex items-center gap-2 sm:shrink-0 pl-8 sm:pl-0"><span className={`text-xs font-semibold rounded-full px-2 py-0.5 ${row.kind === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-200 text-gray-700'}`}>{row.kind === 'approved' ? 'Approved' : 'Declined'}</span><span className="text-xs text-gray-500">{row.resolvedAtLabel}</span></div>
@@ -520,7 +766,14 @@ export default function VisitManagementContent({
         </>
       )}
 
-      <DeclineAssignmentModal isOpen={!!declineModal} onClose={() => setDeclineModal(null)} caregiverName={declineModal?.caregiverName ?? ''} clientName={declineModal?.clientName ?? ''} onConfirm={confirmDecline} />
+      <DeclineAssignmentModal
+        isOpen={!!declineModal}
+        onClose={() => setDeclineModal(null)}
+        caregiverName={declineModal?.caregiverName ?? ''}
+        clientName={declineModal?.clientName ?? ''}
+        onConfirm={confirmDecline}
+        variant={declineModal?.kind === 'unassignment' ? 'unassignment' : 'assignment'}
+      />
 
       <Modal isOpen={!!detailVisit} onClose={() => setDetailVisit(null)} title="Visit Details" size="md">
         {detailVisit ? (
@@ -531,7 +784,7 @@ export default function VisitManagementContent({
               <span>{detailVisit.dateLabel}</span>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`rounded-full border px-2 py-0.5 text-xs ${statusClass(detailVisit.status)}`}>{detailVisit.statusLabel}</span>
+              <span className={`rounded-full border px-2 py-0.5 text-xs ${visitStatusBadgeClass(detailVisit.status)}`}>{detailVisit.statusLabel}</span>
               <span className="rounded-full border border-blue-200 text-blue-700 px-2 py-0.5 text-xs">{detailVisit.typeLabel}</span>
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">

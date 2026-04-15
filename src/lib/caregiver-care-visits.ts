@@ -28,6 +28,8 @@ export type CaregiverVisitCardDTO = {
   notes: string | null
   isMine: boolean
   hasMyPendingRequest: boolean
+  hasPendingUnassignmentRequest: boolean
+  myPendingUnassignmentRequestId: string | null
   myPendingRequestId: string | null
   /** Caregiver's note on the pending assignment request (if any). */
   myRequestNote: string | null
@@ -53,6 +55,12 @@ type RequestRow = {
   schedule_id: string
   status: 'pending' | 'approved' | 'declined'
   caregiver_note: string | null
+}
+
+type UnassignmentRequestRow = {
+  id: string
+  schedule_id: string
+  status: 'pending' | 'approved' | 'declined'
 }
 
 function formatDateLabel(isoDate: string): string {
@@ -210,7 +218,7 @@ export async function fetchCaregiverCareVisitsData(
 
   const taskNameById = await buildTaskNameByIdForSchedules(supabase, candidateRows)
 
-  const [patientsRes, reqRes, taskAggRes, vteNotesRes] = await Promise.all([
+  const [patientsRes, reqRes, unassignReqRes, taskAggRes, vteNotesRes] = await Promise.all([
     patientIds.length
       ? supabase.from('patients').select('id, full_name, city, state, street_address').in('id', patientIds)
       : Promise.resolve({ data: [], error: null }),
@@ -219,6 +227,14 @@ export async function fetchCaregiverCareVisitsData(
           .from('schedule_assignment_requests')
           .select('id, schedule_id, status, caregiver_note')
           .eq('caregiver_member_id', caregiverMemberId)
+          .in('schedule_id', scheduleIds)
+      : Promise.resolve({ data: [], error: null }),
+    scheduleIds.length
+      ? supabase
+          .from('schedule_unassignment_requests')
+          .select('id, schedule_id, status')
+          .eq('caregiver_member_id', caregiverMemberId)
+          .eq('status', 'pending')
           .in('schedule_id', scheduleIds)
       : Promise.resolve({ data: [], error: null }),
     scheduleIds.length
@@ -237,7 +253,9 @@ export async function fetchCaregiverCareVisitsData(
 
   const patientById = new Map(((patientsRes.data ?? []) as PatientRow[]).map((p) => [p.id, p]))
   const requestRows = (reqRes.data ?? []) as RequestRow[]
+  const pendingUnassignRows = (unassignReqRes.data ?? []) as UnassignmentRequestRow[]
   const pendingRequestBySchedule = new Map<string, { id: string; note: string | null }>()
+  const pendingUnassignmentBySchedule = new Map<string, string>()
   for (const r of requestRows) {
     if (r.status === 'pending') {
       pendingRequestBySchedule.set(r.schedule_id, {
@@ -245,6 +263,9 @@ export async function fetchCaregiverCareVisitsData(
         note: r.caregiver_note?.trim() ? r.caregiver_note.trim() : null,
       })
     }
+  }
+  for (const r of pendingUnassignRows) {
+    if (r.status === 'pending') pendingUnassignmentBySchedule.set(r.schedule_id, r.id)
   }
 
   const taskCountByVisit = new Map<string, { completed: number; total: number }>()
@@ -302,6 +323,8 @@ export async function fetchCaregiverCareVisitsData(
         notes: row.notes,
         isMine: row.caregiver_id === caregiverMemberId,
         hasMyPendingRequest: !!pending,
+        hasPendingUnassignmentRequest: pendingUnassignmentBySchedule.has(row.id),
+        myPendingUnassignmentRequestId: pendingUnassignmentBySchedule.get(row.id) ?? null,
         myPendingRequestId: pending?.id ?? null,
         myRequestNote: pending?.note ?? null,
       } satisfies CaregiverVisitCardDTO
@@ -315,3 +338,12 @@ export async function fetchCaregiverCareVisitsData(
   ).length
   return { visits, mineCount, openCount, todayCount }
 }
+
+/** Persist My Visits sub-tab (`upcoming` | `in_progress` | `past`) across client navigations. */
+export const MY_CARE_VISITS_TAB_STORAGE_KEY = 'caregiver-mycarevisits-tab'
+
+/**
+ * Visit IDs the caregiver opened with "Start Visit". Rows stay `assigned` in the DB until clock-in;
+ * this lets the In Progress tab list them immediately. Cleared when the visit is completed or missed.
+ */
+export const MY_CARE_VISITS_STARTED_VISIT_IDS_KEY = 'caregiver-mycarevisits-started-visit-ids'

@@ -24,7 +24,8 @@ export default async function CareVisitsPage() {
 
   const dashboard = await fetchVisitAssignmentDashboardData(supabase)
   const allVisits = await fetchAllVisitsDashboardData(supabase)
-  const pendingRequestCount = dashboard.visits.reduce((sum, v) => sum + v.requests.length, 0)
+  const pendingRequestCount =
+    dashboard.visits.reduce((sum, v) => sum + v.requests.length, 0) + dashboard.unassignmentItems.length
 
   return (
     <DashboardLayout
@@ -36,6 +37,7 @@ export default async function CareVisitsPage() {
       <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading care visits…</div>}>
         <VisitManagementContent
           visits={dashboard.visits}
+          unassignmentItems={dashboard.unassignmentItems}
           allVisits={allVisits.allVisits}
           allClients={allVisits.allClients}
           allCaregivers={allVisits.allCaregivers}

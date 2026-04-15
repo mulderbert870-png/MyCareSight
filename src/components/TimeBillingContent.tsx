@@ -63,9 +63,7 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
       .filter((r) => r.status === activeTab)
       .filter((r) =>
         q
-          ? `${r.clientName} ${r.caregiverName} ${r.date} ${r.timeLabel} ${r.note ?? ''}`
-              .toLowerCase()
-              .includes(q)
+          ? `${r.clientName} ${r.caregiverName}`.toLowerCase().includes(q)
           : true
       )
   }, [rows, activeTab, query])
@@ -96,6 +94,14 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
       note: edit.note,
       serviceType: edit.serviceType,
     }
+  }
+
+  const hoursEditedForRow = (row: TimeBillingRow): boolean => {
+    const edit = getEdit(row)
+    const rowHours = round2(Number(row.hours ?? 0))
+    const editedHours = round2(Number(edit.hours))
+    if (!Number.isFinite(editedHours)) return false
+    return rowHours !== editedHours
   }
 
   return (
@@ -172,6 +178,8 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
               {list.map((row) => {
                 const edit = getEdit(row)
                 const hoursNum = Number(edit.hours)
+                const isHoursEdited = hoursEditedForRow(row)
+                const requiresNoteForApprove = isHoursEdited && edit.note.trim() === ''
                 const displayPay =
                   activeTab === 'pending' && Number.isFinite(hoursNum)
                     ? estLineAmount(hoursNum, row.payRate)
@@ -276,7 +284,7 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
                             setPendingEdits((prev) => ({ ...prev, [row.id]: { ...edit, note: e.target.value } }))
                           }
                           className="w-full min-w-[10rem] max-w-[14rem] rounded border border-gray-200 px-2 py-1.5 text-sm"
-                          placeholder="Optional note..."
+                          placeholder={isHoursEdited ? 'Required when hours edited' : 'Optional note...'}
                         />
                       ) : (
                         <span className="inline-block" title={row.note ?? undefined}>
@@ -289,8 +297,9 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            disabled={isPending}
+                            disabled={isPending || requiresNoteForApprove}
                             className="rounded-full bg-emerald-600 text-white px-3 py-1 text-xs font-semibold disabled:opacity-60"
+                            title={requiresNoteForApprove ? 'Add a note after editing hours before approving.' : undefined}
                             onClick={() => {
                               setError(null)
                               startTransition(async () => {

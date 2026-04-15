@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, Save, Search, Sparkles, X } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { normalizeCaregiverSkillsList } from '@/lib/caregiver-skills'
 import * as q from '@/lib/supabase/query'
 import ModalWrapper from './Modal'
 import { useRouter } from 'next/navigation'
@@ -19,6 +20,8 @@ interface EditCaregiverSkillsModalProps {
   onClose: () => void
   caregiver: Caregiver
   onSuccess?: () => void
+  /** When set, replaces the default subtitle under the modal title. */
+  subtitle?: string | null
 }
 
 export default function EditCaregiverSkillsModal({
@@ -26,12 +29,15 @@ export default function EditCaregiverSkillsModal({
   onClose,
   caregiver,
   onSuccess,
+  subtitle: subtitleProp,
 }: EditCaregiverSkillsModalProps) {
   const router = useRouter()
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [selectedSkills, setSelectedSkills] = useState<string[]>(caregiver.skills ?? [])
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(() =>
+    normalizeCaregiverSkillsList(caregiver.skills)
+  )
   const [skillCatalog, setSkillCatalog] = useState<{ type: string; name: string }[]>([])
   const [openType, setOpenType] = useState<string | null>(null)
   /** Only the category row that currently has its dropdown open (toggle + panel + chips). */
@@ -86,7 +92,7 @@ export default function EditCaregiverSkillsModal({
 
   const resetFromCaregiver = () => {
     setSearch('')
-    setSelectedSkills(caregiver.skills ?? [])
+    setSelectedSkills(normalizeCaregiverSkillsList(caregiver.skills))
     setOpenType(null)
     setError(null)
   }
@@ -104,7 +110,7 @@ export default function EditCaregiverSkillsModal({
     try {
       const supabase = createClient()
       const { error: updateError } = await q.updateStaffMember(supabase, caregiver.id, {
-        skills: selectedSkills,
+        skills: normalizeCaregiverSkillsList(selectedSkills),
       })
 
       if (updateError) throw updateError
@@ -118,11 +124,13 @@ export default function EditCaregiverSkillsModal({
     }
   }
 
-  // Initialize when caregiver changes / modal opens.
+  const skillsSignature = JSON.stringify(caregiver.skills ?? [])
+
+  // Initialize when modal opens or stored skills change (stale selection if parent refetches).
   useEffect(() => {
     if (isOpen) resetFromCaregiver()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, caregiver.id])
+  }, [isOpen, caregiver.id, skillsSignature])
 
   useEffect(() => {
     if (!isOpen) return
@@ -153,12 +161,17 @@ export default function EditCaregiverSkillsModal({
 
   if (!isOpen) return null
 
+  const modalSubtitle =
+    subtitleProp !== undefined && subtitleProp !== null
+      ? subtitleProp
+      : `Select caregiver skills for ${caregiver.first_name} ${caregiver.last_name}.`
+
   return (
     <ModalWrapper
       isOpen={isOpen}
       onClose={handleClose}
       title={`Edit Skills`}
-      subtitle={`Select caregiver skills for ${caregiver.first_name} ${caregiver.last_name}.`}
+      subtitle={modalSubtitle}
       size="lg"
     >
       <div className="space-y-4">

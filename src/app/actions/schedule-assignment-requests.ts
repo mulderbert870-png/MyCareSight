@@ -24,8 +24,23 @@ function mapRpcError(code: string | undefined): string {
       return 'You are not allowed to perform this action.'
     case 'schedule_already_assigned':
       return 'This visit already has an assigned caregiver.'
+    case 'visit_changed':
+      return 'The visit was changed by someone else. Refresh the page and try again.'
     default:
       return 'Something went wrong. Please try again.'
+  }
+}
+
+function mapSubmitUnassignmentRequestError(code: string | undefined): string {
+  switch (code) {
+    case 'not_authenticated':
+      return 'You must be signed in.'
+    case 'cannot_request':
+      return 'You cannot request unassignment for this visit. It may not be assigned to you.'
+    case 'duplicate_pending':
+      return 'You already have a pending unassignment request for this visit.'
+    default:
+      return 'Could not submit unassignment request.'
   }
 }
 
@@ -196,6 +211,7 @@ export async function assignCaregiverToScheduleAction(
   return { ok: true }
 }
 
+/** Coordinator: immediately remove caregiver from visit (no pending request). */
 export async function unassignCaregiverFromScheduleAction(
   scheduleId: string
 ): Promise<{ ok?: true; error?: string }> {
@@ -207,6 +223,95 @@ export async function unassignCaregiverFromScheduleAction(
     status: 'scheduled',
   })
   if (error) return { error: error.message || 'Could not unassign caregiver.' }
+  revalidateVisitsPages()
+  return { ok: true }
+}
+
+/** Caregiver: submit pending unassignment for coordinator approval. */
+export async function submitScheduleUnassignmentRequestAction(
+  scheduleId: string
+): Promise<{ ok?: true; error?: string }> {
+  const session = await getSession()
+  if (!session?.user?.id) return { error: 'You must be signed in.' }
+
+  const supabase = await createClient()
+  const { data, error } = await q.submitScheduleUnassignmentRequestRpc(supabase, scheduleId)
+
+  if (error) {
+    return { error: error.message || 'Could not submit unassignment request.' }
+  }
+
+  const body = data as RpcPayload | null
+  if (!body?.ok) {
+    return { error: mapSubmitUnassignmentRequestError(body?.error) }
+  }
+
+  revalidateVisitsPages()
+  return { ok: true }
+}
+
+/** Caregiver: cancel own pending unassignment request. */
+export async function cancelScheduleUnassignmentRequestAction(
+  requestId: string
+): Promise<{ ok?: true; error?: string }> {
+  const session = await getSession()
+  if (!session?.user?.id) return { error: 'You must be signed in.' }
+  if (!isValidRequestId(requestId)) return { error: 'Invalid request. Refresh the page and try again.' }
+
+  const supabase = await createClient()
+  const { data, error } = await q.cancelScheduleUnassignmentRequestRpc(supabase, requestId)
+  if (error) return { error: error.message }
+
+  const body = data as RpcPayload | null
+  if (!body?.ok) return { error: mapRpcError(body?.error) }
+
+  revalidateVisitsPages()
+  return { ok: true }
+}
+
+export async function approveScheduleUnassignmentRequestAction(
+  requestId: string
+): Promise<{ ok?: true; error?: string }> {
+  const session = await getSession()
+  if (!session?.user?.id) return { error: 'You must be signed in.' }
+  if (!isValidRequestId(requestId)) return { error: 'Invalid request. Refresh the page and try again.' }
+
+  const supabase = await createClient()
+  const { data, error } = await q.approveScheduleUnassignmentRequestRpc(supabase, requestId)
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  const body = data as RpcPayload | null
+  if (!body?.ok) {
+    return { error: mapRpcError(body?.error) }
+  }
+
+  revalidateVisitsPages()
+  return { ok: true }
+}
+
+export async function declineScheduleUnassignmentRequestAction(
+  requestId: string,
+  reason: string
+): Promise<{ ok?: true; error?: string }> {
+  const session = await getSession()
+  if (!session?.user?.id) return { error: 'You must be signed in.' }
+  if (!isValidRequestId(requestId)) return { error: 'Invalid request. Refresh the page and try again.' }
+
+  const supabase = await createClient()
+  const { data, error } = await q.declineScheduleUnassignmentRequestRpc(supabase, requestId, reason)
+
+  if (error) {
+    return { error: error.message }
+  }
+
+  const body = data as RpcPayload | null
+  if (!body?.ok) {
+    return { error: mapRpcError(body?.error) }
+  }
+
   revalidateVisitsPages()
   return { ok: true }
 }

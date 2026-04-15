@@ -2,7 +2,10 @@ import zipcodes from 'zipcodes'
 import type { Supabase } from '@/lib/supabase/types'
 import * as q from '@/lib/supabase/query'
 import type { ScheduleRow } from '@/lib/supabase/query/schedules'
-import type { ScheduleAssignmentRequestRow } from '@/lib/supabase/query/schedule-assignment-requests'
+import type {
+  ScheduleAssignmentRequestRow,
+  ScheduleUnassignmentRequestRow,
+} from '@/lib/supabase/query/schedule-assignment-requests'
 import { overallScorePercent, proximityPercentFromMiles } from '@/lib/visit-assignment-scoring'
 
 export type AssignmentRequestCardDTO = {
@@ -29,8 +32,23 @@ export type AssignmentVisitCardDTO = {
   requests: AssignmentRequestCardDTO[]
 }
 
+/** One pending unassignment row for Visit Management → Caregiver Requests → Unassignment (no scoring bars). */
+export type UnassignmentRequestListItemDTO = {
+  requestId: string
+  visitId: string
+  visitTitle: string
+  clientName: string
+  dateLabel: string
+  timeLabel: string
+  locationLabel: string
+  caregiverName: string
+  caregiverTitle: string
+  requestedAtLabel: string
+}
+
 export type ResolvedAssignmentRowDTO = {
   id: string
+  requestType: 'assignment' | 'unassignment'
   kind: 'approved' | 'declined'
   caregiverName: string
   visitTitle: string
@@ -177,32 +195,50 @@ type StaffRow = {
   job_title?: string | null
 }
 
-/** Load and shape data for Visit Management → Assignment Requests. */
+/** Load and shape data for Visit Management → Caregiver Requests (assignment + unassignment). */
 export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Promise<{
   visits: AssignmentVisitCardDTO[]
+  unassignmentItems: UnassignmentRequestListItemDTO[]
   resolved: ResolvedAssignmentRowDTO[]
   approvedTotal: number
   declinedTotal: number
   error?: string
 }> {
-  const [pendingRes, resolvedRes, approvedCountRes, declinedCountRes] = await Promise.all([
+  const [pendingRes, resolvedRes, approvedCountRes, declinedCountRes, pendingUnassignRes, resolvedUnassignRes] =
+    await Promise.all([
     q.getPendingScheduleAssignmentRequests(supabase),
     q.getRecentResolvedScheduleAssignmentRequests(supabase, 40),
     supabase.from('schedule_assignment_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
     supabase.from('schedule_assignment_requests').select('id', { count: 'exact', head: true }).eq('status', 'declined'),
-  ])
+    q.getPendingScheduleUnassignmentRequests(supabase),
+    q.getRecentResolvedScheduleUnassignmentRequests(supabase, 40),
+    ])
+
+  const empty = {
+    visits: [] as AssignmentVisitCardDTO[],
+    unassignmentItems: [] as UnassignmentRequestListItemDTO[],
+    resolved: [] as ResolvedAssignmentRowDTO[],
+    approvedTotal: 0,
+    declinedTotal: 0,
+  }
 
   if (pendingRes.error) {
-    return { visits: [], resolved: [], approvedTotal: 0, declinedTotal: 0, error: pendingRes.error.message }
+    return { ...empty, error: pendingRes.error.message }
   }
   if (resolvedRes.error) {
-    return { visits: [], resolved: [], approvedTotal: 0, declinedTotal: 0, error: resolvedRes.error.message }
+    return { ...empty, error: resolvedRes.error.message }
   }
   if (approvedCountRes.error) {
-    return { visits: [], resolved: [], approvedTotal: 0, declinedTotal: 0, error: approvedCountRes.error.message }
+    return { ...empty, error: approvedCountRes.error.message }
   }
   if (declinedCountRes.error) {
-    return { visits: [], resolved: [], approvedTotal: 0, declinedTotal: 0, error: declinedCountRes.error.message }
+    return { ...empty, error: declinedCountRes.error.message }
+  }
+  if (pendingUnassignRes.error) {
+    return { ...empty, error: pendingUnassignRes.error.message }
+  }
+  if (resolvedUnassignRes.error) {
+    return { ...empty, error: resolvedUnassignRes.error.message }
   }
 
   const approvedTotal = approvedCountRes.count ?? 0
@@ -210,15 +246,26 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
 
   const pendingRows = (pendingRes.data ?? []) as ScheduleAssignmentRequestRow[]
   const resolvedRows = (resolvedRes.data ?? []) as ScheduleAssignmentRequestRow[]
+  const unassignRows = (pendingUnassignRes.data ?? []) as ScheduleUnassignmentRequestRow[]
+  const resolvedUnassignRows = (resolvedUnassignRes.data ?? []) as ScheduleUnassignmentRequestRow[]
 
   const scheduleIds = sanitizeUuidList(pendingRows.map((r) => r.schedule_id))
   const resolvedScheduleIds = sanitizeUuidList(resolvedRows.map((r) => r.schedule_id))
+  const unassignScheduleIds = sanitizeUuidList(unassignRows.map((r) => r.schedule_id))
+  const resolvedUnassignScheduleIds = sanitizeUuidList(resolvedUnassignRows.map((r) => r.schedule_id))
 
-  if (scheduleIds.length === 0 && resolvedScheduleIds.length === 0) {
-    return { visits: [], resolved: [], approvedTotal, declinedTotal }
+  if (
+    scheduleIds.length === 0 &&
+    resolvedScheduleIds.length === 0 &&
+    unassignScheduleIds.length === 0 &&
+    resolvedUnassignScheduleIds.length === 0
+  ) {
+    return { visits: [], unassignmentItems: [], resolved: [], approvedTotal, declinedTotal }
   }
 
-  const allScheduleIds = sanitizeUuidList(scheduleIds.concat(resolvedScheduleIds))
+  const allScheduleIds = sanitizeUuidList(
+    scheduleIds.concat(resolvedScheduleIds).concat(unassignScheduleIds).concat(resolvedUnassignScheduleIds)
+  )
 
   const { data: schedulesData, error: schedErr } = await q.getScheduledVisitsByIdsAsScheduleRows(
     supabase,
@@ -226,7 +273,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   )
 
   if (schedErr) {
-    return { visits: [], resolved: [], approvedTotal, declinedTotal, error: schedErr.message }
+    return { visits: [], unassignmentItems: [], resolved: [], approvedTotal, declinedTotal, error: schedErr.message }
   }
 
   const schedules = (schedulesData ?? []) as ScheduleRow[]
@@ -260,6 +307,12 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   for (const r of resolvedRows) {
     if (r.caregiver_member_id) staffIds.add(r.caregiver_member_id)
   }
+  for (const r of unassignRows) {
+    if (r.caregiver_member_id) staffIds.add(r.caregiver_member_id)
+  }
+  for (const r of resolvedUnassignRows) {
+    if (r.caregiver_member_id) staffIds.add(r.caregiver_member_id)
+  }
   const staffIdList = sanitizeUuidList(Array.from(staffIds))
 
   const { data: patientsData, error: patErr } =
@@ -271,7 +324,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
           .in('id', patientIds)
 
   if (patErr) {
-    return { visits: [], resolved: [], approvedTotal, declinedTotal, error: patErr.message }
+    return { visits: [], unassignmentItems: [], resolved: [], approvedTotal, declinedTotal, error: patErr.message }
   }
 
   const { data: staffData, error: staffErr } =
@@ -283,7 +336,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
           .in('id', staffIdList)
 
   if (staffErr) {
-    return { visits: [], resolved: [], approvedTotal, declinedTotal, error: staffErr.message }
+    return { visits: [], unassignmentItems: [], resolved: [], approvedTotal, declinedTotal, error: staffErr.message }
   }
 
   const patientById = new Map((patientsData as PatientRow[] | null)?.map((p) => [p.id, p]) ?? [])
@@ -383,6 +436,40 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
     return sa.date.localeCompare(sb.date) || formatTimePart(sa.start_time).localeCompare(formatTimePart(sb.start_time))
   })
 
+  const unassignmentItems: UnassignmentRequestListItemDTO[] = []
+  for (const row of unassignRows) {
+    const sched = scheduleById.get(row.schedule_id)
+    const patient = sched ? patientById.get(sched.patient_id) : undefined
+    const staff = staffById.get(row.caregiver_member_id)
+    if (!sched || !patient || !staff) continue
+    const assignedId = sched.caregiver_id?.trim() || null
+    if (!assignedId || assignedId !== row.caregiver_member_id) continue
+
+    const caregiverName = [staff.first_name, staff.last_name].filter(Boolean).join(' ') || 'Caregiver'
+    const caregiverTitle =
+      (staff.job_title && staff.job_title.trim()) || (staff.role && String(staff.role).trim()) || 'Caregiver'
+
+    unassignmentItems.push({
+      requestId: row.id,
+      visitId: sched.id,
+      visitTitle: visitTitleFromSchedule(sched, taskNameById),
+      clientName: patient.full_name ?? 'Client',
+      dateLabel: formatScheduleDate(sched.date),
+      timeLabel: formatTimeRange(sched.start_time, sched.end_time),
+      locationLabel: patientLocationLabel(patient),
+      caregiverName,
+      caregiverTitle,
+      requestedAtLabel: formatRequestedAt(row.created_at),
+    })
+  }
+
+  unassignmentItems.sort((a, b) => {
+    const sa = scheduleById.get(a.visitId)
+    const sb = scheduleById.get(b.visitId)
+    if (!sa || !sb) return 0
+    return sa.date.localeCompare(sb.date) || formatTimePart(sa.start_time).localeCompare(formatTimePart(sb.start_time))
+  })
+
   const resolved: ResolvedAssignmentRowDTO[] = []
   for (const row of resolvedRows) {
     const sched = scheduleById.get(row.schedule_id)
@@ -393,6 +480,7 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
     const caregiverName = [staff.first_name, staff.last_name].filter(Boolean).join(' ') || 'Caregiver'
     resolved.push({
       id: row.id,
+      requestType: 'assignment',
       kind: row.status === 'approved' ? 'approved' : 'declined',
       caregiverName,
       visitTitle: visitTitleFromSchedule(sched, taskNameById),
@@ -403,19 +491,38 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
     })
   }
 
-  return { visits, resolved, approvedTotal, declinedTotal }
+  for (const row of resolvedUnassignRows) {
+    const sched = scheduleById.get(row.schedule_id)
+    const patient = sched ? patientById.get(sched.patient_id) : undefined
+    const staff = staffById.get(row.caregiver_member_id)
+    if (!sched || !patient || !staff || !row.resolved_at) continue
+
+    const caregiverName = [staff.first_name, staff.last_name].filter(Boolean).join(' ') || 'Caregiver'
+    resolved.push({
+      id: row.id,
+      requestType: 'unassignment',
+      kind: row.status === 'approved' ? 'approved' : 'declined',
+      caregiverName,
+      visitTitle: visitTitleFromSchedule(sched, taskNameById),
+      clientName: patient.full_name ?? 'Client',
+      visitDateLabel: formatScheduleDate(sched.date),
+      resolvedAtLabel: formatResolvedAt(row.resolved_at),
+      reason: (row.decline_reason ?? '').trim() || undefined,
+    })
+  }
+
+  return { visits, unassignmentItems, resolved, approvedTotal, declinedTotal }
 }
 
 /**
- * Count of pending assignment requests shown in Visit Management (Assignment Requests tab + sidebar badge).
- * Matches {@link fetchVisitAssignmentDashboardData} filtering (unassigned visit, patient/caregiver data, proximity).
- * Do not use a raw `schedule_assignment_requests` count — it will disagree with the UI.
+ * Count of pending caregiver requests (assignment + unassignment) for Visit Management + sidebar badge.
  */
 export async function getPendingAssignmentRequestCountForBadge(
   supabase: Supabase
 ): Promise<{ count: number; error?: string }> {
   const data = await fetchVisitAssignmentDashboardData(supabase)
   if (data.error) return { count: 0, error: data.error }
-  const count = data.visits.reduce((sum, v) => sum + v.requests.length, 0)
+  const assignmentCount = data.visits.reduce((sum, v) => sum + v.requests.length, 0)
+  const count = assignmentCount + data.unassignmentItems.length
   return { count }
 }

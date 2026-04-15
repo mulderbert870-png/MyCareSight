@@ -305,6 +305,29 @@ export async function getScheduledVisitsAsScheduleRowsForAgency(supabase: Supaba
   return { data: mapped, error: null }
 }
 
+/** Visits for one agency in an inclusive date range (for overlap checks in scheduling UI). */
+export async function getScheduledVisitsAsScheduleRowsForAgencyAndDateRange(
+  supabase: Supabase,
+  agencyId: string,
+  startDate: string,
+  endDate: string
+) {
+  await syncScheduledVisitStatuses(supabase, { agency_id: agencyId })
+  const { data, error } = await supabase
+    .from('scheduled_visits')
+    .select(visitSelect)
+    .eq('agency_id', agencyId)
+    .gte('visit_date', startDate)
+    .lte('visit_date', endDate)
+    .order('visit_date', { ascending: true })
+    .order('scheduled_start_time', { ascending: true })
+
+  if (error) return { data: null, error }
+  const rows = (data ?? []) as ScheduledVisitDbRow[]
+  const mapped = await attachAdlCodes(supabase, rows)
+  return { data: mapped, error: null }
+}
+
 /** Visits by primary key (e.g. assignment requests referencing schedule_id = visit id). */
 export async function getScheduledVisitsByIdsAsScheduleRows(supabase: Supabase, ids: string[]) {
   const clean = Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.length > 0 && id !== 'null')))

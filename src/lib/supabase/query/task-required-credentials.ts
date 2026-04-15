@@ -49,5 +49,21 @@ export async function getCaregiverSkillCatalogFromTaskRequirements(supabase: Sup
     out.push({ type, name })
   }
 
-  return { data: out, error: null }
+  // Same credential name can appear on multiple tasks; missing task category becomes "Other".
+  // Prefer a non-"Other" category so display and grouping match the real skill family.
+  const bestTypeByName = new Map<string, string>()
+  for (const { type, name } of out) {
+    const prev = bestTypeByName.get(name)
+    if (prev === undefined) bestTypeByName.set(name, type)
+    else if (prev === 'Other' && type !== 'Other') bestTypeByName.set(name, type)
+  }
+  const deduped: CaregiverSkillCatalogItem[] = []
+  const seenNames = new Set<string>()
+  for (const { name } of out) {
+    if (seenNames.has(name)) continue
+    seenNames.add(name)
+    deduped.push({ name, type: bestTypeByName.get(name)! })
+  }
+
+  return { data: deduped, error: null }
 }

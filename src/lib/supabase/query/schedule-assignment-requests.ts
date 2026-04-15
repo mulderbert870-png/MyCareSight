@@ -96,3 +96,69 @@ export async function insertScheduleAssignmentRequest(
     .select('id')
     .single()
 }
+
+export type ScheduleUnassignmentRequestRow = {
+  id: string
+  schedule_id: string
+  caregiver_member_id: string
+  status: ScheduleAssignmentStatus
+  decline_reason: string | null
+  resolved_at: string | null
+  resolved_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+const unassignmentSelect = `
+  id,
+  schedule_id,
+  caregiver_member_id,
+  status,
+  decline_reason,
+  resolved_at,
+  resolved_by,
+  created_at,
+  updated_at
+`
+
+export async function getPendingScheduleUnassignmentRequests(supabase: Supabase) {
+  return supabase
+    .from('schedule_unassignment_requests')
+    .select(unassignmentSelect)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: true })
+}
+
+/** Recently resolved unassignment requests for coordinator history. */
+export async function getRecentResolvedScheduleUnassignmentRequests(supabase: Supabase, limit = 40) {
+  return supabase
+    .from('schedule_unassignment_requests')
+    .select(unassignmentSelect)
+    .in('status', ['approved', 'declined'])
+    .not('resolved_at', 'is', null)
+    .order('resolved_at', { ascending: false })
+    .limit(limit)
+}
+
+export async function submitScheduleUnassignmentRequestRpc(supabase: Supabase, scheduleId: string) {
+  return supabase.rpc('submit_schedule_unassignment_request', { p_schedule_id: scheduleId })
+}
+
+export async function approveScheduleUnassignmentRequestRpc(supabase: Supabase, requestId: string) {
+  return supabase.rpc('approve_schedule_unassignment_request', { p_request_id: requestId })
+}
+
+export async function declineScheduleUnassignmentRequestRpc(
+  supabase: Supabase,
+  requestId: string,
+  reason: string | null
+) {
+  return supabase.rpc('decline_schedule_unassignment_request', {
+    p_request_id: requestId,
+    p_reason: reason ?? '',
+  })
+}
+
+export async function cancelScheduleUnassignmentRequestRpc(supabase: Supabase, requestId: string) {
+  return supabase.rpc('cancel_schedule_unassignment_request', { p_request_id: requestId })
+}

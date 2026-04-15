@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState, useTransition } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   ArrowLeft,
@@ -9,6 +8,7 @@ import {
   CheckSquare,
   Clock3,
   FileText,
+  Loader2,
   LogIn,
   MapPin,
   Navigation,
@@ -16,6 +16,7 @@ import {
   Timer,
 } from 'lucide-react'
 import type { CaregiverVisitExecutionDTO } from '@/lib/caregiver-visit-execution'
+import { MY_CARE_VISITS_TAB_STORAGE_KEY } from '@/lib/caregiver-care-visits'
 import Modal from '@/components/Modal'
 import {
   caregiverClockInAction,
@@ -66,6 +67,7 @@ export default function CaregiverVisitExecutionContent({ initial }: Props) {
   const router = useRouter()
   /** Clock in/out only — keeps Clock In/Out responsive. */
   const [clockPending, startClockTransition] = useTransition()
+  const [backNavPending, startBackNavTransition] = useTransition()
   const [notesSavePending, setNotesSavePending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<TabId>('tasks')
@@ -226,7 +228,18 @@ export default function CaregiverVisitExecutionContent({ initial }: Props) {
           : 'bg-gray-100 text-gray-700 border-gray-200'
 
   return (
-    <div className="mx-auto w-full space-y-6 mt-20">
+    <div className="relative mx-auto w-full space-y-6 mt-20">
+      {backNavPending ? (
+        <div
+          className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-3 bg-white/85 backdrop-blur-sm"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <Loader2 className="h-10 w-10 shrink-0 animate-spin text-blue-600" aria-hidden />
+          <p className="text-sm font-medium text-gray-800">Returning to My Care Visits…</p>
+        </div>
+      ) : null}
+
       {error ? <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
 
       <Modal
@@ -284,13 +297,24 @@ export default function CaregiverVisitExecutionContent({ initial }: Props) {
 
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 space-y-2">
-          <Link
-            href="/pages/caregiver/my-care-visits"
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-800"
+          <button
+            type="button"
+            disabled={backNavPending}
+            onClick={() => {
+              try {
+                sessionStorage.setItem(MY_CARE_VISITS_TAB_STORAGE_KEY, 'in_progress')
+              } catch {
+                /* ignore */
+              }
+              startBackNavTransition(() => {
+                router.push('/pages/caregiver/my-care-visits')
+              })
+            }}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-800 disabled:pointer-events-none disabled:opacity-60"
           >
             <ArrowLeft className="h-4 w-4" aria-hidden />
             Back
-          </Link>
+          </button>
           <h1 className="text-2xl font-bold text-gray-900">{initial.clientName}</h1>
           <p className="text-sm text-gray-600">{initial.serviceName}</p>
           <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-xs font-medium ${badgeClass}`}>{statusLabel}</span>

@@ -47,6 +47,8 @@ import type { CaregiverRequirement } from '@/lib/supabase/query/caregiver-requir
 import type { PatientIncident } from '@/lib/supabase/query/patient-incidents'
 import type { PatientAdl, PatientAdlDaySchedule } from '@/lib/supabase/query/patient-adls'
 import type { ScheduleRow } from '@/lib/supabase/query/schedules'
+import type { CaregiverAvailabilitySlotRow } from '@/lib/supabase/query/caregiver-availability'
+import { visitStatusBadgeClass, visitStatusFromScheduleRow } from '@/lib/visit-status-styles'
 import type { PatientContractedHoursRow } from '@/lib/supabase/query/patient-contracted-hours'
 import type { PatientSkilledTaskDaySchedule, SkilledCarePlanTask } from '@/lib/supabase/query/skilled-care-plan'
 import type { PatientServiceContractRow } from '@/lib/supabase/query/patient-service-contracts'
@@ -318,6 +320,7 @@ export default function ClientDetailContent({ client, allClients, representative
   const [pendingSkilledDeletes, setPendingSkilledDeletes] = useState<string[]>([])
   const [addAdlModalOpen, setAddAdlModalOpen] = useState(false)
   const [addAdlSearch, setAddAdlSearch] = useState('')
+  const [addAdlCategoryFilter, setAddAdlCategoryFilter] = useState<'all' | 'ADL' | 'IADL'>('all')
   const [addAdlSelected, setAddAdlSelected] = useState<Set<string>>(new Set())
   const [isSavingAddAdl, setIsSavingAddAdl] = useState(false)
   const [addAdlError, setAddAdlError] = useState<string | null>(null)
@@ -421,12 +424,14 @@ export default function ClientDetailContent({ client, allClients, representative
   const [limitError, setLimitError] = useState<string | null>(null)
   const [scheduleLimitWarning, setScheduleLimitWarning] = useState<string | null>(null)
   const [visitDateSchedules, setVisitDateSchedules] = useState<ScheduleRow[]>([])
+  const [caregiverAvailabilitySlots, setCaregiverAvailabilitySlots] = useState<CaregiverAvailabilitySlotRow[]>([])
   const [editVisitModalOpen, setEditVisitModalOpen] = useState(false)
   const [editingSchedule, setEditingSchedule] = useState<ScheduleRow | null>(null)
 
   // Caregiver dropdown (Add/Edit Visit modal, Schedule tab).
   const [caregiverPickerOpen, setCaregiverPickerOpen] = useState(false)
   const [caregiverPickerFilter, setCaregiverPickerFilter] = useState<'all' | 'available' | 'booked' | 'blocked'>('all')
+  const [caregiverPickerSort, setCaregiverPickerSort] = useState<'proximity' | 'availability'>('proximity')
   const caregiverPickerWrapRef = useRef<HTMLDivElement | null>(null)
   const caregiverPickerTriggerRef = useRef<HTMLButtonElement | null>(null)
   const caregiverPickerDropdownRef = useRef<HTMLDivElement | null>(null)
@@ -649,17 +654,47 @@ export default function ClientDetailContent({ client, allClients, representative
     }
   }, [activeTab, scheduleNowTick, scheduleWeekStartStr, weekSchedules])
 
+  const schedulingAgencyId = useMemo(() => {
+    for (const s of staffList ?? []) {
+      const agency = (s as any)?.agency_id
+      if (typeof agency === 'string' && agency.trim()) return agency.trim()
+    }
+    for (const s of weekSchedules) {
+      if (typeof s.agency_id === 'string' && s.agency_id.trim()) return s.agency_id.trim()
+    }
+    return null
+  }, [staffList, weekSchedules])
+
   useEffect(() => {
     const dateForFetch = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
-    if ((!addVisitModalOpen && !editVisitModalOpen) || !dateForFetch) {
+    if ((!addVisitModalOpen && !editVisitModalOpen) || !dateForFetch || !schedulingAgencyId) {
       setVisitDateSchedules([])
+      setCaregiverAvailabilitySlots([])
       return
     }
     const supabase = createClient()
-    q.getSchedulesByPatientIdAndDateRange(supabase, localClient.id, dateForFetch, dateForFetch).then(
+    q.getScheduledVisitsAsScheduleRowsForAgencyAndDateRange(
+      supabase,
+      schedulingAgencyId,
+      dateForFetch,
+      dateForFetch
+    ).then(
       ({ data }) => setVisitDateSchedules(data ?? [])
     )
-  }, [addVisitModalOpen, editVisitModalOpen, localClient.id, visitForm.date, visitForm.isRecurring, visitForm.repeatStart])
+
+    const caregiverIds = (staffList ?? []).map((s) => String(s.id)).filter(Boolean)
+    q.getCaregiverAvailabilitySlotsByCaregiverIds(supabase, caregiverIds).then(({ data }) =>
+      setCaregiverAvailabilitySlots((data ?? []) as CaregiverAvailabilitySlotRow[])
+    )
+  }, [
+    addVisitModalOpen,
+    editVisitModalOpen,
+    visitForm.date,
+    visitForm.isRecurring,
+    visitForm.repeatStart,
+    staffList,
+    schedulingAgencyId,
+  ])
 
   useEffect(() => {
     if (isEditingMedical) {
@@ -1340,6 +1375,7 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const openAddAdlModal = () => {
     setAddAdlSearch('')
+    setAddAdlCategoryFilter('all')
     setAddAdlSelected(new Set())
     setAddAdlError(null)
     setAddAdlModalOpen(true)
@@ -2231,6 +2267,16 @@ export default function ClientDetailContent({ client, allClients, representative
     return h * 60 + m
   }
 
+  const utcTimeToLocalHmForDate = (raw: string | null | undefined, ymd: string): string => {
+    if (!raw || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return ''
+    const s = String(raw).trim().slice(0, 5)
+    if (!/^\d{2}:\d{2}$/.test(s)) return ''
+    const [y, m, d] = ymd.split('-').map(Number)
+    const [hh, mm] = s.split(':').map(Number)
+    const utcDate = new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0, 0, 0))
+    return `${String(utcDate.getHours()).padStart(2, '0')}:${String(utcDate.getMinutes()).padStart(2, '0')}`
+  }
+
   /** US ZIP: first 5 digits for `zipcodes` lookup (strips ZIP+4). */
   const normalizeUsZipForLookup = (zip: unknown): string | null => {
     if (zip === null || zip === undefined) return null
@@ -2256,7 +2302,31 @@ export default function ClientDetailContent({ client, allClients, representative
     const startMins = parseTimeToMinutes(visitForm.startTime)
     const endMins = parseTimeToMinutes(visitForm.endTime)
     const hasTime = startMins !== null && endMins !== null && (endMins as number) > (startMins as number)
+    const visitDate = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
+    const visitDayOfWeek =
+      visitDate && /^\d{4}-\d{2}-\d{2}$/.test(visitDate) ? new Date(`${visitDate}T12:00:00`).getDay() : null
+    const hasDate = !!visitDate && visitDayOfWeek !== null
     const excludedScheduleId = editingSchedule?.id ?? null
+
+    const slotFullyCoversVisit = (slot: CaregiverAvailabilitySlotRow): boolean => {
+      if (!hasTime || !hasDate || !visitDate) return false
+      const slotStartLocal = utcTimeToLocalHmForDate(slot.start_time, visitDate)
+      const slotEndLocal = utcTimeToLocalHmForDate(slot.end_time, visitDate)
+      const slotStart = parseTimeToMinutes(slotStartLocal)
+      const slotEnd = parseTimeToMinutes(slotEndLocal)
+      if (slotStart === null || slotEnd === null) return false
+      if (!(slotStart <= (startMins as number) && slotEnd >= (endMins as number))) return false
+
+      if (slot.is_recurring) {
+        const days = Array.isArray(slot.days_of_week) ? slot.days_of_week : []
+        if (!days.includes(visitDayOfWeek as number)) return false
+        if (slot.repeat_start && visitDate < slot.repeat_start) return false
+        if (slot.repeat_end && visitDate > slot.repeat_end) return false
+        return true
+      }
+
+      return slot.specific_date === visitDate
+    }
 
     const options = staff.map((s) => {
       const caregiverSkills = Array.isArray((s as any).skills) ? ((s as any).skills as string[]) : []
@@ -2264,10 +2334,13 @@ export default function ClientDetailContent({ client, allClients, representative
       const requiredLen = requiredSkills.length
       const matchCount = requiredLen === 0 ? 0 : requiredSkills.filter((sk) => caregiverSkills.includes(sk)).length
       const skillMatchScore = requiredLen === 0 ? 1 : matchCount / requiredLen
-      const blocked: boolean = requiredLen === 0 ? false : matchCount < requiredLen
+      const matchingAvailability = caregiverAvailabilitySlots.filter(
+        (slot) => slot.caregiver_member_id === s.id && slotFullyCoversVisit(slot)
+      )
+      const available = hasTime && hasDate && matchingAvailability.length > 0
 
       let booked = false
-      if (hasTime) {
+      if (available && hasTime) {
         booked = (visitDateSchedules ?? [])
           .filter((v) => v.id !== excludedScheduleId)
           .some((v) => {
@@ -2301,7 +2374,7 @@ export default function ClientDetailContent({ client, allClients, representative
         distanceLabel = '—'
       }
 
-      const status: CaregiverAvailabilityStatus = blocked ? 'blocked' : booked ? 'booked' : 'available'
+      const status: CaregiverAvailabilityStatus = available ? (booked ? 'booked' : 'available') : 'blocked'
 
       return {
         caregiver: s,
@@ -2325,7 +2398,11 @@ export default function ClientDetailContent({ client, allClients, representative
     localClient.zip_code,
     visitForm.startTime,
     visitForm.endTime,
+    visitForm.date,
+    visitForm.repeatStart,
+    visitForm.isRecurring,
     visitDateSchedules,
+    caregiverAvailabilitySlots,
     editingSchedule?.id,
   ])
 
@@ -2335,7 +2412,19 @@ export default function ClientDetailContent({ client, allClients, representative
       ? `${selected.caregiver.first_name ?? ''} ${selected.caregiver.last_name ?? ''}`.trim()
       : ''
 
-    const filtered = caregiverOptions.filter((o) => (caregiverPickerFilter === 'all' ? true : o.status === caregiverPickerFilter))
+    const filtered = caregiverOptions.filter((o) =>
+      caregiverPickerFilter === 'all' ? true : o.status === caregiverPickerFilter
+    )
+    const sortedFiltered = [...filtered].sort((a, b) => {
+      if (caregiverPickerSort === 'availability') {
+        const rank = (s: CaregiverAvailabilityStatus) =>
+          s === 'available' ? 0 : s === 'booked' ? 1 : 2
+        const byStatus = rank(a.status) - rank(b.status)
+        if (byStatus !== 0) return byStatus
+      }
+      if (a.distanceMiles !== b.distanceMiles) return a.distanceMiles - b.distanceMiles
+      return b.skillMatchScore - a.skillMatchScore
+    })
 
     const pillForStatus = (status: CaregiverAvailabilityStatus) => {
       if (status === 'available') {
@@ -2357,7 +2446,7 @@ export default function ClientDetailContent({ client, allClients, representative
       return (
         <span className="inline-flex items-center gap-1 border border-red-200 bg-red-50 text-red-700 rounded-md px-2 py-0.5 text-xs font-semibold">
           <X className="w-3 h-3" />
-          Blocked
+          Not Available
         </span>
       )
     }
@@ -2377,7 +2466,38 @@ export default function ClientDetailContent({ client, allClients, representative
         }
       >
         <div className="px-4 py-2 border-b border-gray-100 bg-white">
-          <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">SORTED BY: CLOSEST - BEST SKILL MATCH</div>
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+              SORTED BY:{' '}
+              {caregiverPickerSort === 'proximity'
+                ? 'PROXIMITY'
+                : 'AVAILABILITY'}
+            </div>
+            <div className="inline-flex rounded-md border border-gray-200 bg-gray-100/80 p-0.5">
+              <button
+                type="button"
+                onClick={() => setCaregiverPickerSort('proximity')}
+                className={`px-2.5 py-1 text-[11px] font-semibold rounded transition-colors ${
+                  caregiverPickerSort === 'proximity'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-blue-700'
+                }`}
+              >
+                Proximity
+              </button>
+              <button
+                type="button"
+                onClick={() => setCaregiverPickerSort('availability')}
+                className={`px-2.5 py-1 text-[11px] font-semibold rounded transition-colors ${
+                  caregiverPickerSort === 'availability'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-gray-600 hover:text-emerald-700'
+                }`}
+              >
+                Availability
+              </button>
+            </div>
+          </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
             <button
               type="button"
@@ -2415,7 +2535,7 @@ export default function ClientDetailContent({ client, allClients, representative
           {filtered.length === 0 ? (
             <div className="px-4 py-6 text-center text-sm text-gray-500">No caregivers found.</div>
           ) : (
-            filtered.map((o, idx) => {
+            sortedFiltered.map((o, idx) => {
               const c = o.caregiver
               const name = `${c.first_name ?? ''} ${c.last_name ?? ''}`.trim()
               const role = String((c as any).role ?? '')
@@ -2481,7 +2601,7 @@ export default function ClientDetailContent({ client, allClients, representative
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      {pillForStatus('available')}
+                      {pillForStatus(o.status)}
                       <div className="flex items-center gap-1 text-[12px] text-gray-500 mt-2 justify-end whitespace-nowrap">
                         <MapPin className="w-4 h-4 text-gray-400 shrink-0" />
                         <span>{o.distanceLabel}</span>
@@ -2529,6 +2649,7 @@ export default function ClientDetailContent({ client, allClients, representative
     const today = toLocalDateString(new Date())
     setCaregiverPickerOpen(false)
     setCaregiverPickerFilter('all')
+    setCaregiverPickerSort('proximity')
     setVisitForm({
       date: today,
       startTime: '09:00',
@@ -2557,6 +2678,7 @@ export default function ClientDetailContent({ client, allClients, representative
       setAddVisitModalOpen(false)
       setCaregiverPickerOpen(false)
       setCaregiverPickerFilter('all')
+      setCaregiverPickerSort('proximity')
     }
   }
 
@@ -2565,6 +2687,7 @@ export default function ClientDetailContent({ client, allClients, representative
     const end = (schedule.end_time ?? '10:00').slice(0, 5)
     setCaregiverPickerOpen(false)
     setCaregiverPickerFilter('all')
+    setCaregiverPickerSort('proximity')
     setEditingSchedule(schedule)
     setVisitForm({
       date: schedule.date,
@@ -2608,6 +2731,7 @@ export default function ClientDetailContent({ client, allClients, representative
       setEditingSchedule(null)
       setCaregiverPickerOpen(false)
       setCaregiverPickerFilter('all')
+      setCaregiverPickerSort('proximity')
     }
   }
 
@@ -4825,10 +4949,7 @@ export default function ClientDetailContent({ client, allClients, representative
                                     style={{ height: `${rowSpan * 3}rem`, verticalAlign: 'top' }}
                                   >
                                     {(() => {
-                                      const missed = block.status === 'missed'
-                                      const colors = missed
-                                        ? { bg: '#f5e6d3', border: '#a8701d', text: '#5c4a2a' }
-                                        : getScheduleBlockColors(block.type)
+                                      const colors = getScheduleBlockColors(block.type)
                                       const rawStatus = String(block.status ?? '').trim().toLowerCase()
                                       const statusLabel =
                                         rawStatus === 'completed'
@@ -4867,7 +4988,11 @@ export default function ClientDetailContent({ client, allClients, representative
                                               {durationMins >= 60 ? `${Math.floor(durationMins / 60)}h` : `${durationMins}m`}
                                             </div>
                                           </div>
-                                          <span className="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center rounded-full border border-blue-300 bg-blue-100 px-2 py-0.5 text-[11px] font-medium text-blue-700">
+                                          <span
+                                            className={`absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${visitStatusBadgeClass(
+                                              visitStatusFromScheduleRow(block)
+                                            )}`}
+                                          >
                                             {statusLabel}
                                           </span>
                                         </button>
@@ -6000,15 +6125,26 @@ export default function ClientDetailContent({ client, allClients, representative
       >
         <form onSubmit={handleSaveAddAdl} className="space-y-4">
           <p className="text-sm text-gray-600">Search and select from the library of daily living activities</p>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              type="text"
-              value={addAdlSearch}
-              onChange={(e) => setAddAdlSearch(e.target.value)}
-              placeholder="Type to search..."
-              className="block w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={addAdlSearch}
+                onChange={(e) => setAddAdlSearch(e.target.value)}
+                placeholder="Type to search..."
+                className="block w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            <select
+              value={addAdlCategoryFilter}
+              onChange={(e) => setAddAdlCategoryFilter(e.target.value as 'all' | 'ADL' | 'IADL')}
+              className="w-36 px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm text-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="all">All Categories</option>
+              <option value="ADL">ADL</option>
+              <option value="IADL">IADL</option>
+            </select>
           </div>
           <div className="border border-gray-200 rounded-lg max-h-64 overflow-y-auto">
             {(() => {
@@ -6016,6 +6152,7 @@ export default function ClientDetailContent({ client, allClients, representative
               const available = adlLists.filter(
                 (a) =>
                   !localAdls.some((x) => x.adl_code === a.name) &&
+                  (addAdlCategoryFilter === 'all' || a.group === addAdlCategoryFilter) &&
                   (query === '' ||
                     a.name.toLowerCase().includes(query) ||
                     a.group.toLowerCase().includes(query))
