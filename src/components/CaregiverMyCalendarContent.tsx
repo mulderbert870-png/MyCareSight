@@ -526,7 +526,7 @@ export default function CaregiverMyCalendarContent({
   )
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 pb-16">
+    <div className="w-full mx-auto px-4 py-8 pb-16">
       <div className="flex flex-col gap-4 mb-8 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-bold text-gray-900">My Calendar</h1>
@@ -544,7 +544,9 @@ export default function CaregiverMyCalendarContent({
         </button>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6 mb-8">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-6">
+        <div className="w-full min-w-0 lg:w-[70%] lg:shrink-0">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <h2 className="text-lg font-semibold text-gray-900">{formatMonthYear(viewMonth)}</h2>
           <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto">
@@ -661,7 +663,9 @@ export default function CaregiverMyCalendarContent({
           </span>
         </div>
       </div>
+        </div>
 
+        <div className="w-full min-w-0 lg:w-[30%] lg:shrink-0">
       <div>
         <h2 className="text-sm font-bold tracking-wide text-blue-900 mb-4">ALL AVAILABILITY SLOTS</h2>
         <div className="space-y-3">
@@ -734,6 +738,8 @@ export default function CaregiverMyCalendarContent({
               </div>
             ))
           )}
+        </div>
+      </div>
         </div>
       </div>
 

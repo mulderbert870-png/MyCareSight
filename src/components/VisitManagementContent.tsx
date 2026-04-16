@@ -44,8 +44,10 @@ export type VisitManagementContentProps = {
   allClients: Array<{ id: string; name: string }>
   allCaregivers: Array<{ id: string; name: string }>
   resolved: ResolvedAssignmentRowDTO[]
-  approvedTotal: number
-  declinedTotal: number
+  assignmentApprovedTotal: number
+  assignmentDeclinedTotal: number
+  unassignmentApprovedTotal: number
+  unassignmentDeclinedTotal: number
   loadError?: string
 }
 
@@ -120,8 +122,10 @@ export default function VisitManagementContent({
   allClients,
   allCaregivers,
   resolved,
-  approvedTotal,
-  declinedTotal,
+  assignmentApprovedTotal,
+  assignmentDeclinedTotal,
+  unassignmentApprovedTotal,
+  unassignmentDeclinedTotal,
   loadError,
 }: VisitManagementContentProps) {
   const router = useRouter()
@@ -189,10 +193,30 @@ export default function VisitManagementContent({
   const pendingUnassignmentCount = unassignmentItems.length
   const pendingCaregiverRequestTotal = pendingAssignmentCount + pendingUnassignmentCount
 
-  const summary = useMemo(
-    () => ({ pending: pendingCaregiverRequestTotal, approved: approvedTotal, declined: declinedTotal }),
-    [pendingCaregiverRequestTotal, approvedTotal, declinedTotal]
-  )
+  const requestsSummary = useMemo(() => {
+    if (requestsSubtab === 'assignment') {
+      return {
+        pending: pendingAssignmentCount,
+        approved: assignmentApprovedTotal,
+        declined: assignmentDeclinedTotal,
+        pendingCaption: 'Pending assignment requests',
+      }
+    }
+    return {
+      pending: pendingUnassignmentCount,
+      approved: unassignmentApprovedTotal,
+      declined: unassignmentDeclinedTotal,
+      pendingCaption: 'Pending unassignment requests',
+    }
+  }, [
+    requestsSubtab,
+    pendingAssignmentCount,
+    pendingUnassignmentCount,
+    assignmentApprovedTotal,
+    assignmentDeclinedTotal,
+    unassignmentApprovedTotal,
+    unassignmentDeclinedTotal,
+  ])
 
   const runAction = async (key: string, fn: () => Promise<{ ok?: true; error?: string }>) => {
     setActionError(null)
@@ -383,18 +407,14 @@ export default function VisitManagementContent({
           </button>
         </div>
       </div>
-      {tabNavPending ? (
+      {tabNavPending && tabLoadingKey !== 'assignment' && tabLoadingKey !== 'unassignment' ? (
         <div className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
           Loading {tabLoadingKey === 'all'
             ? 'All Visits'
             : tabLoadingKey === 'requests'
               ? 'Caregiver Requests'
-              : tabLoadingKey === 'assignment'
-                ? 'Assignment Requests'
-                : tabLoadingKey === 'unassignment'
-                  ? 'Unassignment Requests'
-                  : '...'}
+              : '...'}
           ...
         </div>
       ) : null}
@@ -537,15 +557,10 @@ export default function VisitManagementContent({
         </>
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="rounded-xl border border-amber-100 bg-amber-50/80 p-4 flex items-center gap-4 shadow-sm"><div className="rounded-full bg-amber-100 p-3 text-amber-700"><Bell className="h-6 w-6" aria-hidden /></div><div><div className="text-2xl font-bold text-gray-900">{summary.pending}</div><div className="text-sm text-gray-600">Pending Review</div></div></div>
-            <div className="rounded-xl border border-emerald-100 bg-emerald-50/80 p-4 flex items-center gap-4 shadow-sm"><div className="rounded-full bg-emerald-100 p-3 text-emerald-700"><CheckCircle2 className="h-6 w-6" aria-hidden /></div><div><div className="text-2xl font-bold text-gray-900">{summary.approved}</div><div className="text-sm text-gray-600">Approved</div></div></div>
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 flex items-center gap-4 shadow-sm"><div className="rounded-full bg-gray-200 p-3 text-gray-600"><ThumbsDown className="h-6 w-6" aria-hidden /></div><div><div className="text-2xl font-bold text-gray-900">{summary.declined}</div><div className="text-sm text-gray-600">Declined</div></div></div>
-          </div>
-          <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100/80 p-1 shadow-inner mb-4">
+          <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100/80 p-1 shadow-inner mb-2">
             <button
               type="button"
-              disabled={tabNavPending}
+              disabled={tabNavPending && tabLoadingKey === 'assignment'}
               onClick={() => goToRequestsSubtab('assignment')}
               className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${requestsSubtab === 'assignment' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}
             >
@@ -559,7 +574,7 @@ export default function VisitManagementContent({
             </button>
             <button
               type="button"
-              disabled={tabNavPending}
+              disabled={tabNavPending && tabLoadingKey === 'unassignment'}
               onClick={() => goToRequestsSubtab('unassignment')}
               className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${requestsSubtab === 'unassignment' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}
             >
@@ -571,6 +586,36 @@ export default function VisitManagementContent({
                 </span>
               ) : null}
             </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+            <div className="rounded-xl border border-amber-100 bg-amber-50/80 p-4 flex items-center gap-4 shadow-sm">
+              <div className="rounded-full bg-amber-100 p-3 text-amber-700">
+                <Bell className="h-6 w-6" aria-hidden />
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-gray-900">{requestsSummary.pending}</div>
+                <div className="text-sm text-gray-600">{requestsSummary.pendingCaption}</div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/80 p-4 flex items-center gap-4 shadow-sm">
+              <div className="rounded-full bg-emerald-100 p-3 text-emerald-700">
+                <CheckCircle2 className="h-6 w-6" aria-hidden />
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-gray-900">{requestsSummary.approved}</div>
+                <div className="text-sm text-gray-600">Approved</div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 flex items-center gap-4 shadow-sm">
+              <div className="rounded-full bg-gray-200 p-3 text-gray-600">
+                <ThumbsDown className="h-6 w-6" aria-hidden />
+              </div>
+              <div>
+                <div className="text-2xl font-bold text-gray-900">{requestsSummary.declined}</div>
+                <div className="text-sm text-gray-600">Declined</div>
+              </div>
+            </div>
           </div>
 
           <div>

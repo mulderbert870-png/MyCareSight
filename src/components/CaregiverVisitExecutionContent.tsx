@@ -168,6 +168,11 @@ export default function CaregiverVisitExecutionContent({ initial }: Props) {
         setClockInAt(new Date().toISOString())
         setStatusLabel('In Progress')
         setClockModalOpen(false)
+        try {
+          sessionStorage.setItem(MY_CARE_VISITS_TAB_STORAGE_KEY, 'in_progress')
+        } catch {
+          /* ignore */
+        }
         router.refresh()
         return
       }
@@ -302,7 +307,8 @@ export default function CaregiverVisitExecutionContent({ initial }: Props) {
             disabled={backNavPending}
             onClick={() => {
               try {
-                sessionStorage.setItem(MY_CARE_VISITS_TAB_STORAGE_KEY, 'in_progress')
+                const backTab = clockInAt || initial.clockInAt ? 'in_progress' : 'upcoming'
+                sessionStorage.setItem(MY_CARE_VISITS_TAB_STORAGE_KEY, backTab)
               } catch {
                 /* ignore */
               }

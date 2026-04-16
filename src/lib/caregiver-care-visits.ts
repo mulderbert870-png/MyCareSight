@@ -246,7 +246,7 @@ export async function fetchCaregiverCareVisitsData(
     scheduleIds.length
       ? supabase
           .from('visit_time_entries')
-          .select('scheduled_visit_id, caregiver_notes')
+          .select('scheduled_visit_id, caregiver_notes, clock_in_time, clock_out_time')
           .in('scheduled_visit_id', scheduleIds)
       : Promise.resolve({ data: [], error: null }),
   ])
@@ -278,13 +278,18 @@ export async function fetchCaregiverCareVisitsData(
     taskCountByVisit.set(vid, cur)
   }
 
+  /** Visits with EVV clock-in and no clock-out (sync_scheduled_visit_statuses may still show `scheduled` on the row). */
+  const activeClockInVisitIds = new Set<string>()
   const caregiverNotesByVisit = new Map<string, string | null>()
   for (const vr of (vteNotesRes.data ?? []) as {
     scheduled_visit_id?: string
     caregiver_notes?: string | null
+    clock_in_time?: string | null
+    clock_out_time?: string | null
   }[]) {
     const vid = String(vr.scheduled_visit_id ?? '')
     if (!vid) continue
+    if (vr.clock_in_time && !vr.clock_out_time) activeClockInVisitIds.add(vid)
     const n = vr.caregiver_notes?.trim() ? vr.caregiver_notes.trim() : null
     caregiverNotesByVisit.set(vid, n)
   }
@@ -315,7 +320,7 @@ export async function fetchCaregiverCareVisitsData(
         serviceName: (row.type ?? '').trim() || 'Personal Care',
         locationLine: patient?.street_address?.trim() || '-',
         locationShort,
-        status: getStatus(row),
+        status: activeClockInVisitIds.has(row.id) ? 'in_progress' : getStatus(row),
         adlTasks,
         adlTasksCompleted,
         adlTasksTotal,
@@ -341,9 +346,3 @@ export async function fetchCaregiverCareVisitsData(
 
 /** Persist My Visits sub-tab (`upcoming` | `in_progress` | `past`) across client navigations. */
 export const MY_CARE_VISITS_TAB_STORAGE_KEY = 'caregiver-mycarevisits-tab'
-
-/**
- * Visit IDs the caregiver opened with "Start Visit". Rows stay `assigned` in the DB until clock-in;
- * this lets the In Progress tab list them immediately. Cleared when the visit is completed or missed.
- */
-export const MY_CARE_VISITS_STARTED_VISIT_IDS_KEY = 'caregiver-mycarevisits-started-visit-ids'

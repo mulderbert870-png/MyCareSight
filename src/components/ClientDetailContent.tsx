@@ -1376,7 +1376,7 @@ export default function ClientDetailContent({ client, allClients, representative
   const openAddAdlModal = () => {
     setAddAdlSearch('')
     setAddAdlCategoryFilter('all')
-    setAddAdlSelected(new Set())
+    setAddAdlSelected(new Set(localAdls.map((a) => a.adl_code)))
     setAddAdlError(null)
     setAddAdlModalOpen(true)
   }
@@ -1385,8 +1385,10 @@ export default function ClientDetailContent({ client, allClients, representative
   }
   const handleSaveAddAdl = async (e: React.FormEvent) => {
     e.preventDefault()
-    const toAdd = Array.from(addAdlSelected).filter((name) => !localAdls.some((a) => a.adl_code === name))
-    if (toAdd.length === 0) {
+    const existingCodes = new Set(localAdls.map((a) => a.adl_code))
+    const toAdd = Array.from(addAdlSelected).filter((name) => !existingCodes.has(name))
+    const toRemove = localAdls.map((a) => a.adl_code).filter((name) => !addAdlSelected.has(name))
+    if (toAdd.length === 0 && toRemove.length === 0) {
       setAddAdlModalOpen(false)
       return
     }
@@ -1394,14 +1396,28 @@ export default function ClientDetailContent({ client, allClients, representative
     setAddAdlError(null)
     try {
       const supabase = createClient()
-      const nextOrder = localAdls.length > 0 ? Math.max(...localAdls.map((a) => a.display_order)) + 1 : 0
-      const { data: inserted, error } = await q.insertAdls(supabase, localClient.id, toAdd, nextOrder)
-      if (error) throw error
-      if (inserted) setLocalAdls((prev) => [...prev, ...inserted])
+      for (const code of toRemove) {
+        const { error: delErr } = await q.deleteAdl(supabase, localClient.id, code)
+        if (delErr) throw delErr
+      }
+      const remaining = localAdls.filter((a) => !toRemove.includes(a.adl_code))
+      const nextOrder = remaining.length > 0 ? Math.max(...remaining.map((a) => a.display_order)) + 1 : 0
+      let inserted: PatientAdl[] | null = null
+      if (toAdd.length > 0) {
+        const { data, error } = await q.insertAdls(supabase, localClient.id, toAdd, nextOrder)
+        if (error) throw error
+        inserted = data ?? null
+      }
+      setLocalAdls((prev) => {
+        const without = prev.filter((a) => !toRemove.includes(a.adl_code))
+        if (inserted?.length) return [...without, ...inserted]
+        return without
+      })
+      setLocalAdlSchedules((prev) => prev.filter((s) => !toRemove.includes(s.adl_code)))
       setAddAdlModalOpen(false)
       router.refresh()
     } catch (err: unknown) {
-      setAddAdlError(err instanceof Error ? err.message : 'Failed to add NON-SKILLED TASKS.')
+      setAddAdlError(err instanceof Error ? err.message : 'Failed to update NON-SKILLED TASKS.')
     } finally {
       setIsSavingAddAdl(false)
     }
@@ -2290,7 +2306,8 @@ export default function ClientDetailContent({ client, allClients, representative
   const formatDistanceMiles = (miles: number) => {
     if (!Number.isFinite(miles)) return '—'
     if (miles === 0) return '0 mi'
-    return `${miles} mi`
+    // Up to two decimal places (trim trailing zeros), e.g. 5.2 mi, 12.37 mi
+    return `${parseFloat(miles.toFixed(2))} mi`
   }
 
   const caregiverOptions = useMemo(() => {
@@ -3449,6 +3466,8 @@ export default function ClientDetailContent({ client, allClients, representative
   ] as const
   const skilledTaskBadgeClassByCategory = (category: string) => {
     const known: Record<string, string> = {
+      ADL: 'bg-blue-100 text-blue-700',
+      IADL: 'bg-rose-100 text-rose-700',
       'Wound Care': 'bg-rose-100 text-rose-700',
       'Medication Management': 'bg-blue-100 text-blue-700',
       'Vital Signs & Monitoring': 'bg-emerald-100 text-emerald-700',
@@ -6116,42 +6135,42 @@ export default function ClientDetailContent({ client, allClients, representative
         </form>
       </Modal>
 
-      {/* Add ADL Task Modal */}
+      {/* Add ADL Task Modal — layout matches Skilled Task Library modal */}
       <Modal
         isOpen={addAdlModalOpen}
         onClose={closeAddAdlModal}
         title="Non-Skilled Task Library"
+        subtitle="Select daily living activities to add to the care plan"
         size="md"
       >
-        <form onSubmit={handleSaveAddAdl} className="space-y-4">
-          <p className="text-sm text-gray-600">Search and select from the library of daily living activities</p>
-          <div className="flex items-center gap-2">
+        <form onSubmit={handleSaveAddAdl} className="space-y-3">
+          <div className="flex gap-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 value={addAdlSearch}
                 onChange={(e) => setAddAdlSearch(e.target.value)}
-                placeholder="Type to search..."
-                className="block w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Search tasks..."
+                className="w-full rounded-lg border border-gray-300 pl-9 pr-3 py-2 text-sm"
               />
             </div>
             <select
               value={addAdlCategoryFilter}
               onChange={(e) => setAddAdlCategoryFilter(e.target.value as 'all' | 'ADL' | 'IADL')}
-              className="w-36 px-3 py-2 border border-gray-300 rounded-lg bg-white text-sm text-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
             >
-              <option value="all">All Categories</option>
+              <option value="all">All</option>
               <option value="ADL">ADL</option>
               <option value="IADL">IADL</option>
             </select>
           </div>
-          <div className="border border-gray-200 rounded-lg max-h-64 overflow-y-auto">
+
+          <div className="max-h-[50vh] overflow-y-auto space-y-3 pr-1">
             {(() => {
               const query = addAdlSearch.toLowerCase().trim()
               const available = adlLists.filter(
                 (a) =>
-                  !localAdls.some((x) => x.adl_code === a.name) &&
                   (addAdlCategoryFilter === 'all' || a.group === addAdlCategoryFilter) &&
                   (query === '' ||
                     a.name.toLowerCase().includes(query) ||
@@ -6159,8 +6178,8 @@ export default function ClientDetailContent({ client, allClients, representative
               )
               if (available.length === 0) {
                 return (
-                  <div className="px-4 py-6 text-center text-sm text-gray-500">
-                    No ADLs to add. Already added or no match.
+                  <div className="py-8 text-center text-sm text-gray-500">
+                    No tasks to add. Already added or no match.
                   </div>
                 )
               }
@@ -6169,60 +6188,71 @@ export default function ClientDetailContent({ client, allClients, representative
                 acc[item.group].push(item)
                 return acc
               }, {})
-              return Object.keys(grouped).sort().map((groupName) => (
-                <div key={groupName} className="border-b border-gray-100 last:border-0">
-                  <div className={`text-lg italic py-2 px-2 ${groupName === 'ADL' ? 'text-blue-500' : 'text-red-500'}`}>
-                    {groupName === 'ADL' ? 'ADL' : 'IADL'}
-                  </div>
-                  {grouped[groupName].map((a) => (
-                    <label
-                      key={a.name}
-                      className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer border-t border-gray-100 first:border-t-0"
+              return Object.entries(grouped)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([category, tasks]) => (
+                  <div key={category} className="space-y-2">
+                    <div
+                      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium ${skilledTaskBadgeClassByCategory(
+                        category
+                      )}`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={addAdlSelected.has(a.name)}
-                        onChange={(e) => {
-                          setAddAdlSelected((prev) => {
-                            const next = new Set(prev)
-                            if (e.target.checked) next.add(a.name)
-                            else next.delete(a.name)
-                            return next
-                          })
-                        }}
-                        className="mt-1 rounded border-gray-300 text-gray-900 focus:ring-blue-500"
-                      />
-                      <div className='relative w-full flex items-center'>
-                        <div className="text-lg text-gray-900 w-[80%] truncate">{a.name}</div>
-                        <div className={`absolute right-2 top-0 mt-1 text-xs text-gray-500 py-0.5 px-2 rounded-full w-[3rem] flex justify-center items-center ${a.group === 'ADL' ? 'bg-blue-500 text-white' : 'bg-red-500 text-white'}`}>{a.group}</div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              ))
+                      {category}
+                    </div>
+                    {tasks.map((a) => {
+                      const selected = addAdlSelected.has(a.name)
+                      return (
+                        <div
+                          key={a.name}
+                          className="rounded-xl border border-gray-200 bg-white p-3 flex items-start justify-between gap-3"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-medium text-gray-900">{a.name}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setAddAdlSelected((prev) => {
+                                const next = new Set(prev)
+                                if (next.has(a.name)) next.delete(a.name)
+                                else next.add(a.name)
+                                return next
+                              })
+                            }
+                            className="rounded-lg px-2 py-1 text-sm font-semibold text-purple-600 hover:bg-purple-50"
+                          >
+                            {selected ? <Check className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ))
             })()}
           </div>
+
           {addAdlError && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
               {addAdlError}
             </div>
           )}
-          <div className="flex items-center justify-end gap-3 pt-2">
+
+          <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={closeAddAdlModal}
               disabled={isSavingAddAdl}
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={isSavingAddAdl || addAdlSelected.size === 0}
-              className="px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50 flex items-center gap-2"
+              disabled={isSavingAddAdl}
+              className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
             >
-              {isSavingAddAdl && <Loader2 className="w-4 h-4 animate-spin" />}
-              Save
+              {isSavingAddAdl && <Loader2 className="h-4 w-4 animate-spin" />}
+              Apply
             </button>
           </div>
         </form>

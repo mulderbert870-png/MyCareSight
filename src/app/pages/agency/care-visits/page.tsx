@@ -42,8 +42,10 @@ export default async function CareVisitsPage() {
           allClients={allVisits.allClients}
           allCaregivers={allVisits.allCaregivers}
           resolved={dashboard.resolved}
-          approvedTotal={dashboard.approvedTotal}
-          declinedTotal={dashboard.declinedTotal}
+          assignmentApprovedTotal={dashboard.assignmentApprovedTotal}
+          assignmentDeclinedTotal={dashboard.assignmentDeclinedTotal}
+          unassignmentApprovedTotal={dashboard.unassignmentApprovedTotal}
+          unassignmentDeclinedTotal={dashboard.unassignmentDeclinedTotal}
           loadError={dashboard.error}
         />
       </Suspense>

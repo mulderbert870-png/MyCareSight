@@ -200,26 +200,40 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   visits: AssignmentVisitCardDTO[]
   unassignmentItems: UnassignmentRequestListItemDTO[]
   resolved: ResolvedAssignmentRowDTO[]
-  approvedTotal: number
-  declinedTotal: number
+  assignmentApprovedTotal: number
+  assignmentDeclinedTotal: number
+  unassignmentApprovedTotal: number
+  unassignmentDeclinedTotal: number
   error?: string
 }> {
-  const [pendingRes, resolvedRes, approvedCountRes, declinedCountRes, pendingUnassignRes, resolvedUnassignRes] =
-    await Promise.all([
+  const [
+    pendingRes,
+    resolvedRes,
+    approvedAssignmentCountRes,
+    declinedAssignmentCountRes,
+    pendingUnassignRes,
+    resolvedUnassignRes,
+    approvedUnassignmentCountRes,
+    declinedUnassignmentCountRes,
+  ] = await Promise.all([
     q.getPendingScheduleAssignmentRequests(supabase),
     q.getRecentResolvedScheduleAssignmentRequests(supabase, 40),
     supabase.from('schedule_assignment_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
     supabase.from('schedule_assignment_requests').select('id', { count: 'exact', head: true }).eq('status', 'declined'),
     q.getPendingScheduleUnassignmentRequests(supabase),
     q.getRecentResolvedScheduleUnassignmentRequests(supabase, 40),
-    ])
+    supabase.from('schedule_unassignment_requests').select('id', { count: 'exact', head: true }).eq('status', 'approved'),
+    supabase.from('schedule_unassignment_requests').select('id', { count: 'exact', head: true }).eq('status', 'declined'),
+  ])
 
   const empty = {
     visits: [] as AssignmentVisitCardDTO[],
     unassignmentItems: [] as UnassignmentRequestListItemDTO[],
     resolved: [] as ResolvedAssignmentRowDTO[],
-    approvedTotal: 0,
-    declinedTotal: 0,
+    assignmentApprovedTotal: 0,
+    assignmentDeclinedTotal: 0,
+    unassignmentApprovedTotal: 0,
+    unassignmentDeclinedTotal: 0,
   }
 
   if (pendingRes.error) {
@@ -228,11 +242,11 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   if (resolvedRes.error) {
     return { ...empty, error: resolvedRes.error.message }
   }
-  if (approvedCountRes.error) {
-    return { ...empty, error: approvedCountRes.error.message }
+  if (approvedAssignmentCountRes.error) {
+    return { ...empty, error: approvedAssignmentCountRes.error.message }
   }
-  if (declinedCountRes.error) {
-    return { ...empty, error: declinedCountRes.error.message }
+  if (declinedAssignmentCountRes.error) {
+    return { ...empty, error: declinedAssignmentCountRes.error.message }
   }
   if (pendingUnassignRes.error) {
     return { ...empty, error: pendingUnassignRes.error.message }
@@ -240,9 +254,17 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   if (resolvedUnassignRes.error) {
     return { ...empty, error: resolvedUnassignRes.error.message }
   }
+  if (approvedUnassignmentCountRes.error) {
+    return { ...empty, error: approvedUnassignmentCountRes.error.message }
+  }
+  if (declinedUnassignmentCountRes.error) {
+    return { ...empty, error: declinedUnassignmentCountRes.error.message }
+  }
 
-  const approvedTotal = approvedCountRes.count ?? 0
-  const declinedTotal = declinedCountRes.count ?? 0
+  const assignmentApprovedTotal = approvedAssignmentCountRes.count ?? 0
+  const assignmentDeclinedTotal = declinedAssignmentCountRes.count ?? 0
+  const unassignmentApprovedTotal = approvedUnassignmentCountRes.count ?? 0
+  const unassignmentDeclinedTotal = declinedUnassignmentCountRes.count ?? 0
 
   const pendingRows = (pendingRes.data ?? []) as ScheduleAssignmentRequestRow[]
   const resolvedRows = (resolvedRes.data ?? []) as ScheduleAssignmentRequestRow[]
@@ -260,7 +282,15 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
     unassignScheduleIds.length === 0 &&
     resolvedUnassignScheduleIds.length === 0
   ) {
-    return { visits: [], unassignmentItems: [], resolved: [], approvedTotal, declinedTotal }
+    return {
+      visits: [],
+      unassignmentItems: [],
+      resolved: [],
+      assignmentApprovedTotal,
+      assignmentDeclinedTotal,
+      unassignmentApprovedTotal,
+      unassignmentDeclinedTotal,
+    }
   }
 
   const allScheduleIds = sanitizeUuidList(
@@ -273,7 +303,16 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
   )
 
   if (schedErr) {
-    return { visits: [], unassignmentItems: [], resolved: [], approvedTotal, declinedTotal, error: schedErr.message }
+    return {
+      visits: [],
+      unassignmentItems: [],
+      resolved: [],
+      assignmentApprovedTotal,
+      assignmentDeclinedTotal,
+      unassignmentApprovedTotal,
+      unassignmentDeclinedTotal,
+      error: schedErr.message,
+    }
   }
 
   const schedules = (schedulesData ?? []) as ScheduleRow[]
@@ -324,7 +363,16 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
           .in('id', patientIds)
 
   if (patErr) {
-    return { visits: [], unassignmentItems: [], resolved: [], approvedTotal, declinedTotal, error: patErr.message }
+    return {
+      visits: [],
+      unassignmentItems: [],
+      resolved: [],
+      assignmentApprovedTotal,
+      assignmentDeclinedTotal,
+      unassignmentApprovedTotal,
+      unassignmentDeclinedTotal,
+      error: patErr.message,
+    }
   }
 
   const { data: staffData, error: staffErr } =
@@ -336,7 +384,16 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
           .in('id', staffIdList)
 
   if (staffErr) {
-    return { visits: [], unassignmentItems: [], resolved: [], approvedTotal, declinedTotal, error: staffErr.message }
+    return {
+      visits: [],
+      unassignmentItems: [],
+      resolved: [],
+      assignmentApprovedTotal,
+      assignmentDeclinedTotal,
+      unassignmentApprovedTotal,
+      unassignmentDeclinedTotal,
+      error: staffErr.message,
+    }
   }
 
   const patientById = new Map((patientsData as PatientRow[] | null)?.map((p) => [p.id, p]) ?? [])
@@ -511,7 +568,15 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
     })
   }
 
-  return { visits, unassignmentItems, resolved, approvedTotal, declinedTotal }
+  return {
+    visits,
+    unassignmentItems,
+    resolved,
+    assignmentApprovedTotal,
+    assignmentDeclinedTotal,
+    unassignmentApprovedTotal,
+    unassignmentDeclinedTotal,
+  }
 }
 
 /**

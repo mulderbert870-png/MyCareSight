@@ -36,7 +36,6 @@ import {
 import type { CaregiverPastVisitSummaryDTO } from '@/lib/caregiver-visit-execution'
 import {
   isVisitPastForCaregiverMyVisits,
-  MY_CARE_VISITS_STARTED_VISIT_IDS_KEY,
   MY_CARE_VISITS_TAB_STORAGE_KEY,
   type CaregiverVisitCardDTO,
 } from '@/lib/caregiver-care-visits'
@@ -138,11 +137,6 @@ export default function CaregiverMyCareVisitsContent({
   const [requestModalVisit, setRequestModalVisit] = useState<CaregiverVisitCardDTO | null>(null)
   const [requestNoteDraft, setRequestNoteDraft] = useState('')
   const [unassignModalVisit, setUnassignModalVisit] = useState<CaregiverVisitCardDTO | null>(null)
-  /**
-   * Visit IDs opened via "Start Visit". DB `scheduled_visits.status` is usually still `scheduled`/`assigned`
-   * until clock-in sets `in_progress` — without this, the In Progress tab would stay empty until then.
-   */
-  const [startedVisitIds, setStartedVisitIds] = useState<Set<string>>(() => new Set())
   /** Sunday 00:00 of the week shown in Scheduling → Calendar. */
   useEffect(() => {
     if (!statsOpen) return
@@ -169,67 +163,12 @@ export default function CaregiverMyCareVisitsContent({
   }, [])
 
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(MY_CARE_VISITS_STARTED_VISIT_IDS_KEY)
-      const arr = raw ? JSON.parse(raw) : []
-      if (Array.isArray(arr)) {
-        setStartedVisitIds(new Set(arr.filter((x): x is string => typeof x === 'string')))
-      }
-    } catch {
-      // ignore
-    }
-  }, [])
-
-  useEffect(() => {
-    setStartedVisitIds((prev) => {
-      let next: Set<string> | null = null
-      for (const v of visits) {
-        if (!prev.has(v.id)) continue
-        if (v.status === 'completed' || v.status === 'missed') {
-          if (!next) next = new Set(prev)
-          next.delete(v.id)
-        }
-      }
-      if (!next) return prev
-      try {
-        sessionStorage.setItem(MY_CARE_VISITS_STARTED_VISIT_IDS_KEY, JSON.stringify(Array.from(next)))
-      } catch {
-        /* ignore */
-      }
-      return next
-    })
-  }, [visits])
-
-  useEffect(() => {
     if (!visitPageNavPending && visitPageNavId) {
       setVisitPageNavId(null)
     }
   }, [visitPageNavPending, visitPageNavId])
 
   const handleViewDetailsNavigate = (visitId: string) => {
-    setVisitPageNavId(visitId)
-    visitPageNavTransition(() => {
-      router.push(`/pages/caregiver/my-care-visits/${visitId}`)
-    })
-  }
-
-  const handleStartVisitNavigate = (visitId: string) => {
-    setMyVisitsTab('in_progress')
-    try {
-      sessionStorage.setItem(MY_CARE_VISITS_TAB_STORAGE_KEY, 'in_progress')
-    } catch {
-      /* ignore */
-    }
-    setStartedVisitIds((prev) => {
-      const next = new Set(prev)
-      next.add(visitId)
-      try {
-        sessionStorage.setItem(MY_CARE_VISITS_STARTED_VISIT_IDS_KEY, JSON.stringify(Array.from(next)))
-      } catch {
-        /* ignore */
-      }
-      return next
-    })
     setVisitPageNavId(visitId)
     visitPageNavTransition(() => {
       router.push(`/pages/caregiver/my-care-visits/${visitId}`)
@@ -246,28 +185,21 @@ export default function CaregiverMyCareVisitsContent({
     return visits.filter((v) => `${v.clientName} ${v.serviceName} ${v.locationLine} ${v.locationShort}`.toLowerCase().includes(q))
   }, [search, visits])
 
-  /** Assigned upcoming visits not yet opened with Start Visit and not DB-in-progress. */
-  const upcomingMineNotStartedVisits = useMemo(
+  /** Assigned upcoming visits (DB not in progress yet — clock-in moves them to In Progress). */
+  const upcomingMineVisits = useMemo(
     () =>
       filteredBySearch.filter(
-        (v) =>
-          v.isMine &&
-          !isVisitPastForCaregiverMyVisits(v) &&
-          v.status !== 'in_progress' &&
-          !startedVisitIds.has(v.id)
+        (v) => v.isMine && !isVisitPastForCaregiverMyVisits(v) && v.status !== 'in_progress'
       ),
-    [filteredBySearch, startedVisitIds]
+    [filteredBySearch]
   )
-  /** DB `in_progress` or opened via Start Visit (before clock-in updates the row). */
+  /** DB `in_progress` (after confirmed clock-in). */
   const inProgressMineVisits = useMemo(
     () =>
       filteredBySearch.filter(
-        (v) =>
-          v.isMine &&
-          !isVisitPastForCaregiverMyVisits(v) &&
-          (v.status === 'in_progress' || startedVisitIds.has(v.id))
+        (v) => v.isMine && !isVisitPastForCaregiverMyVisits(v) && v.status === 'in_progress'
       ),
-    [filteredBySearch, startedVisitIds]
+    [filteredBySearch]
   )
   const todayMineCount = useMemo(
     () =>
@@ -386,13 +318,13 @@ export default function CaregiverMyCareVisitsContent({
 
   const upcomingCalendarMap = useMemo(() => {
     const map = new Map<string, CaregiverVisitCardDTO[]>()
-    for (const v of upcomingMineNotStartedVisits) {
+    for (const v of upcomingMineVisits) {
       const existing = map.get(v.date) ?? []
       existing.push(v)
       map.set(v.date, existing)
     }
     return map
-  }, [upcomingMineNotStartedVisits])
+  }, [upcomingMineVisits])
 
   const openRequestModal = (visit: CaregiverVisitCardDTO) => {
     setError(null)
@@ -515,7 +447,7 @@ export default function CaregiverMyCareVisitsContent({
   const listToRender =
     mainTab === 'my_visits'
       ? myVisitsTab === 'upcoming'
-        ? upcomingMineNotStartedVisits
+        ? upcomingMineVisits
         : myVisitsTab === 'in_progress'
           ? inProgressMineVisits
           : pastMineVisits
@@ -928,7 +860,7 @@ export default function CaregiverMyCareVisitsContent({
               >
                 Upcoming{' '}
                 <span className="ml-1 rounded-full bg-green-600 px-1.5 py-0.5 text-[11px] text-white">
-                  {upcomingMineNotStartedVisits.length}
+                  {upcomingMineVisits.length}
                 </span>
               </button>
               <button
@@ -975,7 +907,7 @@ export default function CaregiverMyCareVisitsContent({
             {myVisitsTab === 'upcoming' ? (
               <>
                 <span className="rounded-full border border-green-200 bg-green-50 px-3 py-1 text-green-700">
-                  {upcomingMineNotStartedVisits.length} upcoming
+                  {upcomingMineVisits.length} upcoming
                 </span>
                 <span className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-violet-700">{todayMineCount} today</span>
               </>
@@ -1347,8 +1279,8 @@ export default function CaregiverMyCareVisitsContent({
                       !visit.hasPendingUnassignmentRequest ? (
                         <button
                           type="button"
-                          onClick={() => handleStartVisitNavigate(visit.id)}
-                          disabled={!!visitPageNavId}
+                          onClick={() => handleViewDetailsNavigate(visit.id)}
+                          disabled={visitPageNavId === visit.id}
                           className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-70"
                         >
                           {visitPageNavPending && visitPageNavId === visit.id ? (
@@ -1398,7 +1330,7 @@ export default function CaregiverMyCareVisitsContent({
                       <button
                         type="button"
                         onClick={() => handleViewDetailsNavigate(visit.id)}
-                        disabled={!!visitPageNavId}
+                        disabled={visitPageNavId === visit.id}
                         className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-gray-800 disabled:opacity-70"
                       >
                         {visitPageNavPending && visitPageNavId === visit.id ? (
