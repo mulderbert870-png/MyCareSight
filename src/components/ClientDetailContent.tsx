@@ -6486,7 +6486,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   type="date"
                   value={visitForm.date}
                   onChange={(e) => setVisitForm((p) => ({ ...p, date: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-500"
                   disabled={isSavingVisit || visitForm.isRecurring}
                 />
                 {visitForm.isRecurring && (
@@ -6501,7 +6501,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   type="time"
                   value={visitForm.startTime}
                   onChange={(e) => setVisitForm((p) => ({ ...p, startTime: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
                   disabled={isSavingVisit}
                 />
               </div>
@@ -6511,7 +6511,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   type="time"
                   value={visitForm.endTime}
                   onChange={(e) => setVisitForm((p) => ({ ...p, endTime: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
                   disabled={isSavingVisit}
                 />
               </div>
@@ -6530,7 +6530,7 @@ export default function ClientDetailContent({ client, allClients, representative
               <select
                 value={visitForm.contractId}
                 onChange={(e) => setVisitForm((p) => ({ ...p, contractId: e.target.value }))}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white text-gray-900"
                 disabled={isSavingVisit}
               >
                 <option value="">Select contract...</option>
@@ -6550,7 +6550,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 value={visitForm.description}
                 onChange={(e) => setVisitForm((p) => ({ ...p, description: e.target.value }))}
                 rows={2}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
                 placeholder="Optional"
                 disabled={isSavingVisit}
               />
@@ -6561,7 +6561,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 <select
                   value={visitForm.type}
                   onChange={(e) => setVisitForm((p) => ({ ...p, type: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white text-gray-900"
                   disabled={isSavingVisit}
                 >
                   {VISIT_TYPES.map((t) => (
@@ -6580,7 +6580,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 value={visitForm.notes}
                 onChange={(e) => setVisitForm((p) => ({ ...p, notes: e.target.value }))}
                 rows={2}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
                 placeholder="Optional"
                 disabled={isSavingVisit}
               />
@@ -6741,7 +6741,7 @@ export default function ClientDetailContent({ client, allClients, representative
                         type="date"
                         value={visitForm.repeatStart}
                         onChange={(e) => setVisitForm((p) => ({ ...p, repeatStart: e.target.value }))}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm text-gray-900"
                       />
                       <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                     </div>
@@ -6755,7 +6755,7 @@ export default function ClientDetailContent({ client, allClients, representative
                         type="date"
                         value={visitForm.repeatEnd}
                         onChange={(e) => setVisitForm((p) => ({ ...p, repeatEnd: e.target.value }))}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm placeholder:text-gray-400"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm text-gray-900 placeholder:text-gray-400"
                         placeholder="mm/dd/yyyy"
                       />
                       <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
@@ -6874,7 +6874,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   type="date"
                   value={visitForm.date}
                   onChange={(e) => setVisitForm((p) => ({ ...p, date: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-500"
                   disabled={isSavingVisit || visitForm.isRecurring}
                 />
                 {visitForm.isRecurring && (
@@ -6889,7 +6889,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   type="time"
                   value={visitForm.startTime}
                   onChange={(e) => setVisitForm((p) => ({ ...p, startTime: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
                   disabled={isSavingVisit}
                 />
               </div>
@@ -6899,7 +6899,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   type="time"
                   value={visitForm.endTime}
                   onChange={(e) => setVisitForm((p) => ({ ...p, endTime: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                  className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900"
                   disabled={isSavingVisit}
                 />
               </div>
@@ -6918,7 +6918,7 @@ export default function ClientDetailContent({ client, allClients, representative
               <select
                 value={visitForm.contractId}
                 onChange={(e) => setVisitForm((p) => ({ ...p, contractId: e.target.value }))}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white text-gray-900"
                 disabled={isSavingVisit}
               >
                 <option value="">Select contract...</option>
@@ -6935,7 +6935,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 value={visitForm.description}
                 onChange={(e) => setVisitForm((p) => ({ ...p, description: e.target.value }))}
                 rows={2}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
                 placeholder="Optional"
                 disabled={isSavingVisit}
               />
@@ -6946,7 +6946,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 <select
                   value={visitForm.type}
                   onChange={(e) => setVisitForm((p) => ({ ...p, type: e.target.value }))}
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white"
+                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm bg-white text-gray-900"
                   disabled={isSavingVisit}
                 >
                   {VISIT_TYPES.map((t) => (
@@ -6965,7 +6965,7 @@ export default function ClientDetailContent({ client, allClients, representative
                 value={visitForm.notes}
                 onChange={(e) => setVisitForm((p) => ({ ...p, notes: e.target.value }))}
                 rows={2}
-                className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+                className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400"
                 placeholder="Optional"
                 disabled={isSavingVisit}
               />
@@ -7126,7 +7126,7 @@ export default function ClientDetailContent({ client, allClients, representative
                         type="date"
                         value={visitForm.repeatStart}
                         onChange={(e) => setVisitForm((p) => ({ ...p, repeatStart: e.target.value }))}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm text-gray-900"
                       />
                       <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                     </div>
@@ -7140,7 +7140,7 @@ export default function ClientDetailContent({ client, allClients, representative
                         type="date"
                         value={visitForm.repeatEnd}
                         onChange={(e) => setVisitForm((p) => ({ ...p, repeatEnd: e.target.value }))}
-                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm placeholder:text-gray-400"
+                        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 pr-9 text-sm text-gray-900 placeholder:text-gray-400"
                         placeholder="mm/dd/yyyy"
                       />
                       <Calendar className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
