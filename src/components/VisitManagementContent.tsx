@@ -144,6 +144,7 @@ export default function VisitManagementContent({
   }, [searchParams])
 
   const goToRequestsSubtab = (sub: 'assignment' | 'unassignment') => {
+    setRequestsSubtab(sub)
     setTabLoadingKey(sub)
     startTabNavTransition(() => {
       router.replace(`${CARE_VISITS_PATH}?tab=requests&subtab=${sub}`, { scroll: false })
@@ -153,11 +154,14 @@ export default function VisitManagementContent({
   const goToVisitTab = (next: 'all' | 'requests') => {
     if (next === 'requests') {
       const sub = requestsSubtabFromSearchParams(searchParams)
+      setTab('requests')
+      setRequestsSubtab(sub)
       setTabLoadingKey('requests')
       startTabNavTransition(() => {
         router.replace(`${CARE_VISITS_PATH}?tab=requests&subtab=${sub}`, { scroll: false })
       })
     } else {
+      setTab('all')
       setTabLoadingKey('all')
       startTabNavTransition(() => {
         router.replace(CARE_VISITS_PATH, { scroll: false })
@@ -396,28 +400,25 @@ export default function VisitManagementContent({
           <p className="text-sm text-gray-600 mt-1">View, sort, and manage all care visits. Assign caregivers and track visit status.</p>
         </div>
         <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100/80 p-1 shadow-inner">
-          <button type="button" disabled={tabNavPending} onClick={() => goToVisitTab('all')} className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'all' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}>
+          <button
+            type="button"
+            onClick={() => goToVisitTab('all')}
+            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'all' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}
+          >
             {tabNavPending && tabLoadingKey === 'all' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
             All Visits
           </button>
-          <button type="button" disabled={tabNavPending} onClick={() => goToVisitTab('requests')} className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'requests' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}>
+          <button
+            type="button"
+            onClick={() => goToVisitTab('requests')}
+            className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${tab === 'requests' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}
+          >
             {tabNavPending && tabLoadingKey === 'requests' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
             Caregiver Requests
             {pendingCaregiverRequestTotal > 0 ? <span className="rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-2 py-0.5 min-w-[1.25rem] text-center">{pendingCaregiverRequestTotal}</span> : null}
           </button>
         </div>
       </div>
-      {tabNavPending && tabLoadingKey !== 'assignment' && tabLoadingKey !== 'unassignment' ? (
-        <div className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-          Loading {tabLoadingKey === 'all'
-            ? 'All Visits'
-            : tabLoadingKey === 'requests'
-              ? 'Caregiver Requests'
-              : '...'}
-          ...
-        </div>
-      ) : null}
 
       {tab === 'all' ? (
         <>
@@ -560,9 +561,8 @@ export default function VisitManagementContent({
           <div className="inline-flex rounded-lg border border-gray-200 bg-gray-100/80 p-1 shadow-inner mb-2">
             <button
               type="button"
-              disabled={tabNavPending && tabLoadingKey === 'assignment'}
               onClick={() => goToRequestsSubtab('assignment')}
-              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${requestsSubtab === 'assignment' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${requestsSubtab === 'assignment' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}
             >
               {tabNavPending && tabLoadingKey === 'assignment' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
               Assignment Requests
@@ -574,9 +574,8 @@ export default function VisitManagementContent({
             </button>
             <button
               type="button"
-              disabled={tabNavPending && tabLoadingKey === 'unassignment'}
               onClick={() => goToRequestsSubtab('unassignment')}
-              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${requestsSubtab === 'unassignment' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'} disabled:opacity-60`}
+              className={`inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${requestsSubtab === 'unassignment' ? 'bg-white text-gray-900 shadow' : 'text-gray-600 hover:text-gray-900'}`}
             >
               {tabNavPending && tabLoadingKey === 'unassignment' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : null}
               Unassignment Requests

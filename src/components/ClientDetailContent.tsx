@@ -2305,9 +2305,8 @@ export default function ClientDetailContent({ client, allClients, representative
 
   const formatDistanceMiles = (miles: number) => {
     if (!Number.isFinite(miles)) return '—'
-    if (miles === 0) return '0 mi'
-    // Up to two decimal places (trim trailing zeros), e.g. 5.2 mi, 12.37 mi
-    return `${parseFloat(miles.toFixed(2))} mi`
+    // Always two decimal places in the caregiver picker (e.g. 5.00 mi, 12.30 mi).
+    return `${miles.toFixed(2)} mi`
   }
 
   const caregiverOptions = useMemo(() => {

@@ -10,6 +10,9 @@
  *   **todayUTC + 21 days** (same weekday → “that weekday in week 4” vs the current week). Example: Mon/Tue/Wed series,
  *   run on a Monday → adds the Monday that is 21 days ahead. No insert on days not in days_of_week.
  * - Respects repeat_end; idempotent upsert on (visit_series_id, visit_date).
+ * - Same-patient overlap: if another scheduled_visit for the same patient_id on week4VisitDate has a
+ *   time window that overlaps the template (same rule as coordinator UI: start/end in minutes UTC time),
+ *   skip insert (for manual review). Rows with status completed or missed do not block.
  * Paginates visit_series (no 1000-row cap).
  * Secrets: CRON_SECRET (Bearer), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
  *
@@ -90,6 +93,56 @@ function normalizeYmd(s: string | null | undefined): string | null {
   if (!t) return null
   const d = t.slice(0, 10)
   return /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null
+}
+
+/** Parse TIME column (HH:MM or HH:MM:SS) to minutes from midnight; null if unusable. */
+function timeStringToMinutes(raw: string | null | undefined): number | null {
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  const head = s.length >= 5 ? s.slice(0, 5) : s
+  const parts = head.split(':').map((x) => parseInt(x, 10))
+  const h = parts[0]
+  const m = parts[1]
+  if (!Number.isFinite(h)) return null
+  return h * 60 + (Number.isFinite(m) ? m : 0)
+}
+
+/** Same overlap rule as coordinator Add Visit (ClientDetailContent). */
+function intervalsOverlapMinutes(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return aStart < bEnd && aEnd > bStart
+}
+
+const NON_BLOCKING_OVERLAP_STATUSES = new Set(['completed', 'missed'])
+
+type SameDayVisitRow = {
+  id: string
+  scheduled_start_time: string | null
+  scheduled_end_time: string | null
+  status: string | null
+}
+
+/** Returns conflicting visit id if any same-day visit blocks the candidate window. */
+function findPatientTimeOverlap(
+  sameDayVisits: SameDayVisitRow[],
+  candidateStart: string | null,
+  candidateEnd: string | null
+): string | null {
+  const cs = timeStringToMinutes(candidateStart)
+  const ce = timeStringToMinutes(candidateEnd)
+  if (cs == null || ce == null) return null
+  if (ce <= cs) return null
+
+  for (const v of sameDayVisits) {
+    const st = (v.status ?? '').toLowerCase()
+    if (NON_BLOCKING_OVERLAP_STATUSES.has(st)) continue
+    const vs = timeStringToMinutes(v.scheduled_start_time)
+    const ve = timeStringToMinutes(v.scheduled_end_time)
+    if (vs == null || ve == null) continue
+    if (ve <= vs) continue
+    if (intervalsOverlapMinutes(cs, ce, vs, ve)) return v.id
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -183,6 +236,7 @@ Deno.serve(async (req) => {
 
   let seriesProcessed = 0
   let visitsInserted = 0
+  let visitsSkippedPatientOverlap = 0
   const errors: string[] = []
   const skipStats: Record<string, number> = {}
   const countSkip = (reason: string) => {
@@ -305,6 +359,37 @@ Deno.serve(async (req) => {
       continue
     }
 
+    const { data: sameDayRows, error: sameDayErr } = await supabase
+      .from('scheduled_visits')
+      .select('id, scheduled_start_time, scheduled_end_time, status')
+      .eq('agency_id', series.agency_id)
+      .eq('patient_id', series.patient_id)
+      .eq('visit_date', week4VisitDate)
+
+    if (sameDayErr) {
+      countSkip('patient_same_day_query_error')
+      errors.push(`series ${series.id}: same-day overlap query ${sameDayErr.message}`)
+      continue
+    }
+
+    const conflictId = findPatientTimeOverlap(
+      (sameDayRows ?? []) as SameDayVisitRow[],
+      t.scheduled_start_time,
+      t.scheduled_end_time
+    )
+    if (conflictId) {
+      countSkip('patient_time_overlap')
+      visitsSkippedPatientOverlap++
+      console.log('[refill-visit-series] skip:patient-time-overlap', {
+        seriesId: series.id,
+        patientId: series.patient_id,
+        visitDate: week4VisitDate,
+        conflictingVisitId: conflictId,
+      })
+      seriesProcessed++
+      continue
+    }
+
     const { data: taskRows } = await supabase
       .from('scheduled_visit_tasks')
       .select('legacy_task_code, sort_order')
@@ -403,6 +488,7 @@ Deno.serve(async (req) => {
     seriesTotal: rows.length,
     seriesProcessed,
     visitsInserted,
+    visitsSkippedPatientOverlap,
     durationMs,
     errors: errors.length ? errors : undefined,
   }
@@ -410,6 +496,7 @@ Deno.serve(async (req) => {
     seriesTotal: rows.length,
     seriesProcessed,
     visitsInserted,
+    visitsSkippedPatientOverlap,
     durationMs,
     errorCount: errors.length,
     skipStats,

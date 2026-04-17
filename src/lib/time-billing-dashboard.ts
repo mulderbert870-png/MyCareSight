@@ -7,6 +7,10 @@ export type TimeBillingRow = {
   id: string
   scheduledVisitId: string
   date: string
+  /** `patients.id` — for filter dropdowns. */
+  clientId: string
+  /** `caregiver_members.id` when assigned; empty string if none. */
+  caregiverId: string
   clientName: string
   caregiverName: string
   timeLabel: string
@@ -157,6 +161,8 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
       id: sv.id,
       scheduledVisitId: sv.id,
       date,
+      clientId: sv.patient_id ?? '',
+      caregiverId: caregiverId,
       clientName: patientNameById.get(sv.patient_id) ?? 'Client',
       caregiverName: caregiverLabel,
       timeLabel: `${toHHMM(sv.scheduled_start_time)} - ${toHHMM(sv.scheduled_end_time)}`,

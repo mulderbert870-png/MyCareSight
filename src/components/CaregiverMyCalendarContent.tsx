@@ -546,9 +546,9 @@ export default function CaregiverMyCalendarContent({
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-6">
         <div className="w-full min-w-0 lg:w-[70%] lg:shrink-0">
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">{formatMonthYear(viewMonth)}</h2>
+          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-3 sm:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900">{formatMonthYear(viewMonth)}</h2>
           <div className="flex flex-wrap items-center justify-end gap-2 w-full sm:w-auto">
             <button
               type="button"
@@ -571,7 +571,7 @@ export default function CaregiverMyCalendarContent({
               onClick={() =>
                 setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))
               }
-              className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50"
+              className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-700"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -581,7 +581,7 @@ export default function CaregiverMyCalendarContent({
               onClick={() =>
                 setViewMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))
               }
-              className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50"
+              className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-700"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
@@ -590,7 +590,7 @@ export default function CaregiverMyCalendarContent({
 
         <div className="grid grid-cols-7 gap-px bg-gray-200 rounded-lg overflow-hidden border border-gray-200">
           {DOW_SHORT.map((d) => (
-            <div key={d} className="bg-gray-50 py-2 text-center text-xs font-semibold text-gray-600">
+            <div key={d} className="bg-gray-50 py-1.5 text-center text-[11px] font-semibold text-gray-600">
               {d}
             </div>
           ))}
@@ -610,14 +610,14 @@ export default function CaregiverMyCalendarContent({
                     openAdd({ isRecurring: false, specificDate: ymd })
                   }
                 }}
-                className={`min-h-[88px] p-1.5 text-left align-top bg-white hover:bg-gray-50/80 transition-colors ${
+                className={`min-h-[68px] sm:min-h-[72px] p-1 text-left align-top bg-white hover:bg-gray-50/80 transition-colors ${
                   inMonth ? '' : 'opacity-50'
                 } ${isSelected ? 'ring-2 ring-inset ring-blue-400 z-10' : ''}`}
               >
-                <div className={`text-xs font-medium mb-1 ${inMonth ? 'text-gray-900' : 'text-gray-400'}`}>
+                <div className={`text-[11px] font-medium mb-0.5 ${inMonth ? 'text-gray-900' : 'text-gray-400'}`}>
                   {date.getDate()}
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {daySlots.map((s) => (
                     <div
                       key={s.id}
@@ -634,7 +634,7 @@ export default function CaregiverMyCalendarContent({
                           openEdit(s)
                         }
                       }}
-                      className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] sm:text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200/80 cursor-pointer"
+                      className="flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200/80 cursor-pointer"
                     >
                       {s.is_recurring ? (
                         <RefreshCw className="w-3 h-3 shrink-0 opacity-80" />
@@ -652,7 +652,7 @@ export default function CaregiverMyCalendarContent({
           })}
         </div>
 
-        <div className="flex flex-wrap items-center gap-6 mt-4 text-sm text-gray-600">
+        <div className="flex flex-wrap items-center gap-6 mt-3 text-sm text-gray-600">
           <span className="inline-flex items-center gap-2">
             <span className="inline-block w-4 h-4 rounded bg-emerald-100 border border-emerald-300" />
             Available
@@ -662,13 +662,15 @@ export default function CaregiverMyCalendarContent({
             Recurring
           </span>
         </div>
-      </div>
+          </div>
         </div>
 
-        <div className="w-full min-w-0 lg:w-[30%] lg:shrink-0">
-      <div>
-        <h2 className="text-sm font-bold tracking-wide text-blue-900 mb-4">ALL AVAILABILITY SLOTS</h2>
-        <div className="space-y-3">
+        <div className="w-full min-w-0 lg:w-[30%] lg:shrink-0 flex flex-col">
+          <h2 className="text-sm font-bold tracking-wide text-blue-900 mb-3 shrink-0">ALL AVAILABILITY SLOTS</h2>
+          <div
+            className="min-h-0 max-h-[min(60vh,32rem)] sm:max-h-[min(65vh,36rem)] lg:max-h-[calc(100vh-11rem)] overflow-y-auto overscroll-y-contain [scrollbar-gutter:stable] space-y-3 pr-1"
+            aria-label="All availability slots"
+          >
           {slotsForList.length === 0 ? (
             <p className="text-gray-500 text-sm py-8 text-center border border-dashed border-gray-200 rounded-xl">
               No availability slots yet. Click &quot;Add Time Slot&quot; to get started.
@@ -738,8 +740,7 @@ export default function CaregiverMyCalendarContent({
               </div>
             ))
           )}
-        </div>
-      </div>
+          </div>
         </div>
       </div>
 
