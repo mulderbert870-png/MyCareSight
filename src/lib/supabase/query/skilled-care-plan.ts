@@ -157,57 +157,116 @@ export async function getPatientSkilledDaySchedulesByPatientId(supabase: Supabas
   }
 }
 
+/** Payload for upserting skilled per-day rows on `patient_care_plan_tasks`. */
+export type PatientSkilledTaskDayScheduleUpsert = {
+  patient_id: string
+  task_id: string
+  day_of_week: number
+  display_order?: number
+  task_note?: string | null
+  schedule_type: 'never' | 'always' | 'as_needed' | 'specific_times'
+  times_per_day?: number | null
+  slot_morning?: string | null
+  slot_afternoon?: string | null
+  slot_evening?: string | null
+  slot_night?: string | null
+}
+
+type SkilledCarePlanTaskDbRow = {
+  agency_id: string
+  patient_id: string
+  task_id: string
+  legacy_task_code: string | null
+  day_of_week: number
+  display_order: number
+  service_type: 'skilled'
+  task_note: string | null
+  schedule_type: string
+  times_per_day: number | null
+  slot_morning: string | null
+  slot_afternoon: string | null
+  slot_evening: string | null
+  slot_night: string | null
+}
+
+/**
+ * Batch save skilled day rows (same idea as non-skilled `upsertPatientAdlDaySchedulesBatch`):
+ * one `agency_id` fetch, one load of existing ids, then chunked writes.
+ *
+ * Skilled rows cannot use `ON CONFLICT (patient_id, task_id, day_of_week)` (partial unique → 42P10).
+ * Mixed `upsert` on `id` sends explicit null `id` for new rows (23502). So: **insert** new rows
+ * without an `id` field (DB default), **upsert** only rows that already have an `id`.
+ */
+export async function upsertPatientSkilledTaskDaySchedulesBatch(
+  supabase: Supabase,
+  patientId: string,
+  rows: PatientSkilledTaskDayScheduleUpsert[]
+): Promise<{ error: Error | null }> {
+  if (rows.length === 0) return { error: null }
+  const agencyId = await requireAgencyIdForPatient(supabase, patientId)
+  const { data: existingRows, error: existingErr } = await supabase
+    .from('patient_care_plan_tasks')
+    .select('id, task_id, day_of_week')
+    .eq('patient_id', patientId)
+    .eq('service_type', 'skilled')
+    .not('task_id', 'is', null)
+  if (existingErr) return { error: new Error(existingErr.message) }
+
+  const idByTaskAndDay = new Map<string, string>()
+  for (const r of existingRows ?? []) {
+    const tid = r.task_id as string | null | undefined
+    if (!tid) continue
+    idByTaskAndDay.set(`${tid}|${r.day_of_week}`, r.id as string)
+  }
+
+  const toInsert: SkilledCarePlanTaskDbRow[] = []
+  const toUpdate: Array<SkilledCarePlanTaskDbRow & { id: string }> = []
+
+  for (const data of rows) {
+    const key = `${data.task_id}|${data.day_of_week}`
+    const existingId = idByTaskAndDay.get(key)
+    const base: SkilledCarePlanTaskDbRow = {
+      agency_id: agencyId,
+      patient_id: data.patient_id,
+      task_id: data.task_id,
+      legacy_task_code: null,
+      day_of_week: data.day_of_week,
+      display_order: data.display_order ?? 0,
+      service_type: 'skilled',
+      task_note: data.task_note ?? null,
+      schedule_type: data.schedule_type,
+      times_per_day: data.times_per_day ?? null,
+      slot_morning: data.slot_morning ?? null,
+      slot_afternoon: data.slot_afternoon ?? null,
+      slot_evening: data.slot_evening ?? null,
+      slot_night: data.slot_night ?? null,
+    }
+    if (existingId) {
+      toUpdate.push({ id: existingId, ...base })
+    } else {
+      toInsert.push(base)
+    }
+  }
+
+  const chunkSize = 250
+  for (let i = 0; i < toInsert.length; i += chunkSize) {
+    const chunk = toInsert.slice(i, i + chunkSize)
+    const { error } = await supabase.from('patient_care_plan_tasks').insert(chunk)
+    if (error) return { error: new Error(error.message) }
+  }
+  for (let i = 0; i < toUpdate.length; i += chunkSize) {
+    const chunk = toUpdate.slice(i, i + chunkSize)
+    const { error } = await supabase.from('patient_care_plan_tasks').upsert(chunk, { onConflict: 'id' })
+    if (error) return { error: new Error(error.message) }
+  }
+  return { error: null }
+}
+
 export async function upsertPatientSkilledTaskDaySchedule(
   supabase: Supabase,
-  data: {
-    patient_id: string
-    task_id: string
-    day_of_week: number
-    display_order?: number
-    task_note?: string | null
-    schedule_type: 'never' | 'always' | 'as_needed' | 'specific_times'
-    times_per_day?: number | null
-    slot_morning?: string | null
-    slot_afternoon?: string | null
-    slot_evening?: string | null
-    slot_night?: string | null
-  }
+  data: PatientSkilledTaskDayScheduleUpsert
 ) {
-  const agencyId = await requireAgencyIdForPatient(supabase, data.patient_id)
-  const row = {
-    agency_id: agencyId,
-    patient_id: data.patient_id,
-    task_id: data.task_id,
-    legacy_task_code: null as string | null,
-    day_of_week: data.day_of_week,
-    display_order: data.display_order ?? 0,
-    service_type: 'skilled' as const,
-    task_note: data.task_note ?? null,
-    schedule_type: data.schedule_type,
-    times_per_day: data.times_per_day ?? null,
-    slot_morning: data.slot_morning ?? null,
-    slot_afternoon: data.slot_afternoon ?? null,
-    slot_evening: data.slot_evening ?? null,
-    slot_night: data.slot_night ?? null,
-  }
-
-  // Partial unique index (048) does not support PostgREST `upsert` / ON CONFLICT (patient_id, task_id, day_of_week).
-  const { data: existing, error: findErr } = await supabase
-    .from('patient_care_plan_tasks')
-    .select('id')
-    .eq('patient_id', data.patient_id)
-    .eq('task_id', data.task_id)
-    .eq('day_of_week', data.day_of_week)
-    .eq('service_type', 'skilled')
-    .maybeSingle()
-
-  if (findErr) return { data: null, error: findErr }
-
-  if (existing?.id) {
-    return supabase.from('patient_care_plan_tasks').update(row).eq('id', existing.id).select().single()
-  }
-
-  return supabase.from('patient_care_plan_tasks').insert(row).select().single()
+  return upsertPatientSkilledTaskDaySchedulesBatch(supabase, data.patient_id, [data])
 }
 
 export async function updatePatientSkilledTaskDayScheduleNote(
@@ -222,12 +281,23 @@ export async function updatePatientSkilledTaskDayScheduleNote(
     .single()
 }
 
-/** Remove all skilled plan rows for one task (all days). */
-export async function deleteSkilledTaskPlanRows(supabase: Supabase, patientId: string, taskId: string) {
-  return supabase
+/** Remove all skilled plan rows for the given tasks (all days) in one request. */
+export async function deleteSkilledTaskPlanRowsBatch(
+  supabase: Supabase,
+  patientId: string,
+  taskIds: string[]
+): Promise<{ error: Error | null }> {
+  if (taskIds.length === 0) return { error: null }
+  const { error } = await supabase
     .from('patient_care_plan_tasks')
     .delete()
     .eq('patient_id', patientId)
-    .eq('task_id', taskId)
     .eq('service_type', 'skilled')
+    .in('task_id', taskIds)
+  return { error: error ? new Error(error.message) : null }
+}
+
+/** Remove all skilled plan rows for one task (all days). */
+export async function deleteSkilledTaskPlanRows(supabase: Supabase, patientId: string, taskId: string) {
+  return deleteSkilledTaskPlanRowsBatch(supabase, patientId, [taskId])
 }

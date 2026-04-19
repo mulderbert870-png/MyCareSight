@@ -1796,22 +1796,25 @@ export default function ClientDetailContent({ client, allClients, representative
       }
       setPendingAdlDeletes([])
       const scheduleRows = localAdlSchedules.filter((s) => localCodeSet.has(s.adl_code))
-      for (const s of scheduleRows) {
-        const { error: upErr } = await q.upsertPatientAdlDaySchedule(supabase, {
-          patient_id: s.patient_id,
-          adl_code: s.adl_code,
-          day_of_week: s.day_of_week,
-          display_order: s.display_order,
-          adl_note: s.adl_note,
-          schedule_type: s.schedule_type,
-          times_per_day: s.times_per_day,
-          slot_morning: s.slot_morning,
-          slot_afternoon: s.slot_afternoon,
-          slot_evening: s.slot_evening,
-          slot_night: s.slot_night,
-        })
-        if (upErr) throw upErr
-      }
+      const scheduleUpserts: q.PatientAdlDayScheduleUpsert[] = scheduleRows.map((s) => ({
+        patient_id: s.patient_id,
+        adl_code: s.adl_code,
+        day_of_week: s.day_of_week,
+        display_order: s.display_order,
+        adl_note: s.adl_note,
+        schedule_type: s.schedule_type,
+        times_per_day: s.times_per_day,
+        slot_morning: s.slot_morning,
+        slot_afternoon: s.slot_afternoon,
+        slot_evening: s.slot_evening,
+        slot_night: s.slot_night,
+      }))
+      const { error: batchSchedErr } = await q.upsertPatientAdlDaySchedulesBatch(
+        supabase,
+        localClient.id,
+        scheduleUpserts
+      )
+      if (batchSchedErr) throw batchSchedErr
       const [adlsRes, schedRes] = await Promise.all([
         q.getAdlsByPatientId(supabase, localClient.id),
         q.getPatientAdlDaySchedulesByPatientId(supabase, localClient.id),
@@ -3621,27 +3624,34 @@ export default function ClientDetailContent({ client, allClients, representative
     setIsSavingSkilledTasks(true)
     try {
       const supabase = createClient()
-      for (const taskId of pendingSkilledDeletes) {
-        const { error: delErr } = await q.deleteSkilledTaskPlanRows(supabase, localClient.id, taskId)
-        if (delErr) throw delErr
+      if (pendingSkilledDeletes.length > 0) {
+        const { error: delBatchErr } = await q.deleteSkilledTaskPlanRowsBatch(
+          supabase,
+          localClient.id,
+          pendingSkilledDeletes
+        )
+        if (delBatchErr) throw delBatchErr
       }
       setPendingSkilledDeletes([])
-      for (const s of localSkilledSchedules) {
-        const { error: upErr } = await q.upsertPatientSkilledTaskDaySchedule(supabase, {
-          patient_id: s.patient_id,
-          task_id: s.task_id,
-          day_of_week: s.day_of_week,
-          display_order: s.display_order,
-          task_note: s.task_note,
-          schedule_type: s.schedule_type,
-          times_per_day: s.times_per_day,
-          slot_morning: s.slot_morning,
-          slot_afternoon: s.slot_afternoon,
-          slot_evening: s.slot_evening,
-          slot_night: s.slot_night,
-        })
-        if (upErr) throw upErr
-      }
+      const skilledUpserts: q.PatientSkilledTaskDayScheduleUpsert[] = localSkilledSchedules.map((s) => ({
+        patient_id: s.patient_id,
+        task_id: s.task_id,
+        day_of_week: s.day_of_week,
+        display_order: s.display_order,
+        task_note: s.task_note,
+        schedule_type: s.schedule_type,
+        times_per_day: s.times_per_day,
+        slot_morning: s.slot_morning,
+        slot_afternoon: s.slot_afternoon,
+        slot_evening: s.slot_evening,
+        slot_night: s.slot_night,
+      }))
+      const { error: skilledBatchErr } = await q.upsertPatientSkilledTaskDaySchedulesBatch(
+        supabase,
+        localClient.id,
+        skilledUpserts
+      )
+      if (skilledBatchErr) throw skilledBatchErr
       const tasksRes = await q.getPatientSkilledCarePlanTasks(supabase, localClient.id)
       const schedRes = await q.getPatientSkilledDaySchedulesByPatientId(supabase, localClient.id)
       if (tasksRes.data) setLocalSkilledCarePlanTasks(tasksRes.data)

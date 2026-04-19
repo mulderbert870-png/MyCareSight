@@ -222,46 +222,61 @@ export async function getPatientAdlDaySchedulesByPatientId(supabase: Supabase, p
   }
 }
 
-/** Upsert one day row (patient_id, legacy ADL code, day_of_week). */
-export async function upsertPatientAdlDaySchedule(
+/** Payload for upserting non-skilled per-day rows on `patient_care_plan_tasks`. */
+export type PatientAdlDayScheduleUpsert = {
+  patient_id: string
+  adl_code: string
+  day_of_week: number
+  display_order?: number
+  adl_note?: string | null
+  schedule_type: 'never' | 'always' | 'as_needed' | 'specific_times'
+  times_per_day?: number | null
+  slot_morning?: string | null
+  slot_afternoon?: string | null
+  slot_evening?: string | null
+  slot_night?: string | null
+}
+
+/**
+ * Batch upsert all ADL day schedules in one round-trip (one `agency_id` lookup).
+ * Prefer this over looping `upsertPatientAdlDaySchedule` from the client save path.
+ */
+export async function upsertPatientAdlDaySchedulesBatch(
   supabase: Supabase,
-  data: {
-    patient_id: string
-    adl_code: string
-    day_of_week: number
-    display_order?: number
-    adl_note?: string | null
-    schedule_type: 'never' | 'always' | 'as_needed' | 'specific_times'
-    times_per_day?: number | null
-    slot_morning?: string | null
-    slot_afternoon?: string | null
-    slot_evening?: string | null
-    slot_night?: string | null
+  patientId: string,
+  rows: PatientAdlDayScheduleUpsert[]
+): Promise<{ error: Error | null }> {
+  if (rows.length === 0) return { error: null }
+  const agencyId = await requireAgencyIdForPatient(supabase, patientId)
+  const payloads = rows.map((data) => ({
+    agency_id: agencyId,
+    patient_id: data.patient_id,
+    legacy_task_code: data.adl_code,
+    day_of_week: data.day_of_week,
+    display_order: data.display_order ?? 0,
+    service_type: 'non_skilled' as const,
+    task_note: data.adl_note ?? null,
+    schedule_type: data.schedule_type,
+    times_per_day: data.times_per_day ?? null,
+    slot_morning: data.slot_morning ?? null,
+    slot_afternoon: data.slot_afternoon ?? null,
+    slot_evening: data.slot_evening ?? null,
+    slot_night: data.slot_night ?? null,
+  }))
+  const chunkSize = 250
+  for (let i = 0; i < payloads.length; i += chunkSize) {
+    const chunk = payloads.slice(i, i + chunkSize)
+    const { error } = await supabase
+      .from('patient_care_plan_tasks')
+      .upsert(chunk, { onConflict: 'patient_id,legacy_task_code,day_of_week' })
+    if (error) return { error: new Error(error.message) }
   }
-) {
-  const agencyId = await requireAgencyIdForPatient(supabase, data.patient_id)
-  return supabase
-    .from('patient_care_plan_tasks')
-    .upsert(
-      {
-        agency_id: agencyId,
-        patient_id: data.patient_id,
-        legacy_task_code: data.adl_code,
-        day_of_week: data.day_of_week,
-        display_order: data.display_order ?? 0,
-        service_type: 'non_skilled',
-        task_note: data.adl_note ?? null,
-        schedule_type: data.schedule_type,
-        times_per_day: data.times_per_day ?? null,
-        slot_morning: data.slot_morning ?? null,
-        slot_afternoon: data.slot_afternoon ?? null,
-        slot_evening: data.slot_evening ?? null,
-        slot_night: data.slot_night ?? null,
-      },
-      { onConflict: 'patient_id,legacy_task_code,day_of_week' }
-    )
-    .select()
-    .single()
+  return { error: null }
+}
+
+/** Upsert one day row (patient_id, legacy ADL code, day_of_week). */
+export async function upsertPatientAdlDaySchedule(supabase: Supabase, data: PatientAdlDayScheduleUpsert) {
+  return upsertPatientAdlDaySchedulesBatch(supabase, data.patient_id, [data])
 }
 
 export async function updatePatientAdlDaySchedule(
