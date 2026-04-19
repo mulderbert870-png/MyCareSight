@@ -133,6 +133,7 @@ export default function DashboardLayout({
         { href: '/pages/agency/caregiver', label: 'Caregivers', icon: Users },
         { href: '/pages/agency/care-visits', label: 'Care Visits', icon: CalendarDays },
         { href: '/pages/agency/time-billing', label: 'Time & Billing', icon: DollarSign },
+        { href: '/pages/agency/reports', label: 'Reports', icon: BarChart3 },
       ]
     : [
         { href: '/pages/agency', label: 'Home', icon: Home },
@@ -355,9 +356,11 @@ export default function DashboardLayout({
         </aside>
 
         {/* Main Content */}
-        <main className={`flex-1 min-w-0 p-4 sm:p-6 w-full max-w-full transition-all duration-300 overflow-x-hidden ${
-          sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'
-        }`}>
+        <main
+          className={`flex-1 min-w-0 p-4 sm:p-6 w-full max-w-full transition-all duration-300 overflow-x-hidden text-gray-900 ${
+            sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'
+          }`}
+        >
           {children}
         </main>
       </div>

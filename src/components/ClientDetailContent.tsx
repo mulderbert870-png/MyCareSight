@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useLayoutEffect, useRef, useMemo } from 'react'
-import { createPortal } from 'react-dom'
+import { createPortal, flushSync } from 'react-dom'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { 
@@ -322,8 +322,6 @@ export default function ClientDetailContent({ client, allClients, representative
   const [addAdlSearch, setAddAdlSearch] = useState('')
   const [addAdlCategoryFilter, setAddAdlCategoryFilter] = useState<'all' | 'ADL' | 'IADL'>('all')
   const [addAdlSelected, setAddAdlSelected] = useState<Set<string>>(new Set())
-  const [isSavingAddAdl, setIsSavingAddAdl] = useState(false)
-  const [addAdlError, setAddAdlError] = useState<string | null>(null)
   const [selectTimeModalOpen, setSelectTimeModalOpen] = useState(false)
   const [selectTimeAdl, setSelectTimeAdl] = useState<{ name: string; group: string } | null>(null)
   const [selectTimeDay, setSelectTimeDay] = useState<number>(1)
@@ -344,6 +342,9 @@ export default function ClientDetailContent({ client, allClients, representative
   })
   const [isSavingAdlPlan, setIsSavingAdlPlan] = useState(false)
   const [adlPlanError, setAdlPlanError] = useState<string | null>(null)
+  /** After save + `router.refresh()`, bump so the ADL hydration effect runs again (covers remount with stale RSC props). */
+  const [adlHydrateNonce, setAdlHydrateNonce] = useState(0)
+  const adlHydrateAbortRef = useRef<AbortController | null>(null)
   const [deletingAdlCode, setDeletingAdlCode] = useState<string | null>(null)
   const [skilledTaskModalOpen, setSkilledTaskModalOpen] = useState(false)
   const [skilledTaskSearch, setSkilledTaskSearch] = useState('')
@@ -509,6 +510,10 @@ export default function ClientDetailContent({ client, allClients, representative
   }, [client.id])
 
   useEffect(() => {
+    setAdlHydrateNonce(0)
+  }, [client.id])
+
+  useEffect(() => {
     setIsClientSwitching(false)
   }, [client.id])
 
@@ -525,16 +530,34 @@ export default function ClientDetailContent({ client, allClients, representative
     setLocalIncidents(initialIncidents ?? [])
   }, [client.id, initialIncidents])
 
+  /** Load non-skilled plan from Supabase on mount / patient change — not from RSC props alone. After
+   * `router.refresh()`, Next can remount with a cached `initialAdls` payload; a client refetch matches DB truth.
+   * Aborted when saving so a slow in-flight fetch cannot overwrite `handleSaveAdlPlan` results. */
   useEffect(() => {
-    setLocalAdls(initialAdls ?? [])
-    setLocalAdlSchedules(initialAdlSchedules ?? [])
-  }, [client.id, initialAdls, initialAdlSchedules])
+    const ac = new AbortController()
+    adlHydrateAbortRef.current = ac
+    const supabase = createClient()
+    ;(async () => {
+      const [a, s] = await Promise.all([
+        q.getAdlsByPatientId(supabase, localClient.id),
+        q.getPatientAdlDaySchedulesByPatientId(supabase, localClient.id),
+      ])
+      if (ac.signal.aborted) return
+      if (a.error || s.error) return
+      if (a.data) setLocalAdls(a.data)
+      if (s.data) setLocalAdlSchedules(s.data)
+    })()
+    return () => {
+      ac.abort()
+    }
+  }, [localClient.id, adlHydrateNonce])
 
   useEffect(() => {
     setLocalSkilledCarePlanTasks(initialSkilledCarePlanTasks ?? [])
     setLocalSkilledSchedules(initialSkilledSchedules)
     setPendingSkilledDeletes([])
-  }, [client.id, initialSkilledCarePlanTasks, initialSkilledSchedules])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- same pattern as non-skilled plan above
+  }, [client.id])
 
   useEffect(() => {
     const supabase = createClient()
@@ -1377,50 +1400,53 @@ export default function ClientDetailContent({ client, allClients, representative
     setAddAdlSearch('')
     setAddAdlCategoryFilter('all')
     setAddAdlSelected(new Set(localAdls.map((a) => a.adl_code)))
-    setAddAdlError(null)
     setAddAdlModalOpen(true)
   }
   const closeAddAdlModal = () => {
-    if (!isSavingAddAdl) setAddAdlModalOpen(false)
+    setAddAdlModalOpen(false)
   }
-  const handleSaveAddAdl = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const existingCodes = new Set(localAdls.map((a) => a.adl_code))
-    const toAdd = Array.from(addAdlSelected).filter((name) => !existingCodes.has(name))
-    const toRemove = localAdls.map((a) => a.adl_code).filter((name) => !addAdlSelected.has(name))
-    if (toAdd.length === 0 && toRemove.length === 0) {
-      setAddAdlModalOpen(false)
-      return
-    }
-    setIsSavingAddAdl(true)
-    setAddAdlError(null)
-    try {
-      const supabase = createClient()
-      for (const code of toRemove) {
-        const { error: delErr } = await q.deleteAdl(supabase, localClient.id, code)
-        if (delErr) throw delErr
+  /** Same pattern as Skilled Task Library: Apply only updates local state; DB writes happen on "Save NON-SKILLED Plan". */
+  const applyAdlTaskSelection = () => {
+    const selected = adlLists.filter((a) => addAdlSelected.has(a.name))
+    const now = new Date().toISOString()
+    const next: PatientAdl[] = selected.map((a, i) => ({
+      id: `draft-${a.name}`,
+      patient_id: localClient.id,
+      adl_code: a.name,
+      display_order: i,
+      created_at: now,
+      updated_at: now,
+    }))
+    setLocalAdls(next)
+    setLocalAdlSchedules((prev) => {
+      const kept = prev.filter((s) => next.some((t) => t.adl_code === s.adl_code))
+      for (const t of next) {
+        const hasRow = kept.some((s) => s.adl_code === t.adl_code)
+        if (hasRow) continue
+        for (let dow = 1; dow <= 7; dow++) {
+          kept.push({
+            id: `temp-${t.adl_code}-${dow}`,
+            patient_id: localClient.id,
+            adl_code: t.adl_code,
+            day_of_week: dow,
+            adl_note: null,
+            schedule_type: 'never',
+            times_per_day: null,
+            slot_morning: null,
+            slot_afternoon: null,
+            slot_evening: null,
+            slot_night: null,
+            display_order: t.display_order,
+            created_at: now,
+            updated_at: now,
+          })
+        }
       }
-      const remaining = localAdls.filter((a) => !toRemove.includes(a.adl_code))
-      const nextOrder = remaining.length > 0 ? Math.max(...remaining.map((a) => a.display_order)) + 1 : 0
-      let inserted: PatientAdl[] | null = null
-      if (toAdd.length > 0) {
-        const { data, error } = await q.insertAdls(supabase, localClient.id, toAdd, nextOrder)
-        if (error) throw error
-        inserted = data ?? null
-      }
-      setLocalAdls((prev) => {
-        const without = prev.filter((a) => !toRemove.includes(a.adl_code))
-        if (inserted?.length) return [...without, ...inserted]
-        return without
-      })
-      setLocalAdlSchedules((prev) => prev.filter((s) => !toRemove.includes(s.adl_code)))
-      setAddAdlModalOpen(false)
-      router.refresh()
-    } catch (err: unknown) {
-      setAddAdlError(err instanceof Error ? err.message : 'Failed to update NON-SKILLED TASKS.')
-    } finally {
-      setIsSavingAddAdl(false)
-    }
+      return kept
+    })
+    const nextCodes = new Set(next.map((t) => t.adl_code))
+    setPendingAdlDeletes((prev) => prev.filter((c) => !nextCodes.has(c)))
+    setAddAdlModalOpen(false)
   }
 
   const openSelectTimeModal = (adl: { name: string; group: string }, dayOfWeek: number, dayLabel: string) => {
@@ -1618,6 +1644,7 @@ export default function ClientDetailContent({ client, allClients, representative
     const existing = localAdlSchedules.find(
       (s) => s.adl_code === selectTimeAdl.name && s.day_of_week === selectTimeDay
     )
+    const adlPlanRow = localAdls.find((a) => a.adl_code === selectTimeAdl.name)
     const now = new Date().toISOString()
     const base = {
       id: existing?.id ?? `temp-${selectTimeAdl.name}-${selectTimeDay}`,
@@ -1625,7 +1652,7 @@ export default function ClientDetailContent({ client, allClients, representative
       adl_code: selectTimeAdl.name,
       day_of_week: selectTimeDay,
       adl_note: existing?.adl_note ?? null,
-      display_order: existing?.display_order ?? 0,
+      display_order: existing?.display_order ?? adlPlanRow?.display_order ?? 0,
       created_at: existing?.created_at || now,
       updated_at: now,
     }
@@ -1742,19 +1769,40 @@ export default function ClientDetailContent({ client, allClients, representative
     setIsSavingAdlPlan(true)
     setAdlPlanError(null)
     try {
+      adlHydrateAbortRef.current?.abort()
       const supabase = createClient()
-      for (const adlCode of pendingAdlDeletes) {
-        const { error } = await q.deleteAdl(supabase, localClient.id, adlCode)
-        if (error) throw error
+      const localCodeSet = new Set(localAdls.map((a) => a.adl_code))
+      const { data: dbAdlRows, error: dbAdlErr } = await q.getAdlsByPatientId(supabase, localClient.id)
+      if (dbAdlErr) throw dbAdlErr
+      const dbCodeSetBefore = new Set((dbAdlRows ?? []).map((r) => r.adl_code))
+      const toRemoveFromDb = Array.from(dbCodeSetBefore).filter((c) => !localCodeSet.has(c))
+      for (const code of toRemoveFromDb) {
+        const { error: delErr } = await q.deleteAdl(supabase, localClient.id, code)
+        if (delErr) throw delErr
+      }
+      const { data: dbAfterDelete, error: dbAfterErr } = await q.getAdlsByPatientId(supabase, localClient.id)
+      if (dbAfterErr) throw dbAfterErr
+      const dbAfterSet = new Set((dbAfterDelete ?? []).map((r) => r.adl_code))
+      const newAdlRows = localAdls
+        .filter((a) => !dbAfterSet.has(a.adl_code))
+        .sort((a, b) => a.display_order - b.display_order)
+      const toAddCodes = newAdlRows.map((a) => a.adl_code)
+      const keptRows = localAdls.filter((a) => dbAfterSet.has(a.adl_code))
+      const startOrder =
+        keptRows.length > 0 ? Math.max(...keptRows.map((a) => a.display_order)) + 1 : 0
+      if (toAddCodes.length > 0) {
+        const { error: insErr } = await q.insertAdls(supabase, localClient.id, toAddCodes, startOrder)
+        if (insErr) throw insErr
       }
       setPendingAdlDeletes([])
-      for (const s of localAdlSchedules) {
-        await q.upsertPatientAdlDaySchedule(supabase, {
+      const scheduleRows = localAdlSchedules.filter((s) => localCodeSet.has(s.adl_code))
+      for (const s of scheduleRows) {
+        const { error: upErr } = await q.upsertPatientAdlDaySchedule(supabase, {
           patient_id: s.patient_id,
           adl_code: s.adl_code,
           day_of_week: s.day_of_week,
           display_order: s.display_order,
-          // adl_note: s.adl_note,
+          adl_note: s.adl_note,
           schedule_type: s.schedule_type,
           times_per_day: s.times_per_day,
           slot_morning: s.slot_morning,
@@ -1762,8 +1810,38 @@ export default function ClientDetailContent({ client, allClients, representative
           slot_evening: s.slot_evening,
           slot_night: s.slot_night,
         })
+        if (upErr) throw upErr
       }
+      const [adlsRes, schedRes] = await Promise.all([
+        q.getAdlsByPatientId(supabase, localClient.id),
+        q.getPatientAdlDaySchedulesByPatientId(supabase, localClient.id),
+      ])
+      if (adlsRes.error) throw adlsRes.error
+      if (schedRes.error) throw schedRes.error
+      const adlD = adlsRes.data ?? []
+      const schedD = schedRes.data ?? []
+      flushSync(() => {
+        setLocalAdls(adlD)
+        setLocalAdlSchedules(schedD)
+      })
+      await new Promise((r) => setTimeout(r, 120))
+      const supabase2 = createClient()
+      const [adls2, sched2] = await Promise.all([
+        q.getAdlsByPatientId(supabase2, localClient.id),
+        q.getPatientAdlDaySchedulesByPatientId(supabase2, localClient.id),
+      ])
+      if (adls2.error) throw adls2.error
+      if (sched2.error) throw sched2.error
+      const finalAdls = adls2.data ?? adlD
+      const finalSched = sched2.data ?? schedD
+      flushSync(() => {
+        setLocalAdls(finalAdls)
+        setLocalAdlSchedules(finalSched)
+      })
       router.refresh()
+      setTimeout(() => {
+        setAdlHydrateNonce((n) => n + 1)
+      }, 0)
     } catch (err: unknown) {
       setAdlPlanError(err instanceof Error ? err.message : 'Failed to save ADL plan.')
     } finally {
@@ -1772,6 +1850,7 @@ export default function ClientDetailContent({ client, allClients, representative
   }
 
   const hasAdlPlanChanges = useMemo(() => {
+    if (pendingAdlDeletes.length > 0) return true
     const initAdls = initialAdls ?? []
     const initSched = initialAdlSchedules ?? []
     const sortAdl = (a: PatientAdl, b: PatientAdl) => a.adl_code.localeCompare(b.adl_code)
@@ -1795,7 +1874,7 @@ export default function ClientDetailContent({ client, allClients, representative
     const localSchedSig = [...localAdlSchedules].sort(sortSched).map(schedKey)
     const initSchedSig = [...initSched].sort(sortSched).map(schedKey)
     return JSON.stringify(localSchedSig) !== JSON.stringify(initSchedSig)
-  }, [localAdls, localAdlSchedules, initialAdls, initialAdlSchedules])
+  }, [pendingAdlDeletes, localAdls, localAdlSchedules, initialAdls, initialAdlSchedules])
 
   const hasSkilledPlanChanges = useMemo(() => {
     if (pendingSkilledDeletes.length > 0) return true
@@ -3337,43 +3416,36 @@ export default function ClientDetailContent({ client, allClients, representative
     [serviceContracts]
   )
 
-  const activeWeeklyLimitRows = useMemo(
-    () => weeklyLimitRows.filter((r) => (r.status ?? 'active') === 'active'),
-    [weeklyLimitRows]
-  )
-
+  /**
+   * Schedule tab: weekly hour limit row per service type for the **selected calendar week**.
+   * Must include inactive contracts: when a new contract is saved, older rows are marked inactive
+   * but still hold the limit that governed past weeks. Pick among all rows with a limit whose
+   * [effective_date, end_date] window overlaps the week, choosing the latest effective_date
+   * (then created_at, id) so past weeks use the contract that was in force then, not the newest row.
+   */
   const currentWeeklyLimitByServiceType = useMemo(() => {
     const weekStart = scheduleWeekStartStr
     const weekEnd = scheduleWeekEndStr
     const overlapsWeek = (r: PatientServiceContractRow) =>
       r.effective_date <= weekEnd && (r.end_date == null || r.end_date >= weekStart)
     const pickFor = (serviceType: 'non_skilled' | 'skilled') => {
-      const rows = activeWeeklyLimitRows.filter((r) => r.service_type === serviceType)
+      const rows = weeklyLimitRows.filter((r) => r.service_type === serviceType)
       if (rows.length === 0) return null
-      // "Activated by last added" per service type.
-      const latest = [...rows].sort((a, b) => {
-        const byCreated = (b.created_at ?? '').localeCompare(a.created_at ?? '')
-        if (byCreated !== 0) return byCreated
+      const applicable = rows.filter((r) => overlapsWeek(r))
+      if (applicable.length === 0) return null
+      return [...applicable].sort((a, b) => {
         const byEffective = b.effective_date.localeCompare(a.effective_date)
         if (byEffective !== 0) return byEffective
+        const byCreated = (b.created_at ?? '').localeCompare(a.created_at ?? '')
+        if (byCreated !== 0) return byCreated
         return b.id.localeCompare(a.id)
       })[0]
-      const applies = overlapsWeek(latest)
-      if (applies) return latest
-      const applicable = rows
-        .filter((r) => overlapsWeek(r))
-        .sort((a, b) => {
-          const byEffective = b.effective_date.localeCompare(a.effective_date)
-          if (byEffective !== 0) return byEffective
-          return (b.created_at ?? '').localeCompare(a.created_at ?? '')
-        })
-      return applicable[0] ?? null
     }
     return {
       non_skilled: pickFor('non_skilled'),
       skilled: pickFor('skilled'),
     } as Record<'non_skilled' | 'skilled', PatientServiceContractRow | null>
-  }, [activeWeeklyLimitRows, scheduleWeekStartStr, scheduleWeekEndStr])
+  }, [weeklyLimitRows, scheduleWeekStartStr, scheduleWeekEndStr])
 
   /** Overview tab: most recently saved weekly limit per service type (from patient_service_contracts). */
   const latestOverviewWeeklyByServiceType = useMemo(() => {
@@ -3764,7 +3836,7 @@ export default function ClientDetailContent({ client, allClients, representative
               value={localClient.id}
               onChange={(e) => handleClientChange(e.target.value)}
               disabled={isClientSwitching}
-              className="min-w-0 flex-1 px-4 py-2 border-0 border-l border-r border-gray-200 focus:ring-0 focus:outline-none bg-transparent cursor-pointer disabled:cursor-wait disabled:opacity-70"
+              className="min-w-0 flex-1 px-4 py-2 border-0 border-l border-r border-gray-200 text-gray-900 focus:ring-0 focus:outline-none bg-transparent cursor-pointer disabled:cursor-wait disabled:opacity-70"
             >
               {allClients.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -5067,7 +5139,10 @@ export default function ClientDetailContent({ client, allClients, representative
                   <h3 className="text-lg font-bold text-gray-900">
                     Activities of Daily Living ({localAdls.length})
                   </h3>
-                  <p className="text-sm text-gray-500 mt-1">Manage client care tasks and schedules.</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Manage client care tasks and schedules. Use <strong>Save NON-SKILLED Plan</strong> to write library
+                    changes, trashed tasks, and the weekly grid to the database (same idea as the Skilled Tasks tab).
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -6134,7 +6209,7 @@ export default function ClientDetailContent({ client, allClients, representative
         </form>
       </Modal>
 
-      {/* Add ADL Task Modal — layout matches Skilled Task Library modal */}
+      {/* Add ADL Task Modal — same flow as Skilled: Apply = local only; Save plan persists to DB */}
       <Modal
         isOpen={addAdlModalOpen}
         onClose={closeAddAdlModal}
@@ -6142,7 +6217,7 @@ export default function ClientDetailContent({ client, allClients, representative
         subtitle="Select daily living activities to add to the care plan"
         size="md"
       >
-        <form onSubmit={handleSaveAddAdl} className="space-y-3">
+        <div className="space-y-3">
           <div className="flex gap-2">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -6230,31 +6305,23 @@ export default function ClientDetailContent({ client, allClients, representative
             })()}
           </div>
 
-          {addAdlError && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-              {addAdlError}
-            </div>
-          )}
-
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={closeAddAdlModal}
-              disabled={isSavingAddAdl}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
             >
               Cancel
             </button>
             <button
-              type="submit"
-              disabled={isSavingAddAdl}
-              className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+              type="button"
+              onClick={applyAdlTaskSelection}
+              className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700"
             >
-              {isSavingAddAdl && <Loader2 className="h-4 w-4 animate-spin" />}
               Apply
             </button>
           </div>
-        </form>
+        </div>
       </Modal>
 
       {/* Select Time Modal — no Frequency section; times per day 1–4 */}

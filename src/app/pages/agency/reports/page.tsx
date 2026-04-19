@@ -2,9 +2,10 @@ import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
+import { assertAgencyReportsPageAccess } from '@/lib/agency-reports-access'
 import DashboardLayout from '@/components/DashboardLayout'
 import Link from 'next/link'
-import { Award, AlertTriangle, Users, FileText } from 'lucide-react'
+import { Award, AlertTriangle, Users, FileText, DollarSign } from 'lucide-react'
 
 export default async function ReportsPage() {
   const session = await getSession()
@@ -15,9 +16,20 @@ export default async function ReportsPage() {
 
   const supabase = await createClient()
   const { data: profile } = await q.getUserProfileFull(supabase, session.user.id)
+  assertAgencyReportsPageAccess(profile)
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
 
   const reports = [
+    {
+      id: 'payroll-billing',
+      title: 'Payroll & Billing Report',
+      description:
+        'Hours breakdown per caregiver and client with pay/bill amounts. Includes payroll summary, client billing summary, and CSV export.',
+      icon: DollarSign,
+      iconColor: 'bg-emerald-50',
+      iconTextColor: 'text-emerald-700',
+      href: '/pages/agency/reports/payroll-billing',
+    },
     {
       id: 'staff-certifications',
       title: 'Staff Certifications Report',
@@ -58,12 +70,12 @@ export default async function ReportsPage() {
         <div>
           <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-2">Reports</h1>
           <p className="text-gray-600 text-base md:text-lg">
-            Generate and download reports based on your organization data
+            Generate and download reports based on your organization&apos;s data
           </p>
         </div>
 
         {/* Report Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
           {reports.map((report) => {
             const Icon = report.icon
             return (

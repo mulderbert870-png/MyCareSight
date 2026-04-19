@@ -323,7 +323,7 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
         {(loadError || error) && <div className="px-4 py-2 text-sm text-red-600">{loadError || error}</div>}
 
         <div className="overflow-x-auto">
-          <table className="min-w-[1200px] w-full text-sm">
+          <table className="min-w-[1200px] w-full text-sm text-gray-900">
             <thead className="bg-gray-50 text-gray-600">
               <tr>
                 <th className="text-left px-3 py-2">Date</th>

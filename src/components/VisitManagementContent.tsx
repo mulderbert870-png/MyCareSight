@@ -257,7 +257,9 @@ export default function VisitManagementContent({
       if (clientFilter !== 'all' && v.clientId !== clientFilter) return false
       if (caregiverFilter !== 'all' && (v.caregiverId ?? 'none') !== caregiverFilter) return false
       if (q) {
-        const hay = `${v.visitTitle} ${v.clientName} ${v.caregiverName ?? ''} ${v.locationLabel}`.toLowerCase()
+        // Match list + modal copy: visitTitle often duplicates type; rows emphasize ADL task names (adlTasks).
+        const hay = `${v.visitTitle} ${v.typeLabel} ${v.adlTasks.join(' ')} ${v.clientName} ${v.caregiverName ?? ''} ${v.locationLabel} ${v.notes ?? ''}`
+          .toLowerCase()
         if (!hay.includes(q)) return false
       }
       return true

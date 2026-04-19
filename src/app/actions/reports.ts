@@ -2,6 +2,75 @@
 
 import { createClient } from '@/lib/supabase/server'
 
+type ServerSupabase = Awaited<ReturnType<typeof createClient>>
+
+/** Agency admin: own admin row. Care coordinator: primary agency admin for coordinator's agency. */
+type ReportCaregiverScope =
+  | { mode: 'ownerOnly'; adminId: string }
+  | { mode: 'agency'; adminId: string; agencyId: string }
+
+/** Dynamic `.select(...)` strings are not narrowed by Supabase types; use this after `error` is cleared. */
+type ReportCaregiverMemberRow = {
+  id: string
+  first_name: string | null
+  last_name: string | null
+  email: string | null
+  phone: string | null
+  user_id?: string | null
+  role?: string | null
+  job_title?: string | null
+  status?: string | null
+}
+
+async function resolveReportCaregiverScope(
+  supabase: ServerSupabase,
+  userId: string
+): Promise<ReportCaregiverScope | null> {
+  const { data: admin } = await supabase
+    .from('agency_admins')
+    .select('id, agency_id')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (admin?.id) {
+    if (admin.agency_id) return { mode: 'agency', adminId: admin.id, agencyId: admin.agency_id }
+    return { mode: 'ownerOnly', adminId: admin.id }
+  }
+
+  const { data: coord } = await supabase
+    .from('care_coordinators')
+    .select('agency_id')
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  if (!coord?.agency_id) return null
+
+  const { data: primaryAdmin } = await supabase
+    .from('agency_admins')
+    .select('id')
+    .eq('agency_id', coord.agency_id)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (!primaryAdmin?.id) return null
+  return { mode: 'agency', adminId: primaryAdmin.id, agencyId: coord.agency_id }
+}
+
+async function queryCaregiverMembersForReport(
+  supabase: ServerSupabase,
+  scope: ReportCaregiverScope,
+  select: string
+) {
+  let q = supabase.from('caregiver_members').select(select).order('first_name', { ascending: true })
+  if (scope.mode === 'ownerOnly') {
+    q = q.eq('company_owner_id', scope.adminId)
+  } else {
+    q = q.or(`company_owner_id.eq.${scope.adminId},agency_id.eq.${scope.agencyId}`)
+  }
+  return q
+}
+
 export interface StaffCertificationReportRow {
   staff_name: string
   contact: string
@@ -45,21 +114,16 @@ export async function getStaffCertificationsReport() {
       return { error: 'You must be logged in', data: null }
     }
 
-    const { data: admin } = await supabase
-      .from('agency_admins')
-      .select('id')
-      .eq('user_id', user.id)
-      .single()
-
-    if (!admin?.id) {
+    const scope = await resolveReportCaregiverScope(supabase, user.id)
+    if (!scope) {
       return { error: null, data: [] }
     }
 
-    const { data: staffMembers, error: staffError } = await supabase
-      .from('caregiver_members')
-      .select('id, first_name, last_name, email, phone, user_id')
-      .eq('company_owner_id', admin.id)
-      .order('first_name', { ascending: true })
+    const { data: staffMembers, error: staffError } = await queryCaregiverMembersForReport(
+      supabase,
+      scope,
+      'id, first_name, last_name, email, phone, user_id'
+    )
 
     if (staffError) {
       return { error: staffError.message, data: null }
@@ -69,7 +133,8 @@ export async function getStaffCertificationsReport() {
       return { error: null, data: [] }
     }
 
-    const staffIds = staffMembers.map((sm) => sm.id)
+    const members = staffMembers as unknown as ReportCaregiverMemberRow[]
+    const staffIds = members.map((sm) => sm.id)
 
     const { data: credentials, error: certError } = await supabase
       .from('caregiver_credentials')
@@ -81,8 +146,8 @@ export async function getStaffCertificationsReport() {
       return { error: certError.message, data: null }
     }
 
-    const staffMap = new Map(staffMembers.map((sm) => [sm.user_id, sm]))
-    const staffById = new Map(staffMembers.map((sm) => [sm.id, sm]))
+    const staffMap = new Map<string | null | undefined, ReportCaregiverMemberRow>(members.map((sm) => [sm.user_id, sm]))
+    const staffById = new Map(members.map((sm) => [sm.id, sm]))
 
     const reportData: StaffCertificationReportRow[] = (credentials || []).map((cert) => {
       const staff =
@@ -145,21 +210,16 @@ export async function getExpiringCertificationsReport() {
       return { error: 'You must be logged in', data: null }
     }
 
-    const { data: admin } = await supabase
-      .from('agency_admins')
-      .select('id')
-      .eq('user_id', user.id)
-      .single()
-
-    if (!admin?.id) {
+    const scope = await resolveReportCaregiverScope(supabase, user.id)
+    if (!scope) {
       return { error: null, data: [] }
     }
 
-    const { data: staffMembers, error: staffError } = await supabase
-      .from('caregiver_members')
-      .select('id, first_name, last_name, email, phone, user_id')
-      .eq('company_owner_id', admin.id)
-      .order('first_name', { ascending: true })
+    const { data: staffMembers, error: staffError } = await queryCaregiverMembersForReport(
+      supabase,
+      scope,
+      'id, first_name, last_name, email, phone, user_id'
+    )
 
     if (staffError) {
       return { error: staffError.message, data: null }
@@ -169,7 +229,8 @@ export async function getExpiringCertificationsReport() {
       return { error: null, data: [] }
     }
 
-    const staffIds = staffMembers.map((sm) => sm.id)
+    const members = staffMembers as unknown as ReportCaregiverMemberRow[]
+    const staffIds = members.map((sm) => sm.id)
 
     const { data: credentials, error: certError } = await supabase
       .from('caregiver_credentials')
@@ -181,8 +242,8 @@ export async function getExpiringCertificationsReport() {
       return { error: certError.message, data: null }
     }
 
-    const staffMap = new Map(staffMembers.map((sm) => [sm.user_id, sm]))
-    const staffById = new Map(staffMembers.map((sm) => [sm.id, sm]))
+    const staffMap = new Map<string | null | undefined, ReportCaregiverMemberRow>(members.map((sm) => [sm.user_id, sm]))
+    const staffById = new Map(members.map((sm) => [sm.id, sm]))
 
     const today = new Date()
 
@@ -244,21 +305,16 @@ export async function getStaffRosterReport() {
       return { error: 'You must be logged in', data: null }
     }
 
-    const { data: admin } = await supabase
-      .from('agency_admins')
-      .select('id')
-      .eq('user_id', user.id)
-      .single()
-
-    if (!admin?.id) {
+    const scope = await resolveReportCaregiverScope(supabase, user.id)
+    if (!scope) {
       return { error: null, data: [] }
     }
 
-    const { data: staffMembers, error: staffError } = await supabase
-      .from('caregiver_members')
-      .select('id, first_name, last_name, email, phone, role, job_title, status')
-      .eq('company_owner_id', admin.id)
-      .order('first_name', { ascending: true })
+    const { data: staffMembers, error: staffError } = await queryCaregiverMembersForReport(
+      supabase,
+      scope,
+      'id, first_name, last_name, email, phone, role, job_title, status'
+    )
 
     if (staffError) {
       return { error: staffError.message, data: null }
@@ -268,13 +324,14 @@ export async function getStaffRosterReport() {
       return { error: null, data: [] }
     }
 
-    const reportData: StaffRosterReportRow[] = staffMembers.map(staff => ({
+    const rosterRows = staffMembers as unknown as ReportCaregiverMemberRow[]
+    const reportData: StaffRosterReportRow[] = rosterRows.map((staff) => ({
       staff_name: `${staff.first_name} ${staff.last_name}`,
-      email: staff.email,
+      email: staff.email ?? '',
       phone: staff.phone || 'N/A',
       role: staff.role || '—',
       job_title: staff.job_title || '—',
-      status: staff.status || '—'
+      status: staff.status || '—',
     }))
 
     return { error: null, data: reportData }

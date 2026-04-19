@@ -6,8 +6,6 @@ import { Users, CheckCircle2, FileText, Plus, Search, Eye, Loader2 } from 'lucid
 import AddNewClientModal from './AddNewClientModal'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
-import { init } from 'next/dist/compiled/webpack/webpack'
-import { arrayOutputType } from 'zod/v3'
 
 interface SmallClient {
   id: string
@@ -198,7 +196,7 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-sm text-gray-900 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           >
             <option>All Status</option>
             <option value="active">Active</option>

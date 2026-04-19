@@ -207,9 +207,11 @@ export default function StaffLayout({
         </aside>
 
         {/* Main Content — top padding clears fixed header; do not use p-* or it overrides pt */}
-        <main className={`flex-1 w-full pt-[73px] px-4 pb-4 sm:px-6 sm:pb-6 transition-all duration-300 ${
-          sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'
-        }`}>
+        <main
+          className={`flex-1 w-full pt-[73px] px-4 pb-4 sm:px-6 sm:pb-6 transition-all duration-300 text-gray-900 ${
+            sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'
+          }`}
+        >
           {children}
         </main>
       </div>

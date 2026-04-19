@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
+import { assertAgencyReportsPageAccess } from '@/lib/agency-reports-access'
 import DashboardLayout from '@/components/DashboardLayout'
 import Link from 'next/link'
 import { getStaffRosterReport } from '@/app/actions/reports'
@@ -18,6 +19,7 @@ export default async function StaffRosterReportPage() {
   const supabase = await createClient()
 
   const { data: profile } = await q.getUserProfileFull(supabase, session.user.id)
+  assertAgencyReportsPageAccess(profile)
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
 
   // Get report data

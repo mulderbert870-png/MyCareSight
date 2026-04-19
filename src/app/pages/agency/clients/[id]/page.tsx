@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation'
+import { unstable_noStore as noStore } from 'next/cache'
 import { getSession } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
@@ -6,11 +7,15 @@ import DashboardLayout from '@/components/DashboardLayout'
 import ClientDetailContent from '@/components/ClientDetailContent'
 import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
 
+/** Avoid stale RSC payload for this page after `router.refresh()` (care plan edits must round-trip). */
+export const dynamic = 'force-dynamic'
+
 export default async function ClientDetailPage({
   params
 }: {
   params: Promise<{ id: string }>
 }) {
+  noStore()
   const session = await getSession()
 
   if (!session) {

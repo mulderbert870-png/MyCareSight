@@ -8,13 +8,11 @@
   --background-end-rgb: 255, 255, 255;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --foreground-rgb: 255, 255, 255;
-    --background-start-rgb: 0, 0, 0;
-    --background-end-rgb: 0, 0, 0;
-  }
-}
+/**
+ * The product UI is light-themed (white cards, gray chrome). Basing body text on
+ * `prefers-color-scheme: dark` made inherited color white while cards stayed light,
+ * which hid labels and table text. Keep a single light base until a real dark theme exists.
+ */
 
 body {
   color: rgb(var(--foreground-rgb));

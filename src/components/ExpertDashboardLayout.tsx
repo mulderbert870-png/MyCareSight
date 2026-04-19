@@ -183,9 +183,11 @@ export default function ExpertDashboardLayout({
         </aside>
 
         {/* Main Content */}
-        <main className={`flex-1 p-4 sm:p-6 w-full transition-all duration-300 ${
-          sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'
-        }`}>
+        <main
+          className={`flex-1 p-4 sm:p-6 w-full transition-all duration-300 text-gray-900 ${
+            sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-64'
+          }`}
+        >
           {children}
         </main>
       </div>

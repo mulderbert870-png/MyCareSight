@@ -186,14 +186,26 @@ export async function insertAdls(
   }
 }
 
-/** Delete all day rows for one ADL code. */
+/** Delete all day rows for one ADL code. Returns an error if the server deletes 0 rows (RLS or bad code). */
 export async function deleteAdl(supabase: Supabase, patientId: string, adlCode: string) {
-  return supabase
+  const { data, error } = await supabase
     .from('patient_care_plan_tasks')
     .delete()
     .eq('patient_id', patientId)
     .eq('service_type', 'non_skilled')
     .eq('legacy_task_code', adlCode)
+    .select('id')
+  if (error) return { data: null, error }
+  const deleted = data?.length ?? 0
+  if (deleted === 0) {
+    return {
+      data: null,
+      error: new Error(
+        `Could not remove "${adlCode}" from the care plan (no rows deleted). Your account may not have permission to remove tasks.`
+      ),
+    }
+  }
+  return { data, error: null }
 }
 
 /** All per-day schedules for a patient. */
