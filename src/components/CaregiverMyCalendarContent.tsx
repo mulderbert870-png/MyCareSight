@@ -526,11 +526,11 @@ export default function CaregiverMyCalendarContent({
   )
 
   return (
-    <div className="w-full mx-auto px-4 py-8 pb-16">
-      <div className="flex flex-col gap-4 mb-8 sm:flex-row sm:items-start sm:justify-between">
+    <div className="space-y-5 mt-20 pb-16">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-bold text-gray-900">My Calendar</h1>
-          <p className="text-gray-600 mt-1 text-sm sm:text-base">
+          <h1 className="text-3xl font-bold text-gray-900">My Calendar</h1>
+          <p className="text-sm text-gray-600">
             Set your available time slots so you can be matched with visits.
           </p>
         </div>

@@ -33,6 +33,8 @@ export type CaregiverVisitCardDTO = {
   myPendingRequestId: string | null
   /** Caregiver's note on the pending assignment request (if any). */
   myRequestNote: string | null
+  /** True when any EVV entry has clock_out_time for this visit. */
+  hasClockOut: boolean
 }
 
 export type CaregiverCareVisitsDTO = {
@@ -185,7 +187,9 @@ function isPastDate(date: string): boolean {
 export function isVisitPastForCaregiverMyVisits(v: {
   date: string
   status: CaregiverVisitStatus
+  hasClockOut?: boolean
 }): boolean {
+  if (v.hasClockOut) return true
   if (v.status === 'completed' || v.status === 'missed') return true
   return isPastDate(v.date)
 }
@@ -288,6 +292,7 @@ export async function fetchCaregiverCareVisitsData(
 
   /** Visits with EVV clock-in and no clock-out (row status can stay `scheduled` until cron sync or a row update). */
   const activeClockInVisitIds = new Set<string>()
+  const clockedOutVisitIds = new Set<string>()
   const caregiverNotesByVisit = new Map<string, string | null>()
   for (const vr of (vteNotesRes.data ?? []) as {
     scheduled_visit_id?: string
@@ -298,6 +303,7 @@ export async function fetchCaregiverCareVisitsData(
     const vid = String(vr.scheduled_visit_id ?? '')
     if (!vid) continue
     if (vr.clock_in_time && !vr.clock_out_time) activeClockInVisitIds.add(vid)
+    if (vr.clock_out_time) clockedOutVisitIds.add(vid)
     const n = vr.caregiver_notes?.trim() ? vr.caregiver_notes.trim() : null
     caregiverNotesByVisit.set(vid, n)
   }
@@ -340,6 +346,7 @@ export async function fetchCaregiverCareVisitsData(
         myPendingUnassignmentRequestId: pendingUnassignmentBySchedule.get(row.id) ?? null,
         myPendingRequestId: pending?.id ?? null,
         myRequestNote: pending?.note ?? null,
+        hasClockOut: clockedOutVisitIds.has(row.id),
       } satisfies CaregiverVisitCardDTO
     })
     .sort((a, b) => `${a.date} ${a.timeLabel}`.localeCompare(`${b.date} ${b.timeLabel}`))
