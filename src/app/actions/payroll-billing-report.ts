@@ -4,10 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
-import {
-  fetchPayrollBillingApprovedRows,
-  type PayrollBillingDetailRow,
-} from '@/lib/payroll-billing-report'
+import { appendCaregiverPayRateAction } from '@/app/actions/caregiver-pay-rates'
+import { fetchPayrollBillingReportRows, type PayrollBillingDetailRow } from '@/lib/payroll-billing-report'
 
 const REPORT_PATH = '/pages/agency/reports/payroll-billing'
 
@@ -24,7 +22,7 @@ async function getViewerAgencyId(): Promise<string | null> {
   return ctx?.agency_id ?? null
 }
 
-export async function getPayrollBillingApprovedRowsAction(
+export async function getPayrollBillingReportRowsAction(
   dateFrom: string,
   dateTo: string
 ): Promise<{ rows: PayrollBillingDetailRow[]; error?: string }> {
@@ -35,7 +33,7 @@ export async function getPayrollBillingApprovedRowsAction(
   if (!user) return { rows: [], error: 'Not signed in.' }
 
   const agencyId = await getViewerAgencyId()
-  return fetchPayrollBillingApprovedRows(supabase, { agencyId, dateFrom, dateTo })
+  return fetchPayrollBillingReportRows(supabase, { agencyId, dateFrom, dateTo })
 }
 
 export type RateManagerPayRow = {
@@ -76,11 +74,10 @@ export async function getRateManagerDataAction(): Promise<{
   if (!agencyId) return { payRows: [], billRows: [], error: 'No agency context.' }
 
   const { data: payData, error: payErr } = await supabase
-    .from('pay_rate_schedule')
-    .select('id, caregiver_member_id, service_type, rate, unit_type, effective_start, effective_end, status')
+    .from('caregiver_pay_rates')
+    .select('id, caregiver_member_id, service_type, pay_rate, unit_type, effective_start, effective_end')
     .eq('agency_id', agencyId)
-    .eq('status', 'active')
-    .not('caregiver_member_id', 'is', null)
+    .is('effective_end', null)
     .order('effective_start', { ascending: false })
 
   if (payErr) return { payRows: [], billRows: [], error: payErr.message }
@@ -100,15 +97,15 @@ export async function getRateManagerDataAction(): Promise<{
   const payRows: RateManagerPayRow[] = (payData ?? [])
     .filter((r) => r.caregiver_member_id)
     .map((r) => ({
-    id: r.id as string,
-    caregiver_member_id: r.caregiver_member_id as string,
-    caregiverName: nameByCg.get(r.caregiver_member_id as string) ?? 'Caregiver',
-    service_type: (r.service_type as string | null) ?? null,
-    rate: Number(r.rate ?? 0),
-    unit_type: String(r.unit_type ?? 'hour'),
-    effective_start: String(r.effective_start ?? ''),
-    effective_end: (r.effective_end as string | null) ?? null,
-  }))
+      id: r.id as string,
+      caregiver_member_id: r.caregiver_member_id as string,
+      caregiverName: nameByCg.get(r.caregiver_member_id as string) ?? 'Caregiver',
+      service_type: (r.service_type as string | null) ?? null,
+      rate: Number(r.pay_rate ?? 0),
+      unit_type: String(r.unit_type ?? 'hour'),
+      effective_start: String(r.effective_start ?? ''),
+      effective_end: (r.effective_end as string | null) ?? null,
+    }))
 
   const { data: billData, error: billErr } = await supabase
     .from('patient_service_contracts')
@@ -143,13 +140,21 @@ export async function getRateManagerDataAction(): Promise<{
   return { payRows, billRows }
 }
 
-export async function updatePayRateScheduleRateAction(id: string, rate: number): Promise<{ ok?: true; error?: string }> {
-  if (!Number.isFinite(rate) || rate < 0) return { error: 'Invalid rate.' }
-  const supabase = await createClient()
-  const { error } = await supabase.from('pay_rate_schedule').update({ rate, updated_at: new Date().toISOString() }).eq('id', id)
-  if (error) return { error: error.message }
+/** Append a new caregiver pay rate row (closes the previous open row on the effective date). */
+export async function updateCaregiverPayRateFromManagerAction(
+  caregiverMemberId: string,
+  serviceType: string | null,
+  rate: number,
+  effectiveDate?: string
+): Promise<{ ok?: true; error?: string }> {
+  const res = await appendCaregiverPayRateAction({
+    caregiverMemberId,
+    payRate: rate,
+    effectiveDate,
+    serviceType,
+  })
+  if (res.error) return { error: res.error }
   revalidatePath(REPORT_PATH)
-  revalidatePath('/pages/agency/time-billing')
   return { ok: true }
 }
 

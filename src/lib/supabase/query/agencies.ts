@@ -16,6 +16,16 @@ export async function updateClientCompanyAndAgency(
   return supabase.from('agency_admins').update(updates).eq('id', adminId)
 }
 
+/** Same payload for many `agency_admins.id` rows — one UPDATE ... WHERE id IN (...). */
+export async function updateClientCompanyAndAgencyForIds(
+  supabase: Supabase,
+  adminIds: string[],
+  updates: { company_name: string; agency_id?: string | null }
+) {
+  if (adminIds.length === 0) return { data: null, error: null }
+  return supabase.from('agency_admins').update(updates).in('id', adminIds)
+}
+
 export async function getAgenciesExceptId(supabase: Supabase, excludeId: string) {
   return supabase.from('agencies').select('id, agency_admin_ids').neq('id', excludeId)
 }
@@ -33,6 +43,14 @@ export async function updateAgencyById(supabase: Supabase, id: string, payload: 
 
 export async function updateClientClearAgency(supabase: Supabase, adminId: string) {
   return supabase.from('agency_admins').update({ company_name: '', agency_id: null }).eq('id', adminId)
+}
+
+export async function updateClientClearAgencyForIds(supabase: Supabase, adminIds: string[]) {
+  if (adminIds.length === 0) return { data: null, error: null }
+  return supabase
+    .from('agency_admins')
+    .update({ company_name: '', agency_id: null })
+    .in('id', adminIds)
 }
 
 export async function getClientByCompanyOwnerId(supabase: Supabase, companyOwnerId: string) {
@@ -116,6 +134,53 @@ export async function getClientsWithCompanyOwner(supabase: Supabase) {
 
 export async function getAllClientsOrdered(supabase: Supabase) {
   return supabase.from('agency_admins').select('*').order('created_at', { ascending: false })
+}
+
+/** Escape `%` / `_` for Postgres ILIKE patterns. */
+function escapeIlikePattern(raw: string): string {
+  return raw.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_').replace(/,/g, ' ')
+}
+
+export type AgencyAdminListFilters = {
+  search?: string
+  /** UI values: `'All Status'` skips; otherwise matches `agency_admins.status` case-insensitively. */
+  status?: string
+  /** UI: `'All Experts'` skips; otherwise `expert_id` must equal this (auth user id of expert). */
+  expertUserId?: string
+  /** UI: `'All States'` skips; filters via `client_states`. */
+  state?: string
+}
+
+/** Filtered agency admin list for admin UI (ILIKE search + optional status / expert / state). */
+export async function getAgencyAdminsFiltered(supabase: Supabase, filters: AgencyAdminListFilters) {
+  let qb = supabase.from('agency_admins').select('*').order('created_at', { ascending: false })
+
+  const search = filters.search?.trim()
+  if (search) {
+    const p = `%${escapeIlikePattern(search)}%`
+    qb = qb.or(`company_name.ilike.${p},contact_name.ilike.${p},contact_email.ilike.${p}`)
+  }
+
+  if (filters.status && filters.status !== 'All Status') {
+    qb = qb.eq('status', filters.status.trim().toLowerCase())
+  }
+
+  if (filters.expertUserId && filters.expertUserId !== 'All Experts') {
+    qb = qb.eq('expert_id', filters.expertUserId)
+  }
+
+  if (filters.state && filters.state !== 'All States') {
+    const { data: stateRows, error: stErr } = await supabase
+      .from('client_states')
+      .select('client_id')
+      .eq('state', filters.state)
+    if (stErr) return { data: null, error: stErr }
+    const ids = Array.from(new Set((stateRows ?? []).map((r: { client_id: string }) => r.client_id).filter(Boolean)))
+    if (ids.length === 0) return { data: [], error: null }
+    qb = qb.in('id', ids)
+  }
+
+  return qb
 }
 
 export async function getClientsByIds(supabase: Supabase, adminIds: string[], select = 'id, company_name') {

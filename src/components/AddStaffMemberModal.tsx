@@ -359,7 +359,7 @@ export default function AddStaffMemberModal({ isOpen, onClose, onSuccess, staffR
         </div>
 
         {/* Start Date */}
-        <div>
+        {/* <div>
           <label htmlFor="start_date" className="block text-sm font-semibold text-gray-700 mb-2">
             Start Date
           </label>
@@ -373,7 +373,7 @@ export default function AddStaffMemberModal({ isOpen, onClose, onSuccess, staffR
           {errors.start_date && (
             <p className="mt-1 text-sm text-red-600">{errors.start_date.message}</p>
           )}
-        </div>
+        </div> */}
 
         {/* Form Actions */}
         <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-200">

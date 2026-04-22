@@ -9,18 +9,34 @@ import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
 import Modal from './Modal'
 import { Loader2 } from 'lucide-react'
+import { appendCaregiverPayRateAction } from '@/app/actions/caregiver-pay-rates'
 
-const staffMemberSchema = z.object({
-  first_name: z.string().min(1, 'First name is required').min(2, 'First name must be at least 2 characters'),
-  last_name: z.string().min(1, 'Last name is required').min(2, 'Last name must be at least 2 characters'),
-  email: z.string().email('Please enter a valid email address'),
-  phone: z.string().optional(),
-  role: z.string().min(1, 'Role is required'),
-  job_title: z.string().optional(),
-  status: z.enum(['active', 'inactive', 'pending']),
-  employee_id: z.string().optional(),
-  start_date: z.string().optional(),
-})
+const staffMemberSchema = z
+  .object({
+    first_name: z.string().min(1, 'First name is required').min(2, 'First name must be at least 2 characters'),
+    last_name: z.string().min(1, 'Last name is required').min(2, 'Last name must be at least 2 characters'),
+    email: z.string().email('Please enter a valid email address'),
+    phone: z.string().optional(),
+    role: z.string().min(1, 'Role is required'),
+    job_title: z.string().optional(),
+    status: z.enum(['active', 'inactive', 'pending']),
+    employee_id: z.string().optional(),
+    start_date: z.string().optional(),
+    pay_rate_hourly: z.string().optional(),
+    pay_rate_effective_date: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const t = data.pay_rate_hourly?.trim() ?? ''
+    if (!t) return
+    const n = Number(t)
+    if (!Number.isFinite(n) || n < 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Pay rate must be a valid non-negative number.',
+        path: ['pay_rate_hourly'],
+      })
+    }
+  })
 
 type StaffMemberFormData = z.infer<typeof staffMemberSchema>
 
@@ -53,6 +69,8 @@ interface StaffMember {
   status: string
   employee_id?: string | null
   start_date?: string | null
+  currentPayRate?: number | null
+  pay_rate?: string | number | null
 }
 
 interface EditStaffModalProps {
@@ -62,6 +80,20 @@ interface EditStaffModalProps {
   /** When set (e.g. from agency page), role dropdown uses these names from `caregiver_roles`. */
   staffRoleNames?: string[]
   onSuccess?: () => void
+}
+
+function defaultPayRateEffectiveDate(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function initialPayRateField(staff: StaffMember): string {
+  if (staff.currentPayRate !== undefined && staff.currentPayRate !== null && Number.isFinite(staff.currentPayRate)) {
+    return String(staff.currentPayRate)
+  }
+  if (staff.pay_rate !== null && staff.pay_rate !== undefined && staff.pay_rate !== '') {
+    return typeof staff.pay_rate === 'number' ? staff.pay_rate.toFixed(2) : String(staff.pay_rate)
+  }
+  return ''
 }
 
 export default function EditStaffModal({
@@ -101,6 +133,8 @@ export default function EditStaffModal({
       status: normalizeStaffStatus(staff.status),
       employee_id: staff.employee_id || '',
       start_date: staff.start_date ? staff.start_date.split('T')[0] : '',
+      pay_rate_hourly: initialPayRateField(staff),
+      pay_rate_effective_date: defaultPayRateEffectiveDate(),
     },
   })
 
@@ -116,6 +150,8 @@ export default function EditStaffModal({
         status: normalizeStaffStatus(staff.status),
         employee_id: staff.employee_id || '',
         start_date: staff.start_date ? staff.start_date.split('T')[0] : '',
+        pay_rate_hourly: initialPayRateField(staff),
+        pay_rate_effective_date: defaultPayRateEffectiveDate(),
       })
     }
   }, [isOpen, staff, reset])
@@ -141,6 +177,32 @@ export default function EditStaffModal({
 
       if (updateError) {
         throw updateError
+      }
+
+      const payTrim = (data.pay_rate_hourly ?? '').trim()
+      if (payTrim !== '') {
+        const nextRate = Number(payTrim)
+        const prev =
+          staff.currentPayRate !== undefined && staff.currentPayRate !== null
+            ? Number(staff.currentPayRate)
+            : staff.pay_rate !== null && staff.pay_rate !== undefined && staff.pay_rate !== ''
+              ? typeof staff.pay_rate === 'number'
+                ? staff.pay_rate
+                : Number(staff.pay_rate)
+              : NaN
+        const eff = (data.pay_rate_effective_date ?? '').trim() || defaultPayRateEffectiveDate()
+        const rateChanged = !Number.isFinite(prev) || Math.abs(nextRate - prev) > 0.000001
+        if (rateChanged) {
+          const payRes = await appendCaregiverPayRateAction({
+            caregiverMemberId: staff.id,
+            payRate: nextRate,
+            effectiveDate: eff.slice(0, 10),
+            serviceType: null,
+          })
+          if (payRes.error) {
+            throw new Error(payRes.error)
+          }
+        }
       }
 
       reset()
@@ -324,7 +386,7 @@ export default function EditStaffModal({
         </div>
 
         {/* Start Date */}
-        <div>
+        {/* <div>
           <label htmlFor="start_date" className="block text-sm font-semibold text-gray-700 mb-2">
             Start Date
           </label>
@@ -338,6 +400,51 @@ export default function EditStaffModal({
           {errors.start_date && (
             <p className="mt-1 text-sm text-red-600">{errors.start_date.message}</p>
           )}
+        </div> */}
+
+        <div className="rounded-xl border border-gray-200 bg-gray-50/80 p-4 space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Pay rate ($/hr)</h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Changing the amount adds a new dated row and closes the previous rate on the effective date you choose
+              (same day is allowed).
+            </p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="pay_rate_hourly" className="block text-sm font-semibold text-gray-700 mb-2">
+                Hourly pay
+              </label>
+              <input
+                id="pay_rate_hourly"
+                type="number"
+                min={0}
+                step={0.01}
+                placeholder="e.g. 22.50"
+                {...register('pay_rate_hourly')}
+                className="block w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                disabled={isLoading}
+              />
+              {errors.pay_rate_hourly && (
+                <p className="mt-1 text-sm text-red-600">{errors.pay_rate_hourly.message}</p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="pay_rate_effective_date" className="block text-sm font-semibold text-gray-700 mb-2">
+                Effective date (for pay change)
+              </label>
+              <input
+                id="pay_rate_effective_date"
+                type="date"
+                {...register('pay_rate_effective_date')}
+                className="block w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition-all"
+                disabled={isLoading}
+              />
+              {errors.pay_rate_effective_date && (
+                <p className="mt-1 text-sm text-red-600">{errors.pay_rate_effective_date.message}</p>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Form Actions */}

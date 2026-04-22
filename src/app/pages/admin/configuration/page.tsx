@@ -4,6 +4,7 @@ import * as q from '@/lib/supabase/query'
 import AdminLayout from '@/components/AdminLayout'
 import ConfigurationContent from '@/components/ConfigurationContent'
 import { getCurrentPricing } from '@/app/actions/pricing'
+import { getCachedLicenseTypesForConfiguration } from '@/lib/server-cache/reference-lists'
 import {
   getCertificationTypes,
   getNonSkilledTaskCategories,
@@ -20,10 +21,7 @@ export default async function ConfigurationPage() {
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, user.id)
   const pricingResult = await getCurrentPricing()
   const pricingData = pricingResult.data
-  const { data: licenseTypes } = await q.getLicenseTypesActive(
-    supabase,
-    'id, name, state, renewal_period_display, cost_display, service_fee_display, processing_time_display'
-  )
+  const { data: licenseTypes } = await getCachedLicenseTypesForConfiguration()
 
   // Get system lists data
   

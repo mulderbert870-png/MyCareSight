@@ -1,8 +1,19 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
 import * as q from '@/lib/supabase/query'
+import {
+  CACHE_TAG_AGENCIES_FOR_BILLING,
+  CACHE_TAG_AGENCIES_ID_NAME,
+  CACHE_TAG_AGENCIES_ORDERED,
+} from '@/lib/cache-tags'
+
+function revalidateAgencyListCaches() {
+  revalidateTag(CACHE_TAG_AGENCIES_ID_NAME)
+  revalidateTag(CACHE_TAG_AGENCIES_ORDERED)
+  revalidateTag(CACHE_TAG_AGENCIES_FOR_BILLING)
+}
 
 export type AgencyFormData = {
   companyName: string
@@ -57,14 +68,15 @@ export async function createAgency(data: AgencyFormData) {
 
     const agencyId = newAgency?.id
     const trimmedName = data.companyName.trim()
-    for (const clientId of ids) {
+    if (ids.length > 0) {
       const updates: { company_name: string; agency_id?: string } = { company_name: trimmedName }
       if (agencyId) updates.agency_id = agencyId
-      const { error: clientError } = await q.updateClientCompanyAndAgency(supabase, clientId, updates)
+      const { error: clientError } = await q.updateClientCompanyAndAgencyForIds(supabase, ids, updates)
       if (clientError) console.error('Failed to set client company_name/agency_id:', clientError)
     }
 
     revalidatePath('/pages/admin/agencies')
+    revalidateAgencyListCaches()
     return { error: null, data: { success: true } }
   } catch (err: any) {
     return { error: err?.message || 'Failed to create agency', data: null }
@@ -81,18 +93,29 @@ export async function updateAgency(
     const newIds = (data.agencyAdminIds || []).filter(Boolean)
     const newSet = new Set(newIds)
 
+    // One fetch for all peer agencies; keep admin-id arrays in memory so multiple newIds
+    // removed from the same other agency stay consistent (refetch-per-clientId was redundant).
+    const { data: otherAgencies } = await q.getAgenciesExceptId(supabase, id)
+    const others = otherAgencies ?? []
+    const adminIdsByAgency = new Map<string, string[]>(
+      others.map((ag) => [ag.id, [...((ag.agency_admin_ids as string[]) || [])]])
+    )
+
+    const strippedAdminIds = new Set<string>()
     for (const clientId of newIds) {
-      const { data: otherAgencies } = await q.getAgenciesExceptId(supabase, id)
-      if (otherAgencies) {
-        for (const ag of otherAgencies) {
-          const arr = (ag.agency_admin_ids as string[]) || []
-          if (arr.includes(clientId)) {
-            const updated = arr.filter((x) => x !== clientId)
-            await q.updateAgencyAdminIds(supabase, ag.id, updated)
-            await q.updateClientClearAgency(supabase, clientId)
-          }
-        }
+      for (const ag of others) {
+        const arr = adminIdsByAgency.get(ag.id) ?? []
+        if (!arr.includes(clientId)) continue
+        const updated = arr.filter((x) => x !== clientId)
+        adminIdsByAgency.set(ag.id, updated)
+        const { error: stripErr } = await q.updateAgencyAdminIds(supabase, ag.id, updated)
+        if (stripErr) console.error('Failed to strip admin from peer agency:', stripErr)
+        strippedAdminIds.add(clientId)
       }
+    }
+    if (strippedAdminIds.size > 0) {
+      const { error: clearErr } = await q.updateClientClearAgencyForIds(supabase, Array.from(strippedAdminIds))
+      if (clearErr) console.error('Failed to clear client agency (batch):', clearErr)
     }
 
     const { error } = await q.updateAgencyById(supabase, id, {
@@ -104,15 +127,15 @@ export async function updateAgency(
       return { error: error.message, data: null }
     }
 
-    for (const clientId of previousAgencyAdminIds) {
-      if (!newSet.has(clientId)) {
-        await q.updateClientClearAgency(supabase, clientId)
-      }
+    const removedAdminIds = previousAgencyAdminIds.filter((clientId) => !newSet.has(clientId))
+    if (removedAdminIds.length > 0) {
+      const { error: removedClearErr } = await q.updateClientClearAgencyForIds(supabase, removedAdminIds)
+      if (removedClearErr) console.error('Failed to clear removed admins agency (batch):', removedClearErr)
     }
 
     const trimmedName = data.companyName.trim()
-    for (const clientId of newIds) {
-      const { error: clientError } = await q.updateClientCompanyAndAgency(supabase, clientId, {
+    if (newIds.length > 0) {
+      const { error: clientError } = await q.updateClientCompanyAndAgencyForIds(supabase, newIds, {
         company_name: trimmedName,
         agency_id: id,
       })
@@ -120,6 +143,7 @@ export async function updateAgency(
     }
 
     revalidatePath('/pages/admin/agencies')
+    revalidateAgencyListCaches()
     return { error: null, data: { success: true } }
   } catch (err: any) {
     return { error: err?.message || 'Failed to update agency', data: null }
@@ -205,6 +229,7 @@ export async function saveCompanyDetails(data: CompanyDetailsFormData) {
     }
 
     revalidatePath('/pages/agency/profile')
+    revalidateAgencyListCaches()
     return { error: null, data: { success: true } }
   } catch (err: any) {
     return { error: err?.message || 'Failed to save company details', data: null }

@@ -3,12 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import AdminLayout from '@/components/AdminLayout'
 import ClientListWithFilters from '@/components/ClientListWithFilters'
-import { 
-  Building2, 
-  CheckCircle2,
-  Clock,
-  MessageSquare
-} from 'lucide-react'
+import { Building2, CheckCircle2, Clock, MessageSquare } from 'lucide-react'
 
 export default async function ClientsPage() {
   const { user, profile } = await requireAdmin()
@@ -16,60 +11,67 @@ export default async function ClientsPage() {
 
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, user.id)
   const { data: clients } = await q.getAllClientsOrdered(supabase)
-  const expertUserIds = clients?.filter(c => c.expert_id).map(c => c.expert_id) || []
-  const { data: experts } =
-    expertUserIds.length > 0 ? await q.getLicensingExpertsByUserIds(supabase, expertUserIds) : { data: [] }
-  const { data: allExperts } = await q.getLicensingExpertsActive(supabase)
-  const expertsByUserId: Record<string, any> = {}
-  experts?.forEach(e => {
-    expertsByUserId[e.user_id] = e
-  })
 
-  const clientIds = clients?.map(c => c.id) || []
-  const { data: clientStates } =
-    clientIds.length > 0 ? await q.getClientStatesByClientIds(supabase, clientIds) : { data: [] }
-  const { data: conversations } =
-    clientIds.length > 0 ? await q.getConversationsByClientIds(supabase, clientIds) : { data: [] }
-  const conversationIds = conversations?.map(c => c.id) || []
-  const { data: messages } =
-    conversationIds.length > 0
-      ? await q.getUnreadMessagesByConversationIds(supabase, conversationIds, user.id)
-      : { data: [] }
+  const clientIds = clients?.map((c) => c.id).filter(Boolean) as string[]
+  const expertIds = Array.from(
+    new Set((clients ?? []).map((c) => c.expert_id).filter((id): id is string => Boolean(id)))
+  )
 
-  // Group messages by conversation, then by client
-  type Msg = { conversation_id: string }
-  const messagesByConversation: Record<string, number> = {}
-  ;(messages as Msg[] | null)?.forEach(m => {
-    messagesByConversation[m.conversation_id] = (messagesByConversation[m.conversation_id] || 0) + 1
-  })
+  const [
+    { data: clientStates },
+    { data: casesData },
+    { data: expertsForClients },
+    { data: allExperts },
+    { data: unreadRows, error: unreadRpcError },
+  ] = await Promise.all([
+    clientIds.length > 0 ? q.getClientStatesByClientIds(supabase, clientIds) : Promise.resolve({ data: [], error: null }),
+    clientIds.length > 0
+      ? q.getCasesByClientIds(supabase, clientIds, 'client_id, progress_percentage, status')
+      : Promise.resolve({ data: [], error: null }),
+    expertIds.length > 0 ? q.getLicensingExpertsByIds(supabase, expertIds, '*') : Promise.resolve({ data: [], error: null }),
+    q.getLicensingExpertsActive(supabase),
+    clientIds.length > 0
+      ? q.rpcAdminUnreadMessageCountsByClient(supabase, user.id, clientIds)
+      : Promise.resolve({ data: [], error: null }),
+  ])
 
+  if (unreadRpcError) {
+    console.error('admin_unread_message_counts_by_client RPC failed:', unreadRpcError.message)
+  }
+
+  type ExpertRow = { user_id: string; first_name: string; last_name: string }
+  const expertsByUserId: Record<string, ExpertRow> = {}
+  for (const e of (expertsForClients ?? []) as unknown as ExpertRow[]) {
+    if (e?.user_id) expertsByUserId[e.user_id] = e
+  }
+
+  type UnreadRow = { client_id: string; unread_count: number | string }
   const unreadMessagesByClient: Record<string, number> = {}
-  conversations?.forEach((conv: { id: string; client_id: string }) => {
-    const unreadCount = messagesByConversation[conv.id] || 0
-    if (unreadCount > 0) {
-      unreadMessagesByClient[conv.client_id] = (unreadMessagesByClient[conv.client_id] || 0) + unreadCount
-    }
-  })
+  let unreadMessagesCount = 0
+  for (const row of (unreadRows ?? []) as UnreadRow[]) {
+    const cid = row.client_id
+    const n = Number(row.unread_count ?? 0)
+    if (!cid || !Number.isFinite(n) || n <= 0) continue
+    unreadMessagesByClient[cid] = (unreadMessagesByClient[cid] || 0) + n
+    unreadMessagesCount += n
+  }
 
-  const { data: casesData } = await q.getCasesByClientIds(supabase, clientIds, 'client_id, progress_percentage, status')
   const cases = casesData as { client_id: string; progress_percentage: number; status: string }[] | null
 
-  // Calculate statistics
   const totalClients = clients?.length || 0
   const activeApplications = cases?.length || 0
-  const pendingReview = cases?.filter(c => c.status === 'under_review').length || 0
-  const unreadMessagesCount = messages?.length || 0
+  const pendingReview = cases?.filter((c) => c.status === 'under_review').length || 0
 
   type ClientStateRow = { client_id: string; state: string }
   const statesByClient: Record<string, string[]> = {}
-  ;(clientStates as ClientStateRow[] | null)?.forEach(cs => {
+  ;(clientStates as ClientStateRow[] | null)?.forEach((cs) => {
     if (!statesByClient[cs.client_id]) {
       statesByClient[cs.client_id] = []
     }
     statesByClient[cs.client_id].push(cs.state)
   })
 
-  const casesByClient: Record<string, any[]> = {}
+  const casesByClient: Record<string, unknown[]> = {}
   cases?.forEach((c: { client_id: string }) => {
     if (!casesByClient[c.client_id]) {
       casesByClient[c.client_id] = []
@@ -77,15 +79,9 @@ export default async function ClientsPage() {
     casesByClient[c.client_id].push(c)
   })
 
-
   return (
-    <AdminLayout 
-      user={user} 
-      profile={profile} 
-      unreadNotifications={unreadNotifications || 0}
-    >
+    <AdminLayout user={user} profile={profile} unreadNotifications={unreadNotifications || 0}>
       <div className="space-y-4 md:space-y-6">
-        {/* Page Header */}
         <div>
           <h1 className="text-xl md:text-2xl font-bold text-gray-900 flex items-center gap-2 md:gap-3">
             <Building2 className="w-6 h-6 md:w-8 md:h-8 text-purple-600" />
@@ -94,7 +90,6 @@ export default async function ClientsPage() {
           <p className="text-sm md:text-base text-gray-600 mt-1">Manage and track all client licensing applications</p>
         </div>
 
-        {/* Summary Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
           <div className="bg-white rounded-xl p-4 md:p-6 shadow-md border border-gray-100">
             <div className="flex items-center justify-between mb-3 md:mb-4">
@@ -137,7 +132,6 @@ export default async function ClientsPage() {
           </div>
         </div>
 
-        {/* Client List with Filters */}
         <ClientListWithFilters
           clients={clients || []}
           expertsByUserId={expertsByUserId}
@@ -150,4 +144,3 @@ export default async function ClientsPage() {
     </AdminLayout>
   )
 }
-

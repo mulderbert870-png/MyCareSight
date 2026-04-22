@@ -5,7 +5,7 @@ import * as q from '@/lib/supabase/query'
 import { assertAgencyReportsPageAccess } from '@/lib/agency-reports-access'
 import DashboardLayout from '@/components/DashboardLayout'
 import PayrollBillingReportContent from '@/components/PayrollBillingReportContent'
-import { getPayrollBillingApprovedRowsAction } from '@/app/actions/payroll-billing-report'
+import { getPayrollBillingReportRowsAction } from '@/app/actions/payroll-billing-report'
 
 function defaultDateRange(): { from: string; to: string } {
   const to = new Date()
@@ -27,7 +27,7 @@ export default async function PayrollBillingReportPage() {
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, session.user.id)
 
   const { from, to } = defaultDateRange()
-  const { rows, error } = await getPayrollBillingApprovedRowsAction(from, to)
+  const { rows, error } = await getPayrollBillingReportRowsAction(from, to)
 
   return (
     <DashboardLayout

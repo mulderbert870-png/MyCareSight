@@ -1,6 +1,7 @@
 'use server'
 
-import { revalidatePath } from 'next/cache'
+import { revalidatePath, revalidateTag } from 'next/cache'
+import { CACHE_TAG_CAREGIVER_VISIT_EXECUTION, caregiverVisitExecutionTag } from '@/lib/cache-tags'
 import { getSession } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
@@ -13,6 +14,8 @@ function revalidateVisitPages(visitId: string) {
   revalidatePath(CAREGIVER_VISITS)
   revalidatePath(CAREGIVER_VISITS, 'layout')
   revalidatePath(`${CAREGIVER_VISITS}/${visitId}`)
+  revalidateTag(caregiverVisitExecutionTag(visitId))
+  revalidateTag(CACHE_TAG_CAREGIVER_VISIT_EXECUTION)
 }
 
 type RpcOk = { ok?: boolean; error?: string; already_clocked_out?: boolean }

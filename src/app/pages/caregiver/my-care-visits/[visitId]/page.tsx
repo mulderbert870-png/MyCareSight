@@ -4,9 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
 import StaffLayout from '@/components/StaffLayout'
 import CaregiverVisitExecutionContent from '@/components/CaregiverVisitExecutionContent'
-import { fetchCaregiverVisitExecutionDetail } from '@/lib/caregiver-visit-execution'
-
-export const dynamic = 'force-dynamic'
+import { getCachedCaregiverVisitExecutionDetail } from '@/lib/server-cache/caregiver-visit-execution-detail'
 
 type PageProps = {
   params: Promise<{ visitId: string }>
@@ -31,11 +29,11 @@ export default async function CaregiverVisitExecutionPage({ params }: PageProps)
 
   const { count: unreadNotificationsCount } = await q.getUnreadNotificationsCount(supabase, session.user.id)
 
-  const { data, error } = await fetchCaregiverVisitExecutionDetail(
-    supabase,
+  const { data, error } = await getCachedCaregiverVisitExecutionDetail(
     visitId,
     staffMember.id,
-    staffMember.agency_id ?? null
+    staffMember.agency_id ?? null,
+    session.user.id
   )
 
   if (error || !data) notFound()

@@ -777,6 +777,8 @@ export default function ClientDetailContent({ client, allClients, representative
     })
   }
 
+  const formatMoney = (value: number) => `$${(Number.isFinite(value) ? value : 0).toFixed(2)}`
+
   const ageFromDob = (dateOfBirth: string) => {
     const dob = new Date(dateOfBirth)
     const today = new Date()
@@ -4166,6 +4168,12 @@ export default function ClientDetailContent({ client, allClients, representative
                                 </span>
                                 <span className="text-sm text-gray-500">hrs / week</span>
                               </div>
+                              <p className="text-xs text-gray-600 mt-1">
+                                Billing rate:{' '}
+                                <span className="font-semibold text-gray-900">
+                                  {row.bill_rate != null ? `${formatMoney(Number(row.bill_rate))}/${row.bill_unit_type}` : '—'}
+                                </span>
+                              </p>
                               <p className="text-xs text-gray-500 mt-1">
                                 Effective {formatShortDate(row.effective_date)}
                               </p>
@@ -4178,6 +4186,7 @@ export default function ClientDetailContent({ client, allClients, representative
                                     >
                                       <span>
                                         {Number(p.weekly_hours_limit ?? 0)} hrs ·{' '}
+                                        {p.bill_rate != null ? `${formatMoney(Number(p.bill_rate))}/${p.bill_unit_type}` : '—'} ·{' '}
                                         <span className="text-gray-400">
                                           {(p.status ?? 'active') === 'active' ? 'active' : 'inactive'}
                                         </span>
@@ -7440,7 +7449,7 @@ export default function ClientDetailContent({ client, allClients, representative
                   <tr>
                     <th className="text-left p-2 font-medium text-gray-700">Name</th>
                     <th className="text-left p-2 font-medium text-gray-700">Service</th>
-                    <th className="text-left p-2 font-medium text-gray-700">Unit</th>
+                    <th className="text-left p-2 font-medium text-gray-700">Billing Rate</th>
                     <th className="text-left p-2 font-medium text-gray-700">Weekly Hrs</th>
                     <th className="text-left p-2 font-medium text-gray-700">Effective</th>
                     <th className="text-left p-2 font-medium text-gray-700">Status</th>
@@ -7455,7 +7464,7 @@ export default function ClientDetailContent({ client, allClients, representative
                           {row.service_type === 'skilled' ? 'Skilled' : 'Non-Skilled'}
                         </span>
                       </td>
-                      <td className="p-2">{row.bill_unit_type}</td>
+                      <td className="p-2">{row.bill_rate != null ? `${formatMoney(Number(row.bill_rate))}/${row.bill_unit_type}` : '—'}</td>
                       <td className="p-2">{row.weekly_hours_limit ?? '—'}</td>
                       <td className="p-2">{formatShortDate(row.effective_date)}</td>
                       <td className="p-2">

@@ -49,32 +49,22 @@ export async function insertPatientServiceContract(
 ) {
   const agencyId = await getPatientAgencyId(supabase, data.patient_id)
   if (!agencyId) return { data: null, error: { message: 'Patient has no agency_id' } }
+  const { data: insertedId, error: insertErr } = await supabase.rpc('append_patient_service_contract', {
+    p_agency_id: agencyId,
+    p_patient_id: data.patient_id,
+    p_contract_name: data.contract_name ?? null,
+    p_contract_type: data.contract_type,
+    p_service_type: data.service_type,
+    p_billing_code_id: data.billing_code_id ?? null,
+    p_bill_rate: data.bill_rate ?? null,
+    p_bill_unit_type: data.bill_unit_type,
+    p_weekly_hours_limit: data.weekly_hours_limit ?? null,
+    p_effective_date: data.effective_date,
+    p_end_date: data.end_date ?? null,
+    p_note: data.note ?? null,
+  })
+  if (insertErr) return { data: null, error: insertErr }
+  if (!insertedId) return { data: null, error: { message: 'Insert did not return row id' } }
 
-  // only one active contract per service_type
-  await supabase
-    .from('patient_service_contracts')
-    .update({ status: 'inactive' })
-    .eq('patient_id', data.patient_id)
-    .eq('service_type', data.service_type)
-    .eq('status', 'active')
-
-  return supabase
-    .from('patient_service_contracts')
-    .insert({
-      agency_id: agencyId,
-      patient_id: data.patient_id,
-      contract_name: data.contract_name ?? null,
-      contract_type: data.contract_type,
-      service_type: data.service_type,
-      billing_code_id: data.billing_code_id ?? null,
-      bill_rate: data.bill_rate ?? null,
-      bill_unit_type: data.bill_unit_type,
-      weekly_hours_limit: data.weekly_hours_limit ?? null,
-      effective_date: data.effective_date,
-      end_date: data.end_date ?? null,
-      status: 'active',
-      note: data.note ?? null,
-    })
-    .select('*')
-    .single()
+  return supabase.from('patient_service_contracts').select('*').eq('id', insertedId).single()
 }

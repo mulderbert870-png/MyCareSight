@@ -36,6 +36,9 @@ interface StaffMember {
   status: string
   employee_id?: string | null
   start_date?: string | null
+  agency_id?: string | null
+  /** Current hourly pay from `caregiver_pay_rates` (open-ended row), when set. */
+  currentPayRate?: number | null
   address?: string | null
   state?: string | null
   zip_code?: string | null
@@ -43,6 +46,7 @@ interface StaffMember {
   created_at?: string
   expiringLicensesCount?: number
   documents?: PatientDocument[] | null
+  pay_rate?: string | number | null
 }
 
 interface StaffLicense {

@@ -1,7 +1,9 @@
 'use server'
 
+import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
+import { agencyPatientDetailTag } from '@/lib/cache-tags'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
 
 /**
@@ -23,5 +25,6 @@ export async function updatePatientDocumentsAction(
   if (error || !data) {
     return { error: error?.message ?? 'Update failed' }
   }
+  revalidateTag(agencyPatientDetailTag(patientId))
   return { error: null }
 }

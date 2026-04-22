@@ -72,23 +72,28 @@ export async function insertPatientContractedHours(
       error: { message: 'Patient has no agency_id; cannot create service contract.', details: '', hint: '', code: '' },
     }
   }
-  const { data: row, error } = await supabase
+  const { data: insertedId, error } = await supabase.rpc('append_patient_service_contract', {
+    p_agency_id: agencyId,
+    p_patient_id: data.patient_id,
+    p_contract_name: null,
+    p_contract_type: 'weekly_hours',
+    p_service_type: 'non_skilled',
+    p_billing_code_id: null,
+    p_bill_rate: null,
+    p_bill_unit_type: 'hour',
+    p_weekly_hours_limit: data.total_hours,
+    p_effective_date: data.effective_date,
+    p_end_date: data.end_date ?? null,
+    p_note: data.note ?? null,
+  })
+  if (error || !insertedId) return { data: null, error }
+
+  const { data: row, error: readErr } = await supabase
     .from('patient_service_contracts')
-    .insert({
-      agency_id: agencyId,
-      patient_id: data.patient_id,
-      contract_type: 'weekly_hours',
-      service_type: 'non_skilled',
-      bill_unit_type: 'hour',
-      weekly_hours_limit: data.total_hours,
-      effective_date: data.effective_date,
-      end_date: data.end_date ?? null,
-      note: data.note ?? null,
-      status: 'active',
-    })
-    .select()
+    .select('*')
+    .eq('id', insertedId)
     .single()
-  if (error || !row) return { data: null, error }
+  if (readErr || !row) return { data: null, error: readErr }
   return {
     data: mapServiceContractToUi(row as Parameters<typeof mapServiceContractToUi>[0]),
     error: null,

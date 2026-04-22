@@ -1,6 +1,7 @@
 import { requireAdmin } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
+import { getCachedAgenciesIdName } from '@/lib/server-cache/reference-lists'
 import AdminLayout from '@/components/AdminLayout'
 import UserManagementTabs from '@/components/UserManagementTabs'
 import { Users } from 'lucide-react'
@@ -15,10 +16,10 @@ export default async function UsersPage() {
   const profilesList = (userProfilesRaw ?? []) as UserProfileRow[]
 
   type AgencyRow = { id: string; name: string | null }
-  const { data: agenciesListData } = await q.getAgenciesIdName(supabase)
-  const agenciesList = (agenciesListData ?? []) as AgencyRow[]
+  const { data: agenciesListData } = await getCachedAgenciesIdName()
+  const agencies = (agenciesListData ?? []) as AgencyRow[]
   const agencyNameById: Record<string, string> = {}
-  agenciesList.forEach(a => {
+  agencies.forEach(a => {
     if (a.id && a.name?.trim()) agencyNameById[a.id] = a.name.trim()
   })
 
@@ -97,56 +98,59 @@ export default async function UsersPage() {
   const companies = new Set(userProfiles?.map(u => (u as { company_name?: string | null }).company_name).filter(Boolean)).size
 
   const { data: clients } = await q.getAllClientsOrdered(supabase)
-  const expertUserIds = clients?.filter(c => c.expert_id).map(c => c.expert_id) || []
-  const { data: experts } =
-    expertUserIds.length > 0 ? await q.getLicensingExpertsByUserIds(supabase, expertUserIds) : { data: [] }
-  const { data: allExperts } = await q.getLicensingExpertsActive(supabase)
-  
-  const expertsByUserId: Record<string, any> = {}
-  experts?.forEach(e => {
-    expertsByUserId[e.user_id] = e
-  })
+  const clientIds = (clients?.map((c) => c.id).filter(Boolean) ?? []) as string[]
+  const expertIds = Array.from(
+    new Set((clients ?? []).map((c) => c.expert_id).filter((id): id is string => Boolean(id)))
+  )
 
-  const clientIds = clients?.map(c => c.id) || []
+  const [
+    { data: clientStatesData },
+    { data: casesData },
+    { data: expertsForClients },
+    { data: allExperts },
+    { data: unreadRows, error: unreadRpcError },
+  ] = await Promise.all([
+    clientIds.length > 0 ? q.getClientStatesByClientIds(supabase, clientIds) : Promise.resolve({ data: [], error: null }),
+    clientIds.length > 0
+      ? q.getCasesByClientIds(supabase, clientIds, 'client_id, progress_percentage, status')
+      : Promise.resolve({ data: [], error: null }),
+    expertIds.length > 0 ? q.getLicensingExpertsByIds(supabase, expertIds, '*') : Promise.resolve({ data: [], error: null }),
+    q.getLicensingExpertsActive(supabase),
+    clientIds.length > 0
+      ? q.rpcAdminUnreadMessageCountsByClient(supabase, user.id, clientIds)
+      : Promise.resolve({ data: [], error: null }),
+  ])
+
+  if (unreadRpcError) {
+    console.error('admin_unread_message_counts_by_client RPC failed:', unreadRpcError.message)
+  }
+
+  const expertsByUserId: Record<string, unknown> = {}
+  for (const e of (expertsForClients ?? []) as unknown as { user_id: string }[]) {
+    if (e?.user_id) expertsByUserId[e.user_id] = e
+  }
+
   type ClientStateRow = { client_id: string; state: string }
-  const { data: clientStatesData } =
-    clientIds.length > 0 ? await q.getClientStatesByClientIds(supabase, clientIds) : { data: [] }
   const clientStates = (clientStatesData ?? []) as ClientStateRow[]
 
-  type ConvRow = { id: string; client_id: string }
-  const { data: conversationsData } =
-    clientIds.length > 0 ? await q.getConversationsByClientIds(supabase, clientIds) : { data: [] }
-  const conversations = (conversationsData ?? []) as ConvRow[]
-  const conversationIds = conversations.map(c => c.id)
-  const { data: messagesData } =
-    conversationIds.length > 0
-      ? await q.getUnreadMessagesByConversationIds(supabase, conversationIds)
-      : { data: [] }
-  type MessageRow = { conversation_id: string }
-  const messages = (messagesData ?? []) as MessageRow[]
-
-  const messagesByConversation: Record<string, number> = {}
-  messages.forEach(m => {
-    messagesByConversation[m.conversation_id] = (messagesByConversation[m.conversation_id] || 0) + 1
-  })
-
+  type UnreadRow = { client_id: string; unread_count: number | string }
   const unreadMessagesByClient: Record<string, number> = {}
-  conversations.forEach(conv => {
-    const unreadCount = messagesByConversation[conv.id] || 0
-    if (unreadCount > 0) {
-      unreadMessagesByClient[conv.client_id] = (unreadMessagesByClient[conv.client_id] || 0) + unreadCount
-    }
-  })
+  let unreadMessagesCount = 0
+  for (const row of (unreadRows ?? []) as UnreadRow[]) {
+    const cid = row.client_id
+    const n = Number(row.unread_count ?? 0)
+    if (!cid || !Number.isFinite(n) || n <= 0) continue
+    unreadMessagesByClient[cid] = (unreadMessagesByClient[cid] || 0) + n
+    unreadMessagesCount += n
+  }
 
   type CaseRow = { client_id: string; progress_percentage: number; status: string }
-  const { data: casesData } = await q.getCasesByClientIds(supabase, clientIds, 'client_id, progress_percentage, status')
   const cases = (casesData ?? []) as unknown as CaseRow[]
 
   // Calculate client statistics
   const totalClients = clients?.length || 0
   const activeApplications = cases?.length || 0
   const pendingReview = cases?.filter(c => c.status === 'under_review').length || 0
-  const unreadMessagesCount = messages?.length || 0
 
   const statesByClient: Record<string, string[]> = {}
   clientStates.forEach(cs => {
@@ -167,12 +171,14 @@ export default async function UsersPage() {
   type LicensingExpertRow = { id: string; status?: string; [key: string]: unknown }
   const { data: allExpertsDataRaw } = await q.getLicensingExpertsOrdered(supabase)
   const allExpertsData = (allExpertsDataRaw ?? []) as LicensingExpertRow[]
-  const expertIds = allExpertsData.map(e => e.id)
+  const licensingExpertIds = allExpertsData.map((e) => e.id)
   type ExpertStateRow = { expert_id: string; state: string }
   const { data: expertStatesData } =
-    expertIds.length > 0 ? await q.getExpertStatesByExpertIds(supabase, expertIds) : { data: [] }
+    licensingExpertIds.length > 0
+      ? await q.getExpertStatesByExpertIds(supabase, licensingExpertIds)
+      : { data: [] }
   const expertStates = (expertStatesData ?? []) as ExpertStateRow[]
-  const { data: expertClientsData } = await q.getClientsByExpertIds(supabase, expertIds)
+  const { data: expertClientsData } = await q.getClientsByExpertIds(supabase, licensingExpertIds)
   const expertClients = (expertClientsData ?? []) as { expert_id: string }[]
   const totalExperts = allExpertsData.length
   const activeExperts = allExpertsData.filter(e => e.status === 'active').length
@@ -192,9 +198,6 @@ export default async function UsersPage() {
       clientsByExpert[c.expert_id] = (clientsByExpert[c.expert_id] || 0) + 1
     }
   })
-
-  const { data: agenciesData } = await q.getAgenciesIdName(supabase)
-  const agencies = (agenciesData ?? []) as { id: string; name: string | null }[]
 
   return (
     <AdminLayout 

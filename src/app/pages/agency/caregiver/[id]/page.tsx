@@ -34,6 +34,18 @@ export default async function CaregiverProfilePage({
 
   if (staffError || !staff) redirect('/pages/agency/caregiver')
 
+  const { data: openPayRows } = await supabase
+    .from('caregiver_pay_rates')
+    .select('pay_rate, service_type')
+    .eq('caregiver_member_id', staffId)
+    .is('effective_end', null)
+
+  let currentPayRate: number | null = null
+  const rows = openPayRows ?? []
+  const defaultBand = rows.find((r) => r.service_type == null)
+  if (defaultBand) currentPayRate = Number(defaultBand.pay_rate)
+  else if (rows[0]) currentPayRate = Number(rows[0].pay_rate)
+
   const { data: staffLicensesData } = await q.getStaffLicensesByStaffMemberIds(supabase, [staffId])
   const allStaffLicenses = (staffLicensesData ?? []).map((license: any) => ({
     id: license.id,
@@ -54,6 +66,7 @@ export default async function CaregiverProfilePage({
         <CaregiverProfileContent
           staff={staff as any}
           licenses={allStaffLicenses as any}
+          currentPayRate={currentPayRate}
           backHref={
             isEmbed
               ? undefined

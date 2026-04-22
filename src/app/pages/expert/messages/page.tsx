@@ -1,7 +1,5 @@
 'use client'
 
-export const dynamic = 'force-dynamic'
-
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -66,6 +64,8 @@ function ExpertMessagesContent() {
   const [clients, setClients] = useState<Client[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<Message[]>([])
+  /** Totals across the expert's application conversations (stable; not tied to the active thread in `messages`). */
+  const [messageDashboardTotals, setMessageDashboardTotals] = useState({ total: 0, unread: 0 })
   const [selectedClient, setSelectedClient] = useState<string | null>(null)
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null)
   const [messageContent, setMessageContent] = useState('')
@@ -93,6 +93,7 @@ function ExpertMessagesContent() {
 
       const { data: expertRecord } = await q.getLicensingExpertByUserId(supabase, currentUser.id)
       if (!expertRecord) {
+        setMessageDashboardTotals({ total: 0, unread: 0 })
         setLoading(false)
         setUser(currentUser)
         setProfile(profileData)
@@ -129,18 +130,31 @@ function ExpertMessagesContent() {
 
       setConversations(conversationsWithUnread)
 
-      const { data: allMessagesData } = conversationIds.length > 0
-        ? await q.getMessagesByConversationIds(supabase, conversationIds)
-        : { data: [] }
-      const allMessages = allMessagesData || []
+      const totalUnreadSum = conversationIds.reduce((sum, id) => sum + (unreadCountsByConv[id] || 0), 0)
 
-      const unreadMessages = allMessages.filter(m => {
-        if (m.sender_id === currentUser.id) return false
-        const isRead = m.is_read
-        return !Array.isArray(isRead) || !isRead.includes(currentUser.id)
+      const [unreadRes, countRes] = await Promise.all([
+        conversationIds.length > 0
+          ? q.rpcGetUnreadMessagesForUserInConversations(
+              supabase,
+              conversationIds,
+              currentUser.id,
+              2000
+            )
+          : Promise.resolve({ data: [], error: null }),
+        conversationIds.length > 0
+          ? supabase.from('messages').select('id', { count: 'exact', head: true }).in('conversation_id', conversationIds)
+          : Promise.resolve({ count: 0, error: null }),
+      ])
+
+      setMessageDashboardTotals({
+        total: typeof countRes.count === 'number' ? countRes.count : 0,
+        unread: totalUnreadSum,
       })
 
-      setMessages(unreadMessages)
+      if (unreadRes.error) {
+        console.error('Error loading unread messages:', unreadRes.error)
+      }
+      setMessages((unreadRes.data || []) as Message[])
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -491,13 +505,8 @@ function ExpertMessagesContent() {
     )
   }
 
-  const totalMessages = messages.length
-  const currentUserId = user?.id
-  const unreadMessages = messages.filter(m => {
-    if (m.sender_id === currentUserId) return false
-    const isRead = m.is_read
-    return !Array.isArray(isRead) || !isRead.includes(currentUserId)
-  }).length
+  const totalMessages = messageDashboardTotals.total
+  const unreadMessages = messageDashboardTotals.unread
   const activeConversations = conversations.length
 
   return (

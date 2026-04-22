@@ -30,6 +30,23 @@ export async function getMessagesByConversationIds(supabase: Supabase, conversat
     .from('messages')
     .select('*')
     .in('conversation_id', conversationIds)
+    .order('created_at', { ascending: false })
+    .limit(5000)
+}
+
+/** Unread messages for a user across conversations (newest first), server-capped. Prefer over {@link getMessagesByConversationIds}. */
+export async function rpcGetUnreadMessagesForUserInConversations(
+  supabase: Supabase,
+  conversationIds: string[],
+  userId: string,
+  maxRows = 1500
+) {
+  if (conversationIds.length === 0) return { data: [], error: null }
+  return supabase.rpc('get_unread_messages_for_user_in_conversations', {
+    conversation_ids: conversationIds,
+    p_user_id: userId,
+    max_rows: maxRows,
+  })
 }
 
 /** Mark all messages in a conversation as read except those sent by excludeSenderId. */
@@ -170,6 +187,18 @@ export async function getConversationsWithApplicationByApplicationIds(
     `)
     .in('application_id', applicationIds)
     .order('last_message_at', { ascending: false, nullsFirst: false })
+}
+
+/** RPC: per-client unread counts for admin list (optional client id filter). */
+export async function rpcAdminUnreadMessageCountsByClient(
+  supabase: Supabase,
+  readerUserId: string,
+  clientIds?: string[] | null
+) {
+  return supabase.rpc('admin_unread_message_counts_by_client', {
+    p_reader_id: readerUserId,
+    p_client_ids: clientIds != null && clientIds.length > 0 ? clientIds : null,
+  })
 }
 
 /** Get unread message rows by conversation ids (optional exclude sender for admin unread count). */

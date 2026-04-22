@@ -4,6 +4,7 @@ import * as q from '@/lib/supabase/query'
 import AdminLayout from '@/components/AdminLayout'
 import BillingContent from '@/components/BillingContent'
 import { getPricingForMonth } from '@/app/actions/pricing'
+import { getCachedAgenciesForBilling, getCachedLicenseTypesForBilling } from '@/lib/server-cache/reference-lists'
 
 export default async function BillingPage({
   searchParams
@@ -19,7 +20,7 @@ export default async function BillingPage({
   const selectedMonth = params.month ? parseInt(params.month) : now.getMonth() + 1
   const selectedYear = params.year ? parseInt(params.year) : now.getFullYear()
 
-  const { data: agencies } = await q.getAgenciesForBilling(supabase)
+  const { data: agencies } = await getCachedAgenciesForBilling()
 
   if (!agencies) {
     return (
@@ -71,7 +72,7 @@ export default async function BillingPage({
     })
   }
 
-  const { data: licenseTypes } = await q.getLicenseTypesActive(supabase)
+  const { data: licenseTypes } = await getCachedLicenseTypesForBilling()
 
   // Get pricing that was effective for the selected month
   const pricingResult = await getPricingForMonth(selectedYear, selectedMonth)

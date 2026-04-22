@@ -1,5 +1,26 @@
 import type { Supabase } from '../types'
 
+/** Status transitions from wall-clock: DB trigger on write + pg_cron `sync_scheduled_visit_statuses` (migration 076), not each read. */
+
+/** Default inclusive `visit_date` window for cross-tenant / bulk scheduled-visit reads (memory & timeout safety). */
+const DEFAULT_VISIT_BULK_LOOKBACK_DAYS = 730
+const DEFAULT_VISIT_BULK_LOOKAHEAD_DAYS = 400
+
+function formatDateYmdUtc(d: Date): string {
+  return d.toISOString().slice(0, 10)
+}
+
+export type ScheduledVisitBulkDateRange = { startDate: string; endDate: string }
+
+/** Inclusive `visit_date` bounds used when callers do not pass an explicit range. */
+export function getDefaultScheduledVisitBulkDateRange(now: Date = new Date()): ScheduledVisitBulkDateRange {
+  const start = new Date(now)
+  start.setUTCDate(start.getUTCDate() - DEFAULT_VISIT_BULK_LOOKBACK_DAYS)
+  const end = new Date(now)
+  end.setUTCDate(end.getUTCDate() + DEFAULT_VISIT_BULK_LOOKAHEAD_DAYS)
+  return { startDate: formatDateYmdUtc(start), endDate: formatDateYmdUtc(end) }
+}
+
 /** Shape expected by visit dashboards and client visit UI (maps from scheduled_visits + tasks). */
 export interface ScheduleRow {
   id: string
@@ -50,6 +71,11 @@ const visitSelect = `
   created_at,
   updated_at,
   legacy_schedule_id
+`
+
+/** Same columns as {@link visitSelect} plus nested ADL/task rows (one round-trip). */
+const visitSelectWithTasks = `${visitSelect.trimEnd()},
+  scheduled_visit_tasks(legacy_task_code, sort_order)
 `
 
 function pad2(n: number): string {
@@ -115,22 +141,6 @@ function toLocalVisitParts(
   }
 }
 
-async function syncScheduledVisitStatuses(
-  supabase: Supabase,
-  opts?: {
-    agency_id?: string | null
-    patient_id?: string | null
-    visit_ids?: string[] | null
-  }
-) {
-  const visitIds = (opts?.visit_ids ?? []).filter(Boolean)
-  await supabase.rpc('sync_scheduled_visit_statuses', {
-    p_agency_id: opts?.agency_id ?? null,
-    p_patient_id: opts?.patient_id ?? null,
-    p_visit_ids: visitIds.length > 0 ? visitIds : null,
-  })
-}
-
 type ScheduledVisitDbRow = {
   id: string
   agency_id: string
@@ -153,6 +163,15 @@ type ScheduledVisitDbRow = {
   repeat_monthly_rules: unknown
   created_at: string
   updated_at: string
+}
+
+type ScheduledVisitTaskNested = {
+  legacy_task_code: string | null
+  sort_order: number | null
+}
+
+type ScheduledVisitDbRowWithTasks = ScheduledVisitDbRow & {
+  scheduled_visit_tasks?: ScheduledVisitTaskNested[] | null
 }
 
 function parseMonthlyRules(raw: unknown): { ordinal: number; weekday: number }[] | null {
@@ -197,57 +216,35 @@ function toScheduleRow(v: ScheduledVisitDbRow, adlCodes: string[]): ScheduleRow 
   }
 }
 
-async function attachAdlCodes(
-  supabase: Supabase,
-  visits: ScheduledVisitDbRow[]
-): Promise<ScheduleRow[]> {
+function adlCodesFromNestedTasks(tasks: ScheduledVisitTaskNested[] | null | undefined): string[] {
+  const rows = (tasks ?? [])
+    .map((t) => ({
+      code: (t.legacy_task_code ?? '').trim(),
+      sort_order: t.sort_order ?? 0,
+    }))
+    .filter((t) => t.code)
+  rows.sort((a, b) => a.sort_order - b.sort_order)
+  return rows.map((t) => t.code)
+}
+
+/** Maps DB visit rows (with optional inline `scheduled_visit_tasks`) to {@link ScheduleRow}. */
+function mapVisitsToScheduleRows(visits: ScheduledVisitDbRowWithTasks[]): ScheduleRow[] {
   if (visits.length === 0) return []
-  const ids = visits.map((v) => v.id)
-  const { data: taskRows } = await supabase
-    .from('scheduled_visit_tasks')
-    .select('scheduled_visit_id, legacy_task_code, sort_order')
-    .in('scheduled_visit_id', ids)
-
-  type TaskRow = {
-    scheduled_visit_id: string
-    legacy_task_code: string | null
-    sort_order: number | null
-  }
-  const grouped = new Map<string, TaskRow[]>()
-  for (const row of taskRows ?? []) {
-    const r = row as TaskRow
-    const code = (r.legacy_task_code ?? '').trim()
-    if (!code) continue
-    const list = grouped.get(r.scheduled_visit_id) ?? []
-    list.push({ ...r, legacy_task_code: code })
-    grouped.set(r.scheduled_visit_id, list)
-  }
-
-  const byVisit = new Map<string, string[]>()
-  grouped.forEach((list, visitId) => {
-    list.sort((a: TaskRow, b: TaskRow) => (a.sort_order ?? 0) - (b.sort_order ?? 0))
-    byVisit.set(
-      visitId,
-      list.map((x: TaskRow) => x.legacy_task_code!).filter(Boolean)
-    )
-  })
-
-  return visits.map((v) => toScheduleRow(v, byVisit.get(v.id) ?? []))
+  return visits.map((v) => toScheduleRow(v as ScheduledVisitDbRow, adlCodesFromNestedTasks(v.scheduled_visit_tasks)))
 }
 
 /** Get all visits for a patient as ScheduleRow[]. */
 export async function getSchedulesByPatientId(supabase: Supabase, patientId: string) {
-  await syncScheduledVisitStatuses(supabase, { patient_id: patientId })
   const { data, error } = await supabase
     .from('scheduled_visits')
-    .select(visitSelect)
+    .select(visitSelectWithTasks)
     .eq('patient_id', patientId)
     .order('visit_date', { ascending: true })
     .order('scheduled_start_time', { ascending: true })
 
   if (error) return { data: null, error }
-  const rows = (data ?? []) as ScheduledVisitDbRow[]
-  const mapped = await attachAdlCodes(supabase, rows)
+  const rows = (data ?? []) as unknown as ScheduledVisitDbRowWithTasks[]
+  const mapped = mapVisitsToScheduleRows(rows)
   return { data: mapped, error: null }
 }
 
@@ -258,10 +255,9 @@ export async function getSchedulesByPatientIdAndDateRange(
   startDate: string,
   endDate: string
 ) {
-  await syncScheduledVisitStatuses(supabase, { patient_id: patientId })
   const { data, error } = await supabase
     .from('scheduled_visits')
-    .select(visitSelect)
+    .select(visitSelectWithTasks)
     .eq('patient_id', patientId)
     .gte('visit_date', startDate)
     .lte('visit_date', endDate)
@@ -269,39 +265,50 @@ export async function getSchedulesByPatientIdAndDateRange(
     .order('scheduled_start_time', { ascending: true })
 
   if (error) return { data: null, error }
-  const rows = (data ?? []) as ScheduledVisitDbRow[]
-  const mapped = await attachAdlCodes(supabase, rows)
+  const rows = (data ?? []) as unknown as ScheduledVisitDbRowWithTasks[]
+  const mapped = mapVisitsToScheduleRows(rows)
   return { data: mapped, error: null }
 }
 
-/** All visits (e.g. cross-tenant admin tooling), newest date first. Prefer {@link getScheduledVisitsAsScheduleRowsForAgency} when agency is known. */
-export async function getAllScheduledVisitsAsScheduleRows(supabase: Supabase) {
-  await syncScheduledVisitStatuses(supabase)
+/**
+ * Cross-tenant scheduled visits (e.g. admin all-visits dashboard), newest `visit_date` first.
+ * When `startDate`/`endDate` are omitted, uses {@link getDefaultScheduledVisitBulkDateRange} so the query stays bounded as data grows.
+ */
+export async function getAllScheduledVisitsAsScheduleRows(
+  supabase: Supabase,
+  options?: { startDate?: string; endDate?: string }
+) {
+  const { startDate, endDate } =
+    options?.startDate != null && options?.endDate != null
+      ? { startDate: options.startDate, endDate: options.endDate }
+      : getDefaultScheduledVisitBulkDateRange()
+
   const { data, error } = await supabase
     .from('scheduled_visits')
-    .select(visitSelect)
+    .select(visitSelectWithTasks)
+    .gte('visit_date', startDate)
+    .lte('visit_date', endDate)
     .order('visit_date', { ascending: false })
     .order('scheduled_start_time', { ascending: true })
 
   if (error) return { data: null, error }
-  const rows = (data ?? []) as ScheduledVisitDbRow[]
-  const mapped = await attachAdlCodes(supabase, rows)
+  const rows = (data ?? []) as unknown as ScheduledVisitDbRowWithTasks[]
+  const mapped = mapVisitsToScheduleRows(rows)
   return { data: mapped, error: null }
 }
 
 /** Visits for one agency (agency dashboards / caregiver scope), newest date first. */
 export async function getScheduledVisitsAsScheduleRowsForAgency(supabase: Supabase, agencyId: string) {
-  await syncScheduledVisitStatuses(supabase, { agency_id: agencyId })
   const { data, error } = await supabase
     .from('scheduled_visits')
-    .select(visitSelect)
+    .select(visitSelectWithTasks)
     .eq('agency_id', agencyId)
     .order('visit_date', { ascending: false })
     .order('scheduled_start_time', { ascending: true })
 
   if (error) return { data: null, error }
-  const rows = (data ?? []) as ScheduledVisitDbRow[]
-  const mapped = await attachAdlCodes(supabase, rows)
+  const rows = (data ?? []) as unknown as ScheduledVisitDbRowWithTasks[]
+  const mapped = mapVisitsToScheduleRows(rows)
   return { data: mapped, error: null }
 }
 
@@ -312,10 +319,9 @@ export async function getScheduledVisitsAsScheduleRowsForAgencyAndDateRange(
   startDate: string,
   endDate: string
 ) {
-  await syncScheduledVisitStatuses(supabase, { agency_id: agencyId })
   const { data, error } = await supabase
     .from('scheduled_visits')
-    .select(visitSelect)
+    .select(visitSelectWithTasks)
     .eq('agency_id', agencyId)
     .gte('visit_date', startDate)
     .lte('visit_date', endDate)
@@ -323,8 +329,8 @@ export async function getScheduledVisitsAsScheduleRowsForAgencyAndDateRange(
     .order('scheduled_start_time', { ascending: true })
 
   if (error) return { data: null, error }
-  const rows = (data ?? []) as ScheduledVisitDbRow[]
-  const mapped = await attachAdlCodes(supabase, rows)
+  const rows = (data ?? []) as unknown as ScheduledVisitDbRowWithTasks[]
+  const mapped = mapVisitsToScheduleRows(rows)
   return { data: mapped, error: null }
 }
 
@@ -332,11 +338,10 @@ export async function getScheduledVisitsAsScheduleRowsForAgencyAndDateRange(
 export async function getScheduledVisitsByIdsAsScheduleRows(supabase: Supabase, ids: string[]) {
   const clean = Array.from(new Set(ids.filter((id) => typeof id === 'string' && id.length > 0 && id !== 'null')))
   if (clean.length === 0) return { data: [], error: null }
-  await syncScheduledVisitStatuses(supabase, { visit_ids: clean })
-  const { data, error } = await supabase.from('scheduled_visits').select(visitSelect).in('id', clean)
+  const { data, error } = await supabase.from('scheduled_visits').select(visitSelectWithTasks).in('id', clean)
   if (error) return { data: null, error }
-  const rows = (data ?? []) as ScheduledVisitDbRow[]
-  const mapped = await attachAdlCodes(supabase, rows)
+  const rows = (data ?? []) as unknown as ScheduledVisitDbRowWithTasks[]
+  const mapped = mapVisitsToScheduleRows(rows)
   return { data: mapped, error: null }
 }
 
@@ -636,7 +641,7 @@ export async function updateSchedule(
     .from('scheduled_visits')
     .update(patch)
     .eq('id', id)
-    .select(visitSelect)
+    .select(visitSelectWithTasks)
     .maybeSingle()
 
   if (error) return { data: null, error }
@@ -646,15 +651,14 @@ export async function updateSchedule(
       error: { message: 'Visit could not be updated. It may not exist or you may not have permission.' },
     }
   }
-  const v = visit as ScheduledVisitDbRow
+  const v = visit as unknown as ScheduledVisitDbRowWithTasks
 
   if (data.adl_codes !== undefined) {
     await replaceVisitTasks(supabase, ex.agency_id, id, data.adl_codes)
-    return { data: toScheduleRow(v, data.adl_codes.filter(Boolean)), error: null }
+    return { data: toScheduleRow(v as ScheduledVisitDbRow, data.adl_codes.filter(Boolean)), error: null }
   }
 
-  const mapped = await attachAdlCodes(supabase, [v])
-  return { data: mapped[0] ?? null, error: null }
+  return { data: mapVisitsToScheduleRows([v])[0] ?? null, error: null }
 }
 
 /** Delete a visit by id (cascade removes scheduled_visit_tasks). */

@@ -2,6 +2,7 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { getCachedCertificationTypes } from '@/lib/server-cache/reference-lists'
 
 export interface CreateCertificationData {
   type: string
@@ -114,19 +115,8 @@ export async function getCertifications() {
 }
 
 export async function getCertificationTypes() {
-  const supabase = await createClient()
-
   try {
-    const { data: types, error } = await supabase
-      .from('certification_types')
-      .select('*')
-      .order('certification_type', { ascending: true })
-
-    if (error) {
-      return { error: error.message, data: null }
-    }
-
-    return { error: null, data: types }
+    return await getCachedCertificationTypes()
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Failed to fetch certification types'
     return { error: msg, data: null }

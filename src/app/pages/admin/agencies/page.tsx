@@ -1,6 +1,7 @@
 import { requireAdmin } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
+import { getCachedAgenciesOrdered } from '@/lib/server-cache/reference-lists'
 import AdminLayout from '@/components/AdminLayout'
 import AgenciesContent from '@/components/AgenciesContent'
 import { Building2 } from 'lucide-react'
@@ -10,7 +11,7 @@ export default async function AgenciesPage() {
   const supabase = await createClient()
 
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, user.id)
-  const { data: agencies } = await q.getAgenciesOrdered(supabase)
+  const { data: agencies } = await getCachedAgenciesOrdered()
   const { data: agencyAdmins } = await q.getClientsWithCompanyOwner(supabase)
 
   // One agency admin can only be in one agency: show only those not in any agency's agency_admin_ids

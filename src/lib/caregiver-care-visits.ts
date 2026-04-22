@@ -1,6 +1,6 @@
 import type { Supabase } from '@/lib/supabase/types'
 import * as q from '@/lib/supabase/query'
-import type { ScheduleRow } from '@/lib/supabase/query/schedules'
+import { getDefaultScheduledVisitBulkDateRange, type ScheduleRow } from '@/lib/supabase/query/schedules'
 
 export type CaregiverVisitStatus = 'open' | 'assigned' | 'completed' | 'missed' | 'in_progress'
 
@@ -205,14 +205,22 @@ export async function fetchCaregiverCareVisitsData(
   caregiverMemberId: string,
   caregiverAgencyId: string | null
 ): Promise<CaregiverCareVisitsDTO> {
-  const { data: allRows, error } = await q.getAllScheduledVisitsAsScheduleRows(supabase)
+  if (!caregiverAgencyId) {
+    return { visits: [], mineCount: 0, openCount: 0, todayCount: 0 }
+  }
+
+  const { startDate, endDate } = getDefaultScheduledVisitBulkDateRange()
+  const { data: allRows, error } = await q.getScheduledVisitsAsScheduleRowsForAgencyAndDateRange(
+    supabase,
+    caregiverAgencyId,
+    startDate,
+    endDate
+  )
   if (error || !allRows) {
     return { visits: [], mineCount: 0, openCount: 0, todayCount: 0 }
   }
 
-  const candidateRows = caregiverAgencyId
-    ? allRows.filter((v) => v.agency_id === caregiverAgencyId)
-    : []
+  const candidateRows = allRows
   const patientIds = Array.from(new Set(candidateRows.map((v) => v.patient_id)))
   const scheduleIds = candidateRows.map((v) => v.id)
 
@@ -278,7 +286,7 @@ export async function fetchCaregiverCareVisitsData(
     taskCountByVisit.set(vid, cur)
   }
 
-  /** Visits with EVV clock-in and no clock-out (sync_scheduled_visit_statuses may still show `scheduled` on the row). */
+  /** Visits with EVV clock-in and no clock-out (row status can stay `scheduled` until cron sync or a row update). */
   const activeClockInVisitIds = new Set<string>()
   const caregiverNotesByVisit = new Map<string, string | null>()
   for (const vr of (vteNotesRes.data ?? []) as {

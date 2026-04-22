@@ -36,6 +36,46 @@ export async function getLicensingExpertsOrdered(supabase: Supabase) {
   return supabase.from('licensing_experts').select('*').order('created_at', { ascending: false })
 }
 
+function escapeIlikePattern(raw: string): string {
+  return raw.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_').replace(/,/g, ' ')
+}
+
+export type LicensingExpertListFilters = {
+  search?: string
+  /** `'All Status'` skips; otherwise matches `status` (lowercased). */
+  status?: string
+  /** `'All States'` skips; filters via `expert_states`. */
+  state?: string
+}
+
+/** Filtered licensing experts for admin UI. */
+export async function getLicensingExpertsFiltered(supabase: Supabase, filters: LicensingExpertListFilters) {
+  let qb = supabase.from('licensing_experts').select('*').order('created_at', { ascending: false })
+
+  const search = filters.search?.trim()
+  if (search) {
+    const p = `%${escapeIlikePattern(search)}%`
+    qb = qb.or(`first_name.ilike.${p},last_name.ilike.${p},email.ilike.${p},expertise.ilike.${p}`)
+  }
+
+  if (filters.status && filters.status !== 'All Status') {
+    qb = qb.eq('status', filters.status.trim().toLowerCase())
+  }
+
+  if (filters.state && filters.state !== 'All States') {
+    const { data: stateRows, error: stErr } = await supabase
+      .from('expert_states')
+      .select('expert_id')
+      .eq('state', filters.state)
+    if (stErr) return { data: null, error: stErr }
+    const ids = Array.from(new Set((stateRows ?? []).map((r: { expert_id: string }) => r.expert_id).filter(Boolean)))
+    if (ids.length === 0) return { data: [], error: null }
+    qb = qb.in('id', ids)
+  }
+
+  return qb
+}
+
 /** Get licensing_experts by user_ids. */
 export async function getLicensingExpertsByUserIds(supabase: Supabase, userIds: string[]) {
   if (userIds.length === 0) return { data: [], error: null }

@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback, Suspense, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useRouter, useSearchParams } from 'next/navigation'
 import StaffLayout from '@/components/StaffLayout'
 import AddCertificationModal from '@/components/AddCertificationModal'
 import EditCertificationModal from '@/components/EditCertificationModal'
 import EditCaregiverSkillsModal from '@/components/EditCaregiverSkillsModal'
 import { getCertificationTypes } from '@/app/actions/certifications'
+import { getCaregiverSkillCatalogAction } from '@/app/actions/reference-data'
 import { getMyStaffCertifications } from '@/app/actions/staff-member-certifications'
 import { createClient } from '@/lib/supabase/client'
 import { CAREGIVER_SKILL_POINTS } from '@/lib/constants'
@@ -90,7 +92,6 @@ function MyCertificationsContent() {
   const searchParams = useSearchParams()
   const action = searchParams.get('action')
   const [certifications, setCertifications] = useState<Certification[]>([])
-  const [certificationTypes, setCertificationTypes] = useState<Array<{ id: number; certification_type: string }>>([])
   const [isLoading, setIsLoading] = useState(true)
   type Column = 'type' | 'status' | 'license_number' | 'issue_date' | 'expiration_date' | 'state'
   const [sortBy, setSortBy] = useState<Column>('expiration_date')
@@ -106,8 +107,27 @@ function MyCertificationsContent() {
 
   const [activeTab, setActiveTab] = useState<'skills' | 'certifications'>('skills')
   const [caregiverSelf, setCaregiverSelf] = useState<CaregiverSelf | null>(null)
-  const [skillCatalog, setSkillCatalog] = useState<{ type: string; name: string }[]>([])
   const [skillsModalOpen, setSkillsModalOpen] = useState(false)
+
+  const { data: certificationTypes = [] } = useQuery({
+    queryKey: ['certification-types'],
+    queryFn: async () => {
+      const r = await getCertificationTypes()
+      if (r.error) throw new Error(r.error)
+      return (r.data ?? []) as Array<{ id: number; certification_type: string }>
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const { data: skillCatalog = [] } = useQuery({
+    queryKey: ['caregiver-skill-catalog'],
+    queryFn: async () => {
+      const r = await getCaregiverSkillCatalogAction()
+      if (r.error) throw new Error(String(r.error))
+      return (r.data ?? []) as { type: string; name: string }[]
+    },
+    staleTime: 10 * 60 * 1000,
+  })
 
   useEffect(() => {
     if (action === 'add') {
@@ -134,19 +154,14 @@ function MyCertificationsContent() {
       const { count } = await q.getUnreadNotificationsCount(supabase, currentUser.id)
       setUnreadNotifications(count ?? 0)
 
-      const [certsResult, typesResult, memberRes, catalogRes] = await Promise.all([
+      const [certsResult, memberRes] = await Promise.all([
         getMyStaffCertifications(),
-        getCertificationTypes(),
         supabase.from('caregiver_members').select('id, first_name, last_name, skills').eq('user_id', currentUser.id).maybeSingle(),
-        q.getCaregiverSkillCatalogFromTaskRequirements(supabase),
       ])
 
       setHasStaffProfile(certsResult.hasStaffProfile)
       if (certsResult.data) {
         setCertifications(certsResult.data as Certification[])
-      }
-      if (typesResult.data) {
-        setCertificationTypes(typesResult.data)
       }
 
       if (memberRes.data) {
@@ -160,8 +175,6 @@ function MyCertificationsContent() {
       } else {
         setCaregiverSelf(null)
       }
-
-      setSkillCatalog(catalogRes.data ?? [])
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {

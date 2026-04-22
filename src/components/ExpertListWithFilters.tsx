@@ -4,7 +4,8 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
-import { 
+import { fetchFilteredExpertsAction } from '@/app/actions/admin-list-filters'
+import {
   Search,
   Mail,
   Phone,
@@ -15,7 +16,7 @@ import {
   Edit,
   Users,
   BarChart3,
-  UserX
+  UserX,
 } from 'lucide-react'
 
 interface Expert {
@@ -36,67 +37,90 @@ interface ExpertListWithFiltersProps {
   clientsByExpert: Record<string, number>
 }
 
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delayMs)
+    return () => clearTimeout(t)
+  }, [value, delayMs])
+  return debounced
+}
+
 export default function ExpertListWithFilters({
   experts,
   statesByExpert,
-  clientsByExpert
+  clientsByExpert,
 }: ExpertListWithFiltersProps) {
   const router = useRouter()
-  const [searchQuery, setSearchQuery] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const debouncedSearch = useDebouncedValue(searchInput, 300)
   const [selectedState, setSelectedState] = useState('All States')
   const [selectedStatus, setSelectedStatus] = useState('All Status')
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null)
   const dropdownRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
-  // Get unique states from all experts
+  const hasServerFilter = useMemo(
+    () =>
+      debouncedSearch.trim() !== '' ||
+      selectedState !== 'All States' ||
+      selectedStatus !== 'All Status',
+    [debouncedSearch, selectedState, selectedStatus]
+  )
+
+  const [serverPayload, setServerPayload] = useState<Awaited<
+    ReturnType<typeof fetchFilteredExpertsAction>
+  >['data']>(null)
+  const [filterLoading, setFilterLoading] = useState(false)
+
+  useEffect(() => {
+    if (!hasServerFilter) {
+      setServerPayload(null)
+      setFilterLoading(false)
+      return
+    }
+    let cancelled = false
+    setFilterLoading(true)
+    fetchFilteredExpertsAction({
+      search: debouncedSearch,
+      selectedState,
+      selectedStatus,
+    }).then((res) => {
+      if (cancelled) return
+      if (res.error) {
+        setServerPayload(null)
+      } else {
+        setServerPayload(res.data)
+      }
+      setFilterLoading(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [hasServerFilter, debouncedSearch, selectedState, selectedStatus])
+
+  const displayExperts = hasServerFilter ? ((serverPayload?.experts ?? []) as unknown as Expert[]) : experts
+  const displayStatesByExpert = hasServerFilter ? serverPayload?.statesByExpert ?? {} : statesByExpert
+  const displayClientsByExpert = hasServerFilter ? serverPayload?.clientsByExpert ?? {} : clientsByExpert
+
   const allStates = useMemo(() => {
     const statesSet = new Set<string>()
-    Object.values(statesByExpert).forEach(states => {
-      states.forEach(state => statesSet.add(state))
+    Object.values(statesByExpert).forEach((states) => {
+      states.forEach((state) => statesSet.add(state))
     })
     return Array.from(statesSet).sort()
   }, [statesByExpert])
-
-  // Filter experts based on search and filters
-  const filteredExperts = useMemo(() => {
-    return experts.filter(expert => {
-      // Search filter (name, email, expertise)
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase()
-        const fullName = `${expert.first_name} ${expert.last_name}`.toLowerCase()
-        const matchesSearch = 
-          fullName.includes(query) ||
-          expert.email.toLowerCase().includes(query) ||
-          (expert.expertise && expert.expertise.toLowerCase().includes(query))
-        
-        if (!matchesSearch) return false
-      }
-
-      // State filter
-      if (selectedState !== 'All States') {
-        const expertStates = statesByExpert[expert.id] || []
-        if (!expertStates.includes(selectedState)) return false
-      }
-
-      // Status filter
-      if (selectedStatus !== 'All Status') {
-        const expertStatus = expert.status.charAt(0).toUpperCase() + expert.status.slice(1)
-        if (expertStatus !== selectedStatus) return false
-      }
-
-      return true
-    })
-  }, [experts, searchQuery, selectedState, selectedStatus, statesByExpert])
 
   const getInitials = (firstName: string, lastName: string) => {
     return `${firstName[0]}${lastName[0]}`.toUpperCase()
   }
 
-  // Close dropdown when clicking outside
   useEffect(() => {
-    
     function handleClickOutside(event: MouseEvent) {
-      if (openDropdownId && dropdownRefs.current[openDropdownId] && !dropdownRefs.current[openDropdownId]?.contains(event.target as Node)) {
+      if (
+        openDropdownId &&
+        dropdownRefs.current[openDropdownId] &&
+        !dropdownRefs.current[openDropdownId]?.contains(event.target as Node)
+      ) {
         setOpenDropdownId(null)
       }
     }
@@ -114,7 +138,6 @@ export default function ExpertListWithFilters({
     setOpenDropdownId(openDropdownId === expertId ? null : expertId)
   }
 
-  // All routes navigate to admin-side pages (not expert dashboard)
   const handleViewProfile = (expert: Expert) => {
     setOpenDropdownId(null)
     router.push(`/pages/admin/experts/${expert.id}`)
@@ -138,7 +161,7 @@ export default function ExpertListWithFilters({
   const handleToggleStatus = async (expert: Expert) => {
     const isActive = expert.status === 'active'
     const actionText = isActive ? 'deactivate' : 'activate'
-    
+
     if (!confirm(`Are you sure you want to ${actionText} ${expert.first_name} ${expert.last_name}?`)) {
       return
     }
@@ -148,10 +171,10 @@ export default function ExpertListWithFilters({
     try {
       const supabase = createClient()
       const newStatus = isActive ? 'inactive' : 'active'
-      
+
       const { error } = await q.updateLicensingExpertById(supabase, expert.id, {
         status: newStatus,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
       })
 
       if (error) {
@@ -159,16 +182,15 @@ export default function ExpertListWithFilters({
         return
       }
 
-      // Refresh the page to show updated status
       router.refresh()
-    } catch (err: any) {
-      alert(`Failed to ${actionText} expert: ${err.message || 'Unknown error'}`)
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Unknown error'
+      alert(`Failed to ${actionText} expert: ${message}`)
     }
   }
 
   return (
     <div className="space-y-4 md:space-y-6">
-      {/* Search and Filters */}
       <div className="bg-white rounded-xl p-4 shadow-md border border-gray-100">
         <div className="flex flex-col gap-4">
           <div className="flex-1 relative">
@@ -176,23 +198,25 @@ export default function ExpertListWithFilters({
             <input
               type="text"
               placeholder="Search experts by name, email, or expertise..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               className="w-full pl-9 md:pl-10 pr-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
           <div className="flex flex-wrap gap-2 md:gap-3">
-            <select 
+            <select
               value={selectedState}
               onChange={(e) => setSelectedState(e.target.value)}
               className="flex-1 min-w-[120px] px-3 md:px-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             >
               <option value="All States">All States</option>
-              {allStates.map(state => (
-                <option key={state} value={state}>{state}</option>
+              {allStates.map((state) => (
+                <option key={state} value={state}>
+                  {state}
+                </option>
               ))}
             </select>
-            <select 
+            <select
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
               className="flex-1 min-w-[120px] px-3 md:px-4 py-2 text-sm md:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
@@ -205,12 +229,15 @@ export default function ExpertListWithFilters({
         </div>
       </div>
 
-      {/* Expert List */}
       <div className="space-y-4">
-        {filteredExperts && filteredExperts.length > 0 ? (
-          filteredExperts.map((expert) => {
-            const expertStatesList = statesByExpert[expert.id] || []
-            const clientCount = clientsByExpert[expert.id] || 0
+        {hasServerFilter && filterLoading ? (
+          <div className="bg-white rounded-xl p-6 text-center text-gray-500 text-sm border border-gray-100 shadow-md">
+            Searching…
+          </div>
+        ) : displayExperts && displayExperts.length > 0 ? (
+          displayExperts.map((expert) => {
+            const expertStatesList = displayStatesByExpert[expert.id] || []
+            const clientCount = displayClientsByExpert[expert.id] || 0
 
             return (
               <div key={expert.id} className="bg-white rounded-xl p-4 md:p-6 shadow-md border border-gray-100">
@@ -221,12 +248,14 @@ export default function ExpertListWithFilters({
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2 md:gap-3 mb-2">
-                        <h3 className="text-lg md:text-xl font-bold text-gray-900 break-words">{expert.first_name} {expert.last_name}</h3>
-                        <span className={`px-2 md:px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap ${
-                          expert.status === 'active' 
-                            ? 'bg-green-100 text-green-800' 
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
+                        <h3 className="text-lg md:text-xl font-bold text-gray-900 break-words">
+                          {expert.first_name} {expert.last_name}
+                        </h3>
+                        <span
+                          className={`px-2 md:px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap ${
+                            expert.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
+                          }`}
+                        >
                           {expert.status}
                         </span>
                       </div>
@@ -246,7 +275,7 @@ export default function ExpertListWithFilters({
                           <div className="flex items-center gap-2 flex-wrap mt-2">
                             <MapPin className="w-3 h-3 md:w-4 md:h-4 flex-shrink-0" />
                             <span className="text-gray-700 font-medium">Specialization:</span>
-                            {expertStatesList.map(state => (
+                            {expertStatesList.map((state) => (
                               <span key={state} className="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded-full">
                                 {state}
                               </span>
@@ -266,12 +295,14 @@ export default function ExpertListWithFilters({
                       </div>
                     </div>
                   </div>
-                  <div 
-                    className="relative flex-shrink-0" 
-                    ref={(el) => { dropdownRefs.current[expert.id] = el }}
+                  <div
+                    className="relative flex-shrink-0"
+                    ref={(el) => {
+                      dropdownRefs.current[expert.id] = el
+                    }}
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <button 
+                    <button
                       onClick={(e) => {
                         e.preventDefault()
                         e.stopPropagation()
@@ -282,7 +313,7 @@ export default function ExpertListWithFilters({
                     >
                       <MoreVertical className="w-4 h-4 md:w-5 md:h-5" />
                     </button>
-                    
+
                     {openDropdownId === expert.id && (
                       <div className="absolute right-0 top-10 z-50 w-48 bg-white rounded-lg shadow-lg border border-gray-200 py-1">
                         <button
@@ -331,9 +362,7 @@ export default function ExpertListWithFilters({
                             handleToggleStatus(expert)
                           }}
                           className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2 transition-colors ${
-                            expert.status === 'active' 
-                              ? 'text-red-600' 
-                              : 'text-green-600'
+                            expert.status === 'active' ? 'text-red-600' : 'text-green-600'
                           }`}
                         >
                           <UserX className="w-4 h-4" />
@@ -350,11 +379,12 @@ export default function ExpertListWithFilters({
           <div className="bg-white rounded-xl p-8 md:p-12 text-center shadow-md border border-gray-100">
             <Briefcase className="w-12 h-12 md:w-16 md:h-16 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500 text-base md:text-lg">No experts found</p>
-            {(searchQuery || selectedState !== 'All States' || selectedStatus !== 'All Status') && (
+            {(searchInput || selectedState !== 'All States' || selectedStatus !== 'All Status') && (
               <p className="text-sm text-gray-400 mt-2">Try adjusting your search or filters</p>
             )}
           </div>
-        )}
+        )
+      }
       </div>
     </div>
   )

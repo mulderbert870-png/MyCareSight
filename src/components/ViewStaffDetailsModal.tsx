@@ -16,6 +16,7 @@ interface StaffMember {
   status: string
   employee_id?: string | null
   start_date?: string | null
+  currentPayRate?: number | null
   pay_rate?: string | number | null
   address?: string | null
   state?: string | null
@@ -66,6 +67,7 @@ export default function ViewStaffDetailsModal({
       <CaregiverProfileContent
         staff={staff}
         licenses={licenses}
+        currentPayRate={staff.currentPayRate}
         documentsPanelActive={isOpen}
         onDocumentsBusyChange={setDocumentsBusy}
       />

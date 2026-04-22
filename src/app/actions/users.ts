@@ -1,5 +1,6 @@
 'use server'
 
+import { randomBytes } from 'node:crypto'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { revalidatePath } from 'next/cache'
@@ -59,6 +60,64 @@ export async function setUserPassword(userId: string, newPassword: string) {
 
 /** Role value for new users created from admin User Management */
 export type CreateUserRole = 'admin' | 'company_owner' | 'staff_member' | 'expert' | 'care_coordinator'
+
+type SupabaseAdminClient = ReturnType<typeof createAdminClient>
+
+/**
+ * Poll until `user_profiles` exists for `userId` (handle_new_user).
+ * Default: first check immediately, then up to `maxRetries` more attempts spaced by `intervalMs`.
+ */
+async function waitForUserProfileRow(
+  admin: SupabaseAdminClient,
+  userId: string,
+  options?: { maxRetries?: number; intervalMs?: number }
+) {
+  const maxRetries = options?.maxRetries ?? 3
+  const intervalMs = options?.intervalMs ?? 200
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const { data } = await admin.from('user_profiles').select('id').eq('id', userId).maybeSingle()
+    if (data?.id) return true
+    if (attempt < maxRetries) {
+      await new Promise((r) => setTimeout(r, intervalMs))
+    }
+  }
+  return false
+}
+
+/**
+ * Best-effort undo after auth user exists but app-specific setup failed.
+ * Order: unlink from agencies → role tables → user_profiles → auth.users
+ */
+async function rollbackProvisionalUserAccount(
+  admin: SupabaseAdminClient,
+  userId: string,
+  options?: { agencyId?: string; agencyAdminIdToUnlink?: string }
+) {
+  try {
+    if (options?.agencyId && options?.agencyAdminIdToUnlink) {
+      const { data: agency } = await admin.from('agencies').select('agency_admin_ids').eq('id', options.agencyId).maybeSingle()
+      const raw = agency?.agency_admin_ids as string[] | null | undefined
+      if (Array.isArray(raw) && raw.includes(options.agencyAdminIdToUnlink)) {
+        const filtered = raw.filter((id) => id !== options.agencyAdminIdToUnlink)
+        await admin
+          .from('agencies')
+          .update({ agency_admin_ids: filtered, updated_at: new Date().toISOString() })
+          .eq('id', options.agencyId)
+      }
+    }
+    await admin.from('agency_admins').delete().eq('user_id', userId)
+    await admin.from('caregiver_members').delete().eq('user_id', userId)
+    await admin.from('licensing_experts').delete().eq('user_id', userId)
+    await admin.from('care_coordinators').delete().eq('user_id', userId)
+    await admin.from('user_profiles').delete().eq('id', userId)
+    const { error: delAuthErr } = await admin.auth.admin.deleteUser(userId)
+    if (delAuthErr) {
+      console.error('rollbackProvisionalUserAccount: deleteUser failed', delAuthErr.message)
+    }
+  } catch (e: unknown) {
+    console.error('rollbackProvisionalUserAccount: unexpected error', e)
+  }
+}
 
 function parseFullName(fullName: string): { first_name: string; last_name: string } {
   const trimmed = fullName.trim()
@@ -143,9 +202,16 @@ export async function createUserAccount(
   }
   const supabaseCookie = await createClient()
 
+  let provisionalUserId: string | null = null
+  let setupCompleted = false
+
   try {
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
     const normalizedEmail = email.toLowerCase().trim()
+
+    if (role === 'care_coordinator' && !agencyId) {
+      return { error: 'Agency is required for care coordinator role.', data: null }
+    }
 
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email: normalizedEmail,
@@ -194,9 +260,18 @@ export async function createUserAccount(
       return { error: 'Failed to create user account - no user returned', data: null }
     }
     userId = newUser.user.id
+    provisionalUserId = userId
 
-    // Wait for handle_new_user trigger to create user_profiles
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    const profileReady = await waitForUserProfileRow(supabaseAdmin, userId)
+    if (!profileReady) {
+      await rollbackProvisionalUserAccount(supabaseAdmin, userId)
+      provisionalUserId = null
+      return {
+        error:
+          'Auth user was created but user profile did not appear in time (handle_new_user). The incomplete account was removed.',
+        data: null,
+      }
+    }
 
     // Insert into role-specific table so the user appears in the right tab
     const fullNameTrimmed = fullName.trim()
@@ -216,20 +291,38 @@ export async function createUserAccount(
         .select('id')
         .single()
       if (adminError) {
-        console.error('Failed to create agency_admins row for agency admin:', adminError)
+        await rollbackProvisionalUserAccount(supabaseAdmin, userId)
+        provisionalUserId = null
         return {
-          error: `User created but failed to create agency record: ${adminError.message}`,
+          error: `Failed to create agency record: ${adminError.message}`,
           data: null,
         }
       }
       if (agencyId && newAdmin?.id) {
-        const { data: agency } = await supabaseAdmin.from('agencies').select('agency_admin_ids').eq('id', agencyId).single()
+        const { data: agency, error: agencySelErr } = await supabaseAdmin
+          .from('agencies')
+          .select('agency_admin_ids')
+          .eq('id', agencyId)
+          .maybeSingle()
+        if (agencySelErr) {
+          await rollbackProvisionalUserAccount(supabaseAdmin, userId)
+          provisionalUserId = null
+          return { error: `Failed to load agency for linking: ${agencySelErr.message}`, data: null }
+        }
         const currentIds = (agency?.agency_admin_ids as string[] | null) || []
         if (!currentIds.includes(newAdmin.id)) {
-          await supabaseAdmin
+          const { error: agencyUpdErr } = await supabaseAdmin
             .from('agencies')
             .update({ agency_admin_ids: [...currentIds, newAdmin.id], updated_at: new Date().toISOString() })
             .eq('id', agencyId)
+          if (agencyUpdErr) {
+            await rollbackProvisionalUserAccount(supabaseAdmin, userId, {
+              agencyId,
+              agencyAdminIdToUnlink: newAdmin.id,
+            })
+            provisionalUserId = null
+            return { error: `Failed to link agency admin to agency: ${agencyUpdErr.message}`, data: null }
+          }
         }
       }
     } else if (role === 'staff_member') {
@@ -252,9 +345,10 @@ export async function createUserAccount(
           status: 'active',
         })
       if (staffError) {
-        console.error('Failed to create caregiver_members row for caregiver:', staffError)
+        await rollbackProvisionalUserAccount(supabaseAdmin, userId)
+        provisionalUserId = null
         return {
-          error: `User created but failed to create staff record: ${staffError.message}`,
+          error: `Failed to create staff record: ${staffError.message}`,
           data: null,
         }
       }
@@ -270,33 +364,35 @@ export async function createUserAccount(
           status: 'active',
         })
       if (expertError) {
-        console.error('Failed to create licensing_experts row for expert:', expertError)
+        await rollbackProvisionalUserAccount(supabaseAdmin, userId)
+        provisionalUserId = null
         return {
-          error: `User created but failed to create expert record: ${expertError.message}`,
+          error: `Failed to create expert record: ${expertError.message}`,
           data: null,
         }
       }
     } else if (role === 'care_coordinator') {
-      if (!agencyId) {
-        return { error: 'Agency is required for care coordinator role.', data: null }
-      }
       const { error: coordinatorError } = await q.insertCareCoordinator(supabaseAdmin, {
         user_id: userId,
-        agency_id: agencyId,
+        agency_id: agencyId!,
         first_name: firstName,
         last_name: lastName,
         email: normalizedEmail,
         status: 'active',
       })
       if (coordinatorError) {
-        console.error('Failed to create care_coordinators row:', coordinatorError)
+        await rollbackProvisionalUserAccount(supabaseAdmin, userId)
+        provisionalUserId = null
         return {
-          error: `User created but failed to create care coordinator record: ${coordinatorError.message}`,
+          error: `Failed to create care coordinator record: ${coordinatorError.message}`,
           data: null,
         }
       }
     }
     // admin role: no extra table
+
+    setupCompleted = true
+    provisionalUserId = null
 
     const { error: magicLinkError } = await supabaseCookie.auth.signInWithOtp({
       email: normalizedEmail,
@@ -310,6 +406,9 @@ export async function createUserAccount(
       data: { success: true, userId, message: `User created. Login link sent to ${email}.` },
     }
   } catch (err: any) {
+    if (!setupCompleted && provisionalUserId) {
+      await rollbackProvisionalUserAccount(supabaseAdmin, provisionalUserId)
+    }
     return { error: err?.message || 'Failed to create user account', data: null }
   }
 }
@@ -354,7 +453,7 @@ export async function createAgencyAdminAccount(
     const normalizedEmail = contactEmail.toLowerCase().trim()
     const fullName = `${firstName.trim()} ${lastName.trim()}`.trim() || normalizedEmail
     // const companyName = buildAgencyAdminCompanyName(workLocation, jobTitle, department)
-    const defaultPassword = `${lastName.trim()}!123`
+    const defaultPassword = randomBytes(12).toString('base64')
 
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email: normalizedEmail,
@@ -423,7 +522,14 @@ export async function createAgencyAdminAccount(
     }
     userId = newUser.user.id
 
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    const profileReady = await waitForUserProfileRow(supabaseAdmin, userId)
+    if (!profileReady) {
+      return {
+        error:
+          'Auth user was created but user profile did not appear in time (handle_new_user). Try again or remove the incomplete auth user.',
+        data: null,
+      }
+    }
 
     const { error: adminError } = await supabaseAdmin.from('agency_admins').insert({
       user_id: userId,
@@ -566,29 +672,27 @@ export async function createStaffUserAccount(
       return { error: 'Failed to create user account - user ID is missing', data: null }
     }
 
-    // Wait for handle_new_user trigger to create user_profiles
-    await new Promise((resolve) => setTimeout(resolve, 500))
-
+    const profileReady = await waitForUserProfileRow(supabaseAdmin, userId)
     let verifiedUserId = userId
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from('user_profiles')
-      .select('id, role')
-      .eq('id', userId)
-      .single()
-
-    if (profileError || !profile) {
-      console.warn('User profile not found after creation:', profileError)
+    if (profileReady) {
+      const { data: profile, error: profileError } = await supabaseAdmin
+        .from('user_profiles')
+        .select('id, role')
+        .eq('id', userId)
+        .single()
+      if (!profileError && profile) {
+        verifiedUserId = profile.id
+      }
+    } else {
+      console.warn('User profile not found after creation (handle_new_user retries exhausted):', userId)
       const { data: profileByEmail } = await supabaseAdmin
         .from('user_profiles')
         .select('id')
         .eq('email', normalizedEmail)
-        .single()
-
+        .maybeSingle()
       if (profileByEmail?.id) {
         verifiedUserId = profileByEmail.id
       }
-    } else {
-      verifiedUserId = profile.id
     }
 
     userId = verifiedUserId

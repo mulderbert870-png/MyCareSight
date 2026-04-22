@@ -40,12 +40,15 @@ interface StaffLicense {
 export default function CaregiverProfileContent({
   staff,
   licenses,
+  currentPayRate: currentPayRateProp,
   backHref,
   documentsPanelActive = true,
   onDocumentsBusyChange,
 }: {
   staff: StaffMember
   licenses: StaffLicense[]
+  /** From `caregiver_pay_rates` when provided by the caregivers list page. */
+  currentPayRate?: number | null
   backHref?: string
   /** When false, document panel does not sync (e.g. parent view hidden). */
   documentsPanelActive?: boolean
@@ -63,6 +66,16 @@ export default function CaregiverProfileContent({
   const homeAddressLine = [staff.address, stateZip].filter(Boolean).join(', ')
 
   const skills = staff.skills ?? []
+  const displayPayRate: number | null = (() => {
+    if (currentPayRateProp !== undefined) {
+      return currentPayRateProp !== null && Number.isFinite(currentPayRateProp) ? currentPayRateProp : null
+    }
+    if (staff.pay_rate !== null && staff.pay_rate !== undefined && staff.pay_rate !== '') {
+      const n = typeof staff.pay_rate === 'number' ? staff.pay_rate : Number(staff.pay_rate)
+      return Number.isFinite(n) ? n : null
+    }
+    return null
+  })()
   const [skillCatalog, setSkillCatalog] = useState<{ type: string; name: string }[]>([])
   const skillTypeByName = useMemo(() => {
     const map = new Map<string, string>()
@@ -143,12 +156,10 @@ export default function CaregiverProfileContent({
           <div>
             <span className="text-sm font-semibold text-gray-700">Pay Rate ($/hr)</span>
           </div>
-          <span className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-full font-semibold">Admin Only</span>
+          <span className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-full font-semibold">Agency</span>
         </div>
         <div className="bg-gray-50 rounded-lg px-4 py-2 text-sm font-medium text-gray-900">
-          {staff.pay_rate !== null && staff.pay_rate !== undefined && staff.pay_rate !== ''
-            ? `$${typeof staff.pay_rate === 'number' ? staff.pay_rate.toFixed(2) : staff.pay_rate}`
-            : '$--'}
+          {displayPayRate !== null && Number.isFinite(displayPayRate) ? `$${displayPayRate.toFixed(2)}/hr` : '$--'}
         </div>
       </div>
 

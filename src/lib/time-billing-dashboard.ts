@@ -1,4 +1,5 @@
 import type { Supabase } from '@/lib/supabase/types'
+import { resolvePayRateForVisit, type CaregiverPayRateRow, type LegacyPayRateScheduleRow } from '@/lib/caregiver-pay-rates'
 
 export type TimeBillingStatus = 'pending' | 'approved' | 'voided'
 
@@ -80,7 +81,7 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
     new Set(visitList.flatMap((v) => (v.caregiver_member_id ? [v.caregiver_member_id] : [])))
   )
 
-  const [patRes, cgRes, contractsRes, payRatesRes] = await Promise.all([
+  const [patRes, cgRes, contractsRes, caregiverPayRes, legacyPayRes] = await Promise.all([
     supabase.from('patients').select('id, full_name').in('id', patientIds),
     caregiverIds.length
       ? supabase.from('caregiver_members').select('id, first_name, last_name').in('id', caregiverIds)
@@ -91,8 +92,14 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
       .in('patient_id', patientIds),
     caregiverIds.length
       ? supabase
+          .from('caregiver_pay_rates')
+          .select('caregiver_member_id, pay_rate, unit_type, service_type, effective_start, effective_end')
+          .in('caregiver_member_id', caregiverIds)
+      : Promise.resolve({ data: [], error: null } as const),
+    caregiverIds.length
+      ? supabase
           .from('pay_rate_schedule')
-          .select('id, caregiver_member_id, service_type, rate, unit_type, effective_start, effective_end, status')
+          .select('caregiver_member_id, service_type, rate, unit_type, effective_start, effective_end, status')
           .in('caregiver_member_id', caregiverIds)
       : Promise.resolve({ data: [], error: null } as const),
   ])
@@ -100,7 +107,8 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
   if (patRes.error) return { rows: [], error: patRes.error.message }
   if (cgRes.error) return { rows: [], error: cgRes.error.message }
   if (contractsRes.error) return { rows: [], error: contractsRes.error.message }
-  if (payRatesRes.error) return { rows: [], error: payRatesRes.error.message }
+  if (caregiverPayRes.error) return { rows: [], error: caregiverPayRes.error.message }
+  if (legacyPayRes.error) return { rows: [], error: legacyPayRes.error.message }
 
   const patientNameById = new Map((patRes.data ?? []).map((r) => [r.id, r.full_name ?? 'Client']))
   const caregiverNameById = new Map(
@@ -108,7 +116,8 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
   )
 
   const contracts = contractsRes.data ?? []
-  const payRates = payRatesRes.data ?? []
+  const caregiverPayRows = (caregiverPayRes.data ?? []) as CaregiverPayRateRow[]
+  const legacyPayRows = (legacyPayRes.data ?? []) as LegacyPayRateScheduleRow[]
 
   const pickContract = (patientId: string, serviceType: string, date: string) =>
     contracts
@@ -122,18 +131,6 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
       )
       .sort((a, b) => b.effective_date.localeCompare(a.effective_date))[0]
 
-  const pickPayRate = (caregiverId: string, serviceType: string, date: string) =>
-    payRates
-      .filter(
-        (r) =>
-          r.caregiver_member_id === caregiverId &&
-          (r.service_type == null || r.service_type === serviceType) &&
-          r.status === 'active' &&
-          r.effective_start <= date &&
-          (!r.effective_end || r.effective_end >= date)
-      )
-      .sort((a, b) => b.effective_start.localeCompare(a.effective_start))[0]
-
   const rows: TimeBillingRow[] = visitList.map((sv) => {
     const date = sv.visit_date ?? ''
     const serviceType = (sv.service_type === 'skilled' ? 'skilled' : 'non_skilled') as 'non_skilled' | 'skilled'
@@ -142,7 +139,10 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
     const bh = sv.billing_hours != null ? Number(sv.billing_hours) : NaN
     const hours = Number.isFinite(bh) ? round2(bh) : scheduleHours
 
-    const pay = caregiverId && date ? pickPayRate(caregiverId, serviceType, date) : null
+    const pay =
+      caregiverId && date
+        ? resolvePayRateForVisit(caregiverId, serviceType, date, caregiverPayRows, legacyPayRows)
+        : null
     const contract = sv.patient_id && date ? pickContract(sv.patient_id, serviceType, date) : null
     const payRate = Number(pay?.rate ?? 0)
     const billRate = Number(contract?.bill_rate ?? 0)
