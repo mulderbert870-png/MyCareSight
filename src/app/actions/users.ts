@@ -208,6 +208,11 @@ export async function createUserAccount(
   try {
     const siteUrl = process.env.NEXT_PUBLIC_SITE_URL 
     const normalizedEmail = email.toLowerCase().trim()
+    const userMetadata: Record<string, string> = {
+      full_name: fullName.trim(),
+      role,
+      temporary_password: password,
+    }
 
     if (role === 'care_coordinator' && !agencyId) {
       return { error: 'Agency is required for care coordinator role.', data: null }
@@ -217,10 +222,7 @@ export async function createUserAccount(
       email: normalizedEmail,
       password,
       email_confirm: true,
-      user_metadata: {
-        full_name: fullName.trim(),
-        role,
-      },
+      user_metadata: userMetadata,
     })
 
     let userId: string | null = null
@@ -235,6 +237,7 @@ export async function createUserAccount(
         userId = existingProfile?.id || null
         if (userId) {
           await ensureRoleTableRow(supabaseAdmin, userId, fullName.trim(), normalizedEmail, role)
+          await supabaseAdmin.auth.admin.updateUserById(userId, { user_metadata: userMetadata })
         }
         const { error: magicLinkError } = await supabaseCookie.auth.signInWithOtp({
           email: normalizedEmail,

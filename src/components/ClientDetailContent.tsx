@@ -41,6 +41,7 @@ import { getThreeWeekRollingWindowPacific } from '@/lib/pct-week-horizon'
 import { expandSeriesOccurrences } from '@/lib/recurrence-dates'
 import * as q from '@/lib/supabase/query'
 import { updatePatientDocumentsAction } from '@/app/actions/patients'
+import { updatePatientServiceContractBillRateAction } from '@/app/actions/payroll-billing-report'
 import type { PatientRepresentative } from '@/lib/supabase/query/patients-representatives'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
 import type { CaregiverRequirement } from '@/lib/supabase/query/caregiver-requirements'
@@ -374,6 +375,9 @@ export default function ClientDetailContent({ client, allClients, representative
   const [serviceContractsModalOpen, setServiceContractsModalOpen] = useState(false)
   const [isSavingServiceContract, setIsSavingServiceContract] = useState(false)
   const [serviceContractError, setServiceContractError] = useState<string | null>(null)
+  const [serviceContractRateDrafts, setServiceContractRateDrafts] = useState<Record<string, string>>({})
+  const [isSavingServiceContractRates, setIsSavingServiceContractRates] = useState(false)
+  const [serviceContractRateErrorById, setServiceContractRateErrorById] = useState<Record<string, string>>({})
   const [billingCodeOptions, setBillingCodeOptions] = useState<BillingCodeOption[]>([])
   const [serviceContractForm, setServiceContractForm] = useState({
     contract_name: '',
@@ -2843,24 +2847,24 @@ export default function ClientDetailContent({ client, allClients, representative
   useEffect(() => {
     if (!serviceContractsModalOpen) return
     let isMounted = true
-    const loadBillingCodes = async () => {
+    const loadModalData = async () => {
       const supabase = createClient()
-      const { data, error } = await supabase
-        .from('billing_codes')
-        .select('id, code, name, unit_type')
-        .eq('is_active', true)
-        .order('code', { ascending: true })
-      if (!isMounted || error) return
-      setBillingCodeOptions((data ?? []) as BillingCodeOption[])
+      const [{ data: codes, error: codesError }, { data: contracts, error: contractsError }] = await Promise.all([
+        supabase.from('billing_codes').select('id, code, name, unit_type').eq('is_active', true).order('code', { ascending: true }),
+        q.getPatientServiceContractsByPatientId(supabase, localClient.id),
+      ])
+      if (!isMounted) return
+      if (!codesError) setBillingCodeOptions((codes ?? []) as BillingCodeOption[])
+      if (!contractsError) setServiceContracts((contracts ?? []) as PatientServiceContractRow[])
     }
-    void loadBillingCodes()
+    void loadModalData()
     return () => {
       isMounted = false
     }
-  }, [serviceContractsModalOpen])
+  }, [serviceContractsModalOpen, localClient.id])
 
   const closeManageLimitModal = () => {
-    if (!isSavingServiceContract) setServiceContractsModalOpen(false)
+    if (!isSavingServiceContract && !isSavingServiceContractRates) setServiceContractsModalOpen(false)
   }
 
   const billingCodeSelectOptions = useMemo(() => {
@@ -2875,6 +2879,13 @@ export default function ClientDetailContent({ client, allClients, representative
   useEffect(() => {
     console.log('billingcodes', billingCodeOptions)
   }, [billingCodeOptions])
+
+  useEffect(() => {
+    setServiceContractRateDrafts(
+      Object.fromEntries(serviceContracts.map((row) => [row.id, row.bill_rate != null ? String(Number(row.bill_rate)) : '']))
+    )
+    setServiceContractRateErrorById({})
+  }, [serviceContracts])
 
   const handleSaveServiceContract = async () => {
     if (!serviceContractForm.billing_code_id) {
@@ -2934,6 +2945,57 @@ export default function ClientDetailContent({ client, allClients, representative
       setServiceContractError(e instanceof Error ? e.message : 'Failed to save contract.')
     } finally {
       setIsSavingServiceContract(false)
+    }
+  }
+
+  const handleDoneServiceContracts = async () => {
+    if (isSavingServiceContract || isSavingServiceContractRates) return
+
+    const nextErrors: Record<string, string> = {}
+    const updates: Array<{ id: string; rate: number }> = []
+
+    for (const row of serviceContracts) {
+      const draft = (serviceContractRateDrafts[row.id] ?? '').trim()
+      if (!draft) continue
+      const parsed = Number(draft)
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        nextErrors[row.id] = 'Enter a valid non-negative rate.'
+        continue
+      }
+      const current = row.bill_rate ?? null
+      if (current !== null && Number(current) === parsed) continue
+      updates.push({ id: row.id, rate: parsed })
+    }
+
+    if (Object.keys(nextErrors).length > 0) {
+      setServiceContractRateErrorById(nextErrors)
+      return
+    }
+
+    if (updates.length === 0) {
+      setServiceContractsModalOpen(false)
+      return
+    }
+
+    setIsSavingServiceContractRates(true)
+    setServiceContractRateErrorById({})
+    try {
+      for (const u of updates) {
+        const res = await updatePatientServiceContractBillRateAction(u.id, u.rate)
+        if (res.error) {
+          setServiceContractRateErrorById((prev) => ({ ...prev, [u.id]: res.error || 'Failed to update rate.' }))
+          setIsSavingServiceContractRates(false)
+          return
+        }
+      }
+
+      const updateById = new Map(updates.map((u) => [u.id, u.rate]))
+      setServiceContracts((prev) =>
+        prev.map((row) => (updateById.has(row.id) ? { ...row, bill_rate: updateById.get(row.id)! } : row))
+      )
+      setServiceContractsModalOpen(false)
+    } finally {
+      setIsSavingServiceContractRates(false)
     }
   }
 
@@ -7464,7 +7526,28 @@ export default function ClientDetailContent({ client, allClients, representative
                           {row.service_type === 'skilled' ? 'Skilled' : 'Non-Skilled'}
                         </span>
                       </td>
-                      <td className="p-2">{row.bill_rate != null ? `${formatMoney(Number(row.bill_rate))}/${row.bill_unit_type}` : '—'}</td>
+                      <td className="p-2">
+                        <div className="min-w-[130px]">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={serviceContractRateDrafts[row.id] ?? ''}
+                              onChange={(e) => {
+                                const nextVal = e.target.value
+                                setServiceContractRateDrafts((prev) => ({ ...prev, [row.id]: nextVal }))
+                                setServiceContractRateErrorById((prev) => ({ ...prev, [row.id]: '' }))
+                              }}
+                              className="w-full rounded border border-gray-300 px-2 py-1 text-sm"
+                            />
+                            <span className="text-xs text-gray-500 shrink-0">/{row.bill_unit_type}</span>
+                          </div>
+                          {serviceContractRateErrorById[row.id] ? (
+                            <p className="mt-1 text-xs text-red-600">{serviceContractRateErrorById[row.id]}</p>
+                          ) : null}
+                        </div>
+                      </td>
                       <td className="p-2">{row.weekly_hours_limit ?? '—'}</td>
                       <td className="p-2">{formatShortDate(row.effective_date)}</td>
                       <td className="p-2">
@@ -7479,7 +7562,15 @@ export default function ClientDetailContent({ client, allClients, representative
             )}
           </div>
           <div className="flex justify-end">
-            <button type="button" onClick={closeManageLimitModal} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">Done</button>
+            <button
+              type="button"
+              onClick={handleDoneServiceContracts}
+              disabled={isSavingServiceContract || isSavingServiceContractRates}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-60"
+            >
+              {isSavingServiceContractRates ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              Done
+            </button>
           </div>
         </div>
       </Modal>
