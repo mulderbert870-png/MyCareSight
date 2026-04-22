@@ -40,7 +40,7 @@ import { createClient } from '@/lib/supabase/client'
 import { getThreeWeekRollingWindowPacific } from '@/lib/pct-week-horizon'
 import { expandSeriesOccurrences } from '@/lib/recurrence-dates'
 import * as q from '@/lib/supabase/query'
-import { updatePatientDocumentsAction } from '@/app/actions/patients'
+import { updatePatientDocumentsAction, upsertPatientCaregiverRequirementsAction } from '@/app/actions/patients'
 import { updatePatientServiceContractBillRateAction } from '@/app/actions/payroll-billing-report'
 import type { PatientRepresentative } from '@/lib/supabase/query/patients-representatives'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
@@ -401,6 +401,7 @@ export default function ClientDetailContent({ client, allClients, representative
     width: number
     label: string
   } | null>(null)
+  const autoMarkingMissedVisitIdsRef = useRef<Set<string>>(new Set())
   const [addVisitModalOpen, setAddVisitModalOpen] = useState(false)
   const [addVisitTab, setAddVisitTab] = useState<'details' | 'adls'>('details')
   const [visitForm, setVisitForm] = useState({
@@ -1174,6 +1175,23 @@ export default function ClientDetailContent({ client, allClients, representative
     setCaregiverReqsDropdownOpen(null)
     setCaregiverReqsError(null)
     setCaregiverReqsModalOpen(true)
+    void (async () => {
+      try {
+        const supabase = createClient()
+        const { data, error } = await q.getCaregiverRequirementsByPatientId(supabase, localClient.id)
+        if (error) return
+        const rawCodes: unknown[] = Array.isArray((data as { skill_codes?: unknown[] } | null)?.skill_codes)
+          ? ((data as { skill_codes?: unknown[] }).skill_codes ?? [])
+          : []
+        const latest = Array.from(new Set(rawCodes.filter((v: unknown): v is string => typeof v === 'string' && v.length > 0))).sort(
+          (a, b) => a.localeCompare(b)
+        )
+        setCaregiverRequirements(latest)
+        setCaregiverReqsSelection(latest)
+      } catch {
+        // Keep current local selection if refresh fails.
+      }
+    })()
   }
 
   const closeCaregiverReqsModal = () => {
@@ -1203,14 +1221,21 @@ export default function ClientDetailContent({ client, allClients, representative
     setIsSavingCaregiverReqs(true)
     setCaregiverReqsError(null)
     try {
-      const supabase = createClient()
-      const { error } = await q.upsertCaregiverRequirements(supabase, localClient.id, caregiverReqsSelection)
-      if (error) throw error
-      setCaregiverRequirements(caregiverReqsSelection)
+      const normalized = Array.from(new Set(caregiverReqsSelection.filter(Boolean))).sort((a, b) => a.localeCompare(b))
+      const { error } = await upsertPatientCaregiverRequirementsAction(localClient.id, normalized)
+      if (error) {
+        setCaregiverReqsError(error)
+        return
+      }
+      setCaregiverRequirements(normalized)
+      setCaregiverReqsSelection(normalized)
       setCaregiverReqsModalOpen(false)
-      router.refresh()
     } catch (err: unknown) {
-      setCaregiverReqsError(err instanceof Error ? err.message : 'Failed to save requirements.')
+      if (typeof err === 'string' && err.trim()) {
+        setCaregiverReqsError(err)
+      } else {
+        setCaregiverReqsError(err instanceof Error ? err.message : 'Failed to save requirements.')
+      }
     } finally {
       setIsSavingCaregiverReqs(false)
     }
@@ -3472,6 +3497,71 @@ export default function ClientDetailContent({ client, allClients, representative
     [weekSchedules]
   )
 
+  /**
+   * UI-level fallback status derivation for schedule grid:
+   * if a visit is still scheduled/unassigned but its local end time has passed,
+   * render it as missed immediately (without waiting for DB cron sync).
+   */
+  const getEffectiveScheduleStatus = (s: ScheduleRow): ReturnType<typeof visitStatusFromScheduleRow> => {
+    const base = visitStatusFromScheduleRow(s)
+    if (base === 'completed' || base === 'missed' || base === 'in_progress') return base
+
+    const date = String(s.date ?? '').trim()
+    const endTimeRaw = String(s.end_time ?? s.start_time ?? '').trim()
+    const time = endTimeRaw.slice(0, 5)
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) return base
+
+    const endAt = new Date(`${date}T${time}:00`)
+    if (Number.isNaN(endAt.getTime())) return base
+
+    const now = new Date(scheduleNowTick)
+    return endAt.getTime() < now.getTime() ? 'missed' : base
+  }
+
+  const scheduleStatusLabel = (status: ReturnType<typeof visitStatusFromScheduleRow>) =>
+    status === 'in_progress' ? 'In progress' : status.charAt(0).toUpperCase() + status.slice(1)
+
+  useEffect(() => {
+    if (activeTab !== 'schedule' || weekSchedules.length === 0) return
+
+    const candidates = weekSchedules.filter((s) => {
+      const effective = getEffectiveScheduleStatus(s)
+      if (effective !== 'missed') return false
+      const raw = String(s.status ?? '').trim().toLowerCase()
+      if (raw === 'missed') return false
+      if (raw === 'in_progress' || raw === 'in progress') return false
+      if (autoMarkingMissedVisitIdsRef.current.has(s.id)) return false
+      return true
+    })
+    if (candidates.length === 0) return
+
+    const candidateIds = new Set(candidates.map((s) => s.id))
+    setWeekSchedules((prev) =>
+      prev.map((s) => (candidateIds.has(s.id) ? { ...s, status: 'missed' } : s))
+    )
+
+    for (const s of candidates) {
+      autoMarkingMissedVisitIdsRef.current.add(s.id)
+    }
+
+    void (async () => {
+      const supabase = createClient()
+      const results = await Promise.allSettled(
+        candidates.map((s) => q.updateSchedule(supabase, s.id, { status: 'missed' }))
+      )
+      results.forEach((res, idx) => {
+        const id = candidates[idx]?.id
+        if (!id) return
+        autoMarkingMissedVisitIdsRef.current.delete(id)
+        if (res.status === 'rejected' || res.value.error) {
+          setWeekSchedules((prev) =>
+            prev.map((s) => (s.id === id && String(s.status ?? '').toLowerCase() === 'missed' ? { ...s, status: candidates[idx]?.status ?? null } : s))
+          )
+        }
+      })
+    })()
+  }, [activeTab, scheduleNowTick, weekSchedules])
+
   const weeklyLimitRows = useMemo(
     () =>
       serviceContracts.filter(
@@ -5121,17 +5211,7 @@ export default function ClientDetailContent({ client, allClients, representative
                                   >
                                     {(() => {
                                       const colors = getScheduleBlockColors(block.type)
-                                      const rawStatus = String(block.status ?? '').trim().toLowerCase()
-                                      const statusLabel =
-                                        rawStatus === 'completed'
-                                          ? 'Completed'
-                                          : rawStatus === 'missed'
-                                            ? 'Missed'
-                                            : rawStatus === 'in_progress' || rawStatus === 'in progress'
-                                              ? 'In progress'
-                                              : rawStatus === 'unassigned'
-                                                ? 'Unassigned'
-                                                : 'Scheduled'
+                                      const effectiveStatus = getEffectiveScheduleStatus(block)
                                       return (
                                         <button
                                           type="button"
@@ -5161,10 +5241,10 @@ export default function ClientDetailContent({ client, allClients, representative
                                           </div>
                                           <span
                                             className={`absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${visitStatusBadgeClass(
-                                              visitStatusFromScheduleRow(block)
+                                              effectiveStatus
                                             )}`}
                                           >
-                                            {statusLabel}
+                                            {scheduleStatusLabel(effectiveStatus)}
                                           </span>
                                         </button>
                                       )

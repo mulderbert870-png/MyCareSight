@@ -1,5 +1,6 @@
 import { requireAdmin } from '@/lib/auth-helpers'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
 import * as q from '@/lib/supabase/query'
 import { getCachedAgenciesIdName } from '@/lib/server-cache/reference-lists'
 import AdminLayout from '@/components/AdminLayout'
@@ -24,19 +25,33 @@ export default async function UsersPage() {
   })
 
   const companyOwnerIds = profilesList.filter(u => u.role === 'company_owner').map(u => u.id)
-  type ClientCompanyRow = { user_id: string; company_name: string | null; agency_id: string | null }
-  const { data: clientCompaniesData } =
+  type ClientCompanyRow = { user_id: string | null; company_owner_id: string | null; company_name: string | null; agency_id: string | null }
+  const supabaseAdmin = createAdminClient()
+  const [clientCompaniesByUserRes, clientCompaniesByOwnerRes] =
     companyOwnerIds.length > 0
-      ? await q.getClientsByCompanyOwnerIds(supabase, companyOwnerIds)
-      : { data: [] }
-  const clientCompanies = (clientCompaniesData ?? []) as unknown as ClientCompanyRow[]
+      ? await Promise.all([
+          supabaseAdmin
+            .from('agency_admins')
+            .select('user_id, company_owner_id, company_name, agency_id')
+            .in('user_id', companyOwnerIds),
+          supabaseAdmin
+            .from('agency_admins')
+            .select('user_id, company_owner_id, company_name, agency_id')
+            .in('company_owner_id', companyOwnerIds),
+        ])
+      : [{ data: [], error: null }, { data: [], error: null }]
+  const clientCompanies = [
+    ...((clientCompaniesByUserRes.data ?? []) as unknown as ClientCompanyRow[]),
+    ...((clientCompaniesByOwnerRes.data ?? []) as unknown as ClientCompanyRow[]),
+  ]
   const companyNameByUserId: Record<string, string> = {}
   clientCompanies.forEach(c => {
-    if (!c.user_id) return
+    const ownerUserId = c.user_id ?? c.company_owner_id
+    if (!ownerUserId) return
     const name = c.agency_id && agencyNameById[c.agency_id]
       ? agencyNameById[c.agency_id]
       : (c.company_name?.trim() ?? null)
-    if (name) companyNameByUserId[c.user_id] = name
+    if (name) companyNameByUserId[ownerUserId] = name
   })
 
   const staffUserIds = profilesList.filter(u => u.role === 'staff_member').map(u => u.id)

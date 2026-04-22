@@ -67,7 +67,7 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
   const { data: visits, error: visitsErr } = await supabase
     .from('scheduled_visits')
     .select(
-      'id, patient_id, caregiver_member_id, visit_date, scheduled_start_time, scheduled_end_time, service_type, billing_state, billing_hours, billing_note'
+      'id, patient_id, caregiver_member_id, visit_date, scheduled_start_time, scheduled_end_time, service_type, billing_state, billing_hours, billing_note, billing_rate, billing_amount'
     )
     .eq('status', 'completed')
     .order('visit_date', { ascending: false })
@@ -81,7 +81,8 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
     new Set(visitList.flatMap((v) => (v.caregiver_member_id ? [v.caregiver_member_id] : [])))
   )
 
-  const [patRes, cgRes, contractsRes, caregiverPayRes, legacyPayRes] = await Promise.all([
+  const visitIds = visitList.map((v) => v.id)
+  const [patRes, cgRes, contractsRes, caregiverPayRes, legacyPayRes, financialsRes] = await Promise.all([
     supabase.from('patients').select('id, full_name').in('id', patientIds),
     caregiverIds.length
       ? supabase.from('caregiver_members').select('id, first_name, last_name').in('id', caregiverIds)
@@ -102,6 +103,12 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
           .select('caregiver_member_id, service_type, rate, unit_type, effective_start, effective_end, status')
           .in('caregiver_member_id', caregiverIds)
       : Promise.resolve({ data: [], error: null } as const),
+    visitIds.length
+      ? supabase
+          .from('visit_financials')
+          .select('scheduled_visit_id, pay_rate, pay_amount, bill_rate, bill_amount')
+          .in('scheduled_visit_id', visitIds)
+      : Promise.resolve({ data: [], error: null } as const),
   ])
 
   if (patRes.error) return { rows: [], error: patRes.error.message }
@@ -109,6 +116,7 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
   if (contractsRes.error) return { rows: [], error: contractsRes.error.message }
   if (caregiverPayRes.error) return { rows: [], error: caregiverPayRes.error.message }
   if (legacyPayRes.error) return { rows: [], error: legacyPayRes.error.message }
+  if (financialsRes.error) return { rows: [], error: financialsRes.error.message }
 
   const patientNameById = new Map((patRes.data ?? []).map((r) => [r.id, r.full_name ?? 'Client']))
   const caregiverNameById = new Map(
@@ -118,6 +126,16 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
   const contracts = contractsRes.data ?? []
   const caregiverPayRows = (caregiverPayRes.data ?? []) as CaregiverPayRateRow[]
   const legacyPayRows = (legacyPayRes.data ?? []) as LegacyPayRateScheduleRow[]
+  type FinancialRow = {
+    scheduled_visit_id: string
+    pay_rate: number | null
+    pay_amount: number | null
+    bill_rate: number | null
+    bill_amount: number | null
+  }
+  const financialByVisitId = new Map(
+    ((financialsRes.data ?? []) as FinancialRow[]).map((r) => [r.scheduled_visit_id, r])
+  )
 
   const pickContract = (patientId: string, serviceType: string, date: string) =>
     contracts
@@ -139,19 +157,32 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
     const bh = sv.billing_hours != null ? Number(sv.billing_hours) : NaN
     const hours = Number.isFinite(bh) ? round2(bh) : scheduleHours
 
+    const status: TimeBillingStatus = billingStatusFromVisit(
+      (sv as { billing_state?: string | null }).billing_state
+    )
+
     const pay =
       caregiverId && date
         ? resolvePayRateForVisit(caregiverId, serviceType, date, caregiverPayRows, legacyPayRows)
         : null
     const contract = sv.patient_id && date ? pickContract(sv.patient_id, serviceType, date) : null
+    const financial = financialByVisitId.get(sv.id)
+    const useFrozenBill = status !== 'pending' && !!financial
+    const frozenBillRateFromVisit = Number((sv as { billing_rate?: number | null }).billing_rate ?? NaN)
+    const frozenBillAmountFromVisit = Number((sv as { billing_amount?: number | null }).billing_amount ?? NaN)
+    const hasFrozenOnVisit = status !== 'pending' && Number.isFinite(frozenBillRateFromVisit)
     const payRate = Number(pay?.rate ?? 0)
-    const billRate = Number(contract?.bill_rate ?? 0)
+    const billRate = hasFrozenOnVisit
+      ? frozenBillRateFromVisit
+      : useFrozenBill
+        ? Number(financial?.bill_rate ?? 0)
+        : Number(contract?.bill_rate ?? 0)
     const payAmount = round2(calcAmount(hours, payRate, pay?.unit_type))
-    const billAmount = round2(calcAmount(hours, billRate, contract?.bill_unit_type))
-
-    const status: TimeBillingStatus = billingStatusFromVisit(
-      (sv as { billing_state?: string | null }).billing_state
-    )
+    const billAmount = hasFrozenOnVisit
+      ? (Number.isFinite(frozenBillAmountFromVisit) ? frozenBillAmountFromVisit : round2(calcAmount(hours, billRate, contract?.bill_unit_type)))
+      : useFrozenBill
+        ? Number(financial?.bill_amount ?? 0)
+        : round2(calcAmount(hours, billRate, contract?.bill_unit_type))
 
     const caregiverLabel = caregiverId
       ? caregiverNameById.get(caregiverId) ?? 'Caregiver'

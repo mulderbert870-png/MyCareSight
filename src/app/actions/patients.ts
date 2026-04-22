@@ -3,7 +3,7 @@
 import { revalidateTag } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
-import { agencyPatientDetailTag } from '@/lib/cache-tags'
+import { agencyPatientDetailTag, CACHE_TAG_AGENCY_CLIENT_DETAIL } from '@/lib/cache-tags'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
 
 /**
@@ -26,5 +26,31 @@ export async function updatePatientDocumentsAction(
     return { error: error?.message ?? 'Update failed' }
   }
   revalidateTag(agencyPatientDetailTag(patientId))
+  revalidateTag(CACHE_TAG_AGENCY_CLIENT_DETAIL)
+  return { error: null }
+}
+
+/** Save required caregiver skills for a patient and invalidate client detail caches. */
+export async function upsertPatientCaregiverRequirementsAction(
+  patientId: string,
+  skillCodes: string[]
+): Promise<{ error: string | null }> {
+  const supabase = await createClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) {
+    return { error: 'You must be logged in to update caregiver requirements' }
+  }
+
+  const normalized = Array.from(new Set((skillCodes ?? []).filter((s): s is string => typeof s === 'string' && s.length > 0))).sort(
+    (a, b) => a.localeCompare(b)
+  )
+
+  const { error } = await q.upsertCaregiverRequirements(supabase, patientId, normalized)
+  if (error) return { error: error.message ?? 'Failed to save caregiver requirements' }
+
+  revalidateTag(agencyPatientDetailTag(patientId))
+  revalidateTag(CACHE_TAG_AGENCY_CLIENT_DETAIL)
   return { error: null }
 }

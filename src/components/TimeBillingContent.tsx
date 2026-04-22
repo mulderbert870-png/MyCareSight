@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useState, useTransition } from 'react'
 import { CalendarDays, ChevronDown, ChevronUp, Pencil, Search, SlidersHorizontal } from 'lucide-react'
 import type { TimeBillingRow, TimeBillingStatus } from '@/lib/time-billing-dashboard'
 import { approveTimeBillingRowAction, voidTimeBillingRowAction } from '@/app/actions/time-billing'
@@ -146,6 +146,28 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
     if (!Number.isFinite(editedHours)) return false
     return rowHours !== editedHours
   }
+
+  useEffect(() => {
+    const byStatus = {
+      pending: rows.filter((r) => r.status === 'pending').length,
+      approved: rows.filter((r) => r.status === 'approved').length,
+      voided: rows.filter((r) => r.status === 'voided').length,
+    }
+    console.groupCollapsed('[TimeBillingContent] rows status/rate debug')
+    console.log('total rows:', rows.length, byStatus)
+    console.table(
+      rows.map((r) => ({
+        id: r.id,
+        scheduledVisitId: r.scheduledVisitId,
+        status: r.status,
+        date: r.date,
+        clientName: r.clientName,
+        billRate: r.billRate,
+        billAmount: r.billAmount,
+      }))
+    )
+    console.groupEnd()
+  }, [rows])
 
   return (
     <div className="space-y-4">

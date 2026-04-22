@@ -164,6 +164,124 @@ export async function updatePatientServiceContractBillRateAction(
 ): Promise<{ ok?: true; error?: string }> {
   if (!Number.isFinite(bill_rate) || bill_rate < 0) return { error: 'Invalid bill rate.' }
   const supabase = await createClient()
+  const {
+    data: contract,
+    error: contractErr,
+  } = await supabase
+    .from('patient_service_contracts')
+    .select('id, agency_id, patient_id, service_type, bill_rate, bill_unit_type, effective_date, end_date')
+    .eq('id', id)
+    .single()
+  if (contractErr || !contract) return { error: contractErr?.message || 'Contract not found.' }
+
+  const visitQuery = supabase
+    .from('scheduled_visits')
+    .select('id, agency_id, patient_id, caregiver_member_id, visit_date, scheduled_start_time, scheduled_end_time, billing_hours, billing_state, billing_rate')
+    .eq('status', 'completed')
+    .eq('patient_id', contract.patient_id)
+    .eq('service_type', contract.service_type)
+    .in('billing_state', ['approved', 'voided'])
+    .gte('visit_date', contract.effective_date)
+  const { data: nonPendingVisits, error: visitsErr } = contract.end_date
+    ? await visitQuery.lte('visit_date', contract.end_date)
+    : await visitQuery
+  if (visitsErr) return { error: visitsErr.message }
+
+  const visitIds = (nonPendingVisits ?? []).map((v) => v.id as string)
+  const withNoFrozen = (nonPendingVisits ?? []).filter((v) => v.billing_rate == null)
+  if (withNoFrozen.length > 0) {
+    const toMinutes = (t: string | null | undefined) => {
+      if (!t) return NaN
+      const [h, m] = String(t).slice(0, 5).split(':').map((x) => parseInt(x, 10))
+      if (!Number.isFinite(h)) return NaN
+      return h * 60 + (Number.isFinite(m) ? m : 0)
+    }
+    for (const v of withNoFrozen) {
+      const a = toMinutes(v.scheduled_start_time as string | null)
+      const b = toMinutes(v.scheduled_end_time as string | null)
+      const scheduleHours = !Number.isFinite(a) || !Number.isFinite(b) || b <= a ? 0 : Math.round((((b - a) / 60) + Number.EPSILON) * 100) / 100
+      const bh = v.billing_hours != null ? Number(v.billing_hours) : NaN
+      const hours = Number.isFinite(bh) ? bh : scheduleHours
+      const unit = String(contract.bill_unit_type ?? 'hour')
+      const rate = Number(contract.bill_rate ?? 0)
+      const amount =
+        unit === 'visit'
+          ? rate
+          : unit === '15_min_unit'
+            ? rate * Math.round(hours * 4)
+            : rate * hours
+      const { error: snapErr } = await supabase
+        .from('scheduled_visits')
+        .update({
+          billing_rate: rate,
+          billing_amount: Math.round((amount + Number.EPSILON) * 100) / 100,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', v.id as string)
+      if (snapErr) return { error: snapErr.message }
+    }
+  }
+
+  if (visitIds.length > 0) {
+    const [{ data: existingFinancialRows, error: finSelErr }, { data: timeEntries, error: timeEntryErr }] = await Promise.all([
+      supabase.from('visit_financials').select('scheduled_visit_id').in('scheduled_visit_id', visitIds),
+      supabase.from('visit_time_entries').select('id, scheduled_visit_id').in('scheduled_visit_id', visitIds),
+    ])
+    if (finSelErr) return { error: finSelErr.message }
+    if (timeEntryErr) return { error: timeEntryErr.message }
+
+    const existing = new Set((existingFinancialRows ?? []).map((r) => r.scheduled_visit_id as string))
+    const timeEntryByVisitId = new Map((timeEntries ?? []).map((r) => [r.scheduled_visit_id as string, r.id as string]))
+    const toInsert = (nonPendingVisits ?? [])
+      .filter((v) => !existing.has(v.id as string))
+      .map((v) => {
+        const teId = timeEntryByVisitId.get(v.id as string)
+        if (!teId) return null
+        const toMinutes = (t: string | null | undefined) => {
+          if (!t) return NaN
+          const [h, m] = String(t).slice(0, 5).split(':').map((x) => parseInt(x, 10))
+          if (!Number.isFinite(h)) return NaN
+          return h * 60 + (Number.isFinite(m) ? m : 0)
+        }
+        const hoursFromSchedule = (() => {
+          const a = toMinutes(v.scheduled_start_time as string | null)
+          const b = toMinutes(v.scheduled_end_time as string | null)
+          if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return 0
+          return Math.round((((b - a) / 60) + Number.EPSILON) * 100) / 100
+        })()
+        const hoursRaw = v.billing_hours != null ? Number(v.billing_hours) : NaN
+        const hours = Number.isFinite(hoursRaw) ? hoursRaw : hoursFromSchedule
+        const unit = String(contract.bill_unit_type ?? 'hour')
+        const rate = Number(contract.bill_rate ?? 0)
+        const billAmount =
+          unit === 'visit'
+            ? rate
+            : unit === '15_min_unit'
+              ? rate * Math.round(hours * 4)
+              : rate * hours
+        return {
+          agency_id: (v.agency_id as string) ?? (contract.agency_id as string),
+          scheduled_visit_id: v.id as string,
+          visit_time_entry_id: teId,
+          patient_id: v.patient_id as string,
+          caregiver_member_id: (v.caregiver_member_id as string) ?? '',
+          contract_id: contract.id as string,
+          pay_rate: 0,
+          pay_amount: 0,
+          bill_rate: rate,
+          bill_amount: Math.round((billAmount + Number.EPSILON) * 100) / 100,
+        }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null && !!x.caregiver_member_id)
+
+    if (toInsert.length > 0) {
+      const { error: insErr } = await supabase
+        .from('visit_financials')
+        .upsert(toInsert, { onConflict: 'scheduled_visit_id' })
+      if (insErr) return { error: insErr.message }
+    }
+  }
+
   const { error } = await supabase
     .from('patient_service_contracts')
     .update({ bill_rate, updated_at: new Date().toISOString() })

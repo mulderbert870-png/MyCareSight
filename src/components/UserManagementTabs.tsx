@@ -91,7 +91,7 @@ export default function UserManagementTabs({
   useEffect(() => {
     setActiveTab(tab as TabType)
   }, [tab])
-  
+
   // Initialize user statuses (all active by default, but preserve existing changes)
   useMemo(() => {
     setUserStatuses(prev => {

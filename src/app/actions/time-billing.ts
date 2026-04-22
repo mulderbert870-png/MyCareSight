@@ -25,7 +25,7 @@ async function applyTimeBillingVisitUpdate(
 
   const { data: sv, error: svErr } = await supabase
     .from('scheduled_visits')
-    .select('id, caregiver_member_id')
+    .select('id, caregiver_member_id, patient_id, visit_date')
     .eq('id', input.scheduledVisitId)
     .single()
 
@@ -33,7 +33,7 @@ async function applyTimeBillingVisitUpdate(
     return { ok: false, error: svErr?.message || 'Visit not found.' }
   }
 
-  const visit = sv as { id: string; caregiver_member_id: string | null }
+  const visit = sv as { id: string; caregiver_member_id: string | null; patient_id: string; visit_date: string }
 
   if (!visit.caregiver_member_id) {
     return {
@@ -43,6 +43,27 @@ async function applyTimeBillingVisitUpdate(
   }
 
   const note = input.note?.trim() ? input.note.trim() : null
+  const visitDate = String(visit.visit_date ?? '')
+
+  const { data: contract } = await supabase
+    .from('patient_service_contracts')
+    .select('bill_rate, bill_unit_type, effective_date, end_date, status')
+    .eq('patient_id', visit.patient_id)
+    .eq('service_type', input.serviceType)
+    .eq('status', 'active')
+    .lte('effective_date', visitDate)
+    .or(`end_date.is.null,end_date.gte.${visitDate}`)
+    .order('effective_date', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const frozenBillRate = Number(contract?.bill_rate ?? 0)
+  const frozenBillAmount = (() => {
+    const unit = String(contract?.bill_unit_type ?? 'hour')
+    if (unit === 'visit') return frozenBillRate
+    if (unit === '15_min_unit') return frozenBillRate * Math.round(hours * 4)
+    return frozenBillRate * hours
+  })()
 
   const { error: billErr } = await supabase
     .from('scheduled_visits')
@@ -51,6 +72,8 @@ async function applyTimeBillingVisitUpdate(
       billing_state: billingState,
       billing_hours: hours,
       billing_note: note,
+      billing_rate: Number.isFinite(frozenBillRate) ? frozenBillRate : 0,
+      billing_amount: Number.isFinite(frozenBillAmount) ? Math.round((frozenBillAmount + Number.EPSILON) * 100) / 100 : 0,
       updated_at: new Date().toISOString(),
     })
     .eq('id', input.scheduledVisitId)
