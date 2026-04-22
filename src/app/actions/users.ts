@@ -566,7 +566,6 @@ export async function createAgencyAdminAccount(
 
 export async function createStaffUserAccount(
   email: string,
-  password: string,
   firstName: string,
   lastName: string,
   agencyName?: string
@@ -586,12 +585,14 @@ export async function createStaffUserAccount(
   }
   const supabaseCookie = await createClient()
 
+  const generatedPassword = randomBytes(12).toString('base64')
+
   // For Supabase Magic Link email template: {{ .Data.agency_name }} and {{ .Data.temporary_password }}
   const userMetadata: Record<string, string> = {
     full_name: `${firstName} ${lastName}`,
     role: 'staff_member',
     agency_name: agencyName ?? 'Your Agency',
-    temporary_password: password,
+    temporary_password: generatedPassword,
   }
 
   try {
@@ -601,7 +602,7 @@ export async function createStaffUserAccount(
     // Create user via Admin API (no session change; never touches cookie client auth)
     const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
       email: normalizedEmail,
-      password,
+      password: generatedPassword,
       email_confirm: true,
       user_metadata: userMetadata,
     })
@@ -717,7 +718,7 @@ export async function createStaffUserAccount(
       data: {
         success: true,
         userId,
-        message: `User account created. Login link sent to ${email}. Password: ${password}`,
+            message: `User account created. Login link sent to ${email}.`,
       },
     }
   } catch (err: any) {

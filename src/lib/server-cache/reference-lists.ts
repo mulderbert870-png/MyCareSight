@@ -1,5 +1,5 @@
-import { unstable_cache, unstable_cacheTag } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { unstable_cache } from 'next/cache'
+import { createAdminClient } from '@/lib/supabase/admin'
 import * as q from '@/lib/supabase/query'
 import {
   CACHE_TAG_AGENCIES_FOR_BILLING,
@@ -21,38 +21,34 @@ type TaskCatalogItem = { id: string; name: string; categoryId: string; categoryN
 
 const getAgenciesIdNameCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_AGENCIES_ID_NAME)
-    const supabase = await createClient()
+    const supabase = createAdminClient()
     return q.getAgenciesIdName(supabase)
   },
   ['ref-agencies-id-name'],
-  { revalidate: 120 }
+  { revalidate: 120, tags: [CACHE_TAG_AGENCIES_ID_NAME] }
 )
 
 const getAgenciesOrderedCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_AGENCIES_ORDERED)
-    const supabase = await createClient()
+    const supabase = createAdminClient()
     return q.getAgenciesOrdered(supabase)
   },
   ['ref-agencies-ordered'],
-  { revalidate: 120 }
+  { revalidate: 120, tags: [CACHE_TAG_AGENCIES_ORDERED] }
 )
 
 const getAgenciesForBillingCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_AGENCIES_FOR_BILLING)
-    const supabase = await createClient()
+    const supabase = createAdminClient()
     return q.getAgenciesForBilling(supabase)
   },
   ['ref-agencies-billing'],
-  { revalidate: 120 }
+  { revalidate: 120, tags: [CACHE_TAG_AGENCIES_FOR_BILLING] }
 )
 
 const getCertificationTypesCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_CERTIFICATION_TYPES)
-    const supabase = await createClient()
+    const supabase = createAdminClient()
     const { data: types, error } = await supabase
       .from('certification_types')
       .select('*')
@@ -61,13 +57,12 @@ const getCertificationTypesCached = unstable_cache(
     return { error: null, data: types }
   },
   ['ref-certification-types'],
-  { revalidate: 300 }
+  { revalidate: 300, tags: [CACHE_TAG_CERTIFICATION_TYPES] }
 )
 
 const getStaffRolesCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_CAREGIVER_ROLES)
-    const supabase = await createClient()
+    const supabase = createAdminClient()
     try {
       const { data: roles, error } = await supabase.from('caregiver_roles').select('*').order('name', { ascending: true })
       if (error) {
@@ -80,14 +75,14 @@ const getStaffRolesCached = unstable_cache(
     }
   },
   ['ref-caregiver-roles'],
-  { revalidate: 300 }
+  { revalidate: 300, tags: [CACHE_TAG_CAREGIVER_ROLES] }
 )
 
 async function fetchTasksByServiceType(serviceType: ServiceType): Promise<{
   error: string | null
   data: TaskCatalogItem[] | null
 }> {
-  const supabase = await createClient()
+  const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('task_catalog')
     .select('id, name, category_id, task_categories!inner(id, name, service_type)')
@@ -117,7 +112,7 @@ async function fetchTaskCategoriesByServiceType(serviceType: ServiceType): Promi
   error: string | null
   data: TaskCategoryItem[] | null
 }> {
-  const supabase = await createClient()
+  const supabase = createAdminClient()
   const { data, error } = await supabase
     .from('task_categories')
     .select('id, name')
@@ -138,38 +133,34 @@ async function fetchTaskCategoriesByServiceType(serviceType: ServiceType): Promi
 
 const getSkilledTasksCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_TASK_CATALOG_SKILLED)
     return fetchTasksByServiceType('skilled')
   },
   ['ref-task-catalog-skilled'],
-  { revalidate: 180 }
+  { revalidate: 180, tags: [CACHE_TAG_TASK_CATALOG_SKILLED] }
 )
 
 const getNonSkilledTasksCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_TASK_CATALOG_NON_SKILLED)
     return fetchTasksByServiceType('non_skilled')
   },
   ['ref-task-catalog-non-skilled'],
-  { revalidate: 180 }
+  { revalidate: 180, tags: [CACHE_TAG_TASK_CATALOG_NON_SKILLED] }
 )
 
 const getSkilledTaskCategoriesCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_TASK_CATEGORIES_SKILLED)
     return fetchTaskCategoriesByServiceType('skilled')
   },
   ['ref-task-categories-skilled'],
-  { revalidate: 180 }
+  { revalidate: 180, tags: [CACHE_TAG_TASK_CATEGORIES_SKILLED] }
 )
 
 const getNonSkilledTaskCategoriesCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_TASK_CATEGORIES_NON_SKILLED)
     return fetchTaskCategoriesByServiceType('non_skilled')
   },
   ['ref-task-categories-non-skilled'],
-  { revalidate: 180 }
+  { revalidate: 180, tags: [CACHE_TAG_TASK_CATEGORIES_NON_SKILLED] }
 )
 
 const CONFIG_LICENSE_TYPES_SELECT =
@@ -177,32 +168,29 @@ const CONFIG_LICENSE_TYPES_SELECT =
 
 const getLicenseTypesActiveConfigCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_LICENSE_TYPES_ACTIVE)
-    const supabase = await createClient()
+    const supabase = createAdminClient()
     return q.getLicenseTypesActive(supabase, CONFIG_LICENSE_TYPES_SELECT)
   },
   ['ref-license-types-active', CONFIG_LICENSE_TYPES_SELECT],
-  { revalidate: 300 }
+  { revalidate: 300, tags: [CACHE_TAG_LICENSE_TYPES_ACTIVE] }
 )
 
 const getLicenseTypesActiveBillingCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_LICENSE_TYPES_ACTIVE)
-    const supabase = await createClient()
+    const supabase = createAdminClient()
     return q.getLicenseTypesActive(supabase)
   },
   ['ref-license-types-active-billing'],
-  { revalidate: 300 }
+  { revalidate: 300, tags: [CACHE_TAG_LICENSE_TYPES_ACTIVE] }
 )
 
 const getCaregiverSkillCatalogCached = unstable_cache(
   async () => {
-    unstable_cacheTag(CACHE_TAG_CAREGIVER_SKILL_CATALOG)
-    const supabase = await createClient()
+    const supabase = createAdminClient()
     return q.getCaregiverSkillCatalogFromTaskRequirements(supabase)
   },
   ['ref-caregiver-skill-catalog'],
-  { revalidate: 180 }
+  { revalidate: 180, tags: [CACHE_TAG_CAREGIVER_SKILL_CATALOG] }
 )
 
 export function getCachedAgenciesIdName() {

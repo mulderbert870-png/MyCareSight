@@ -89,13 +89,9 @@ export default function AddStaffMemberModal({ isOpen, onClose, onSuccess, staffR
         agencyName = agency?.name ?? ''
       }
 
-      // Generate password from last name: Lastname!123 (e.g. "Doe" -> "doe123!")
-      const password = `${data.last_name.toLowerCase().trim()}123!`
-
-      // Create user account with password and send login link (agencyName/temporary_password go to user_metadata for email template)
+      // Create user account and send login link; server generates a random bootstrap password.
       const result = await createStaffUserAccount(
         data.email,
-        password,
         data.first_name,
         data.last_name,
         agencyName || undefined
@@ -157,7 +153,7 @@ export default function AddStaffMemberModal({ isOpen, onClose, onSuccess, staffR
       }
 
       // Show success message
-      setSuccessMessage(`Staff member created successfully! Login link sent to ${data.email}. Password: ${password}`)
+      setSuccessMessage(`Staff member created successfully! Login link sent to ${data.email}.`)
 
       // Reset form and close modal after a short delay
       setTimeout(() => {
