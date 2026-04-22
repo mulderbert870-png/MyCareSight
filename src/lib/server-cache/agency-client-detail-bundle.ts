@@ -1,11 +1,11 @@
-import { unstable_cache, unstable_cacheTag } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { unstable_cache } from 'next/cache'
+import { createAdminClient } from '@/lib/supabase/admin'
 import * as q from '@/lib/supabase/query'
 import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
-import { agencyPatientDetailTag, CACHE_TAG_AGENCY_CLIENT_DETAIL } from '@/lib/cache-tags'
+import { CACHE_TAG_AGENCY_CLIENT_DETAIL } from '@/lib/cache-tags'
 
 async function loadAgencyClientDetailBundleUncached(patientId: string, viewerUserId: string) {
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   const { data: profile } = await q.getUserProfileFull(supabase, viewerUserId)
   if (!profile) return null
@@ -126,11 +126,10 @@ async function loadAgencyClientDetailBundleUncached(patientId: string, viewerUse
 
 const getAgencyClientDetailBundleCached = unstable_cache(
   async (patientId: string, viewerUserId: string) => {
-    unstable_cacheTag(CACHE_TAG_AGENCY_CLIENT_DETAIL, agencyPatientDetailTag(patientId))
     return loadAgencyClientDetailBundleUncached(patientId, viewerUserId)
   },
   ['agency-client-detail-bundle'],
-  { revalidate: 45 }
+  { revalidate: 45, tags: [CACHE_TAG_AGENCY_CLIENT_DETAIL] }
 )
 
 /**

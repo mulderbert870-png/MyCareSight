@@ -49,7 +49,11 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
   const [clients, setClients] = useState(initialClients)
   const [navigatingClientId, setNavigatingClientId] = useState<string | null>(null)
 
-// Sync state with props when data refreshes
+  const handleOpenClientDetails = (clientId: string) => {
+    if (navigatingClientId) return
+    setNavigatingClientId(clientId)
+    router.push(`/pages/agency/clients/${clientId}`)
+  }
 
   // Calculate statistics
   const totalClients = clients.length
@@ -122,7 +126,14 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 relative">
+      {navigatingClientId && (
+        <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-[1px] flex items-center justify-center">
+          <div className="rounded-full border border-blue-100 bg-white p-3 shadow-md text-blue-700">
+            <Loader2 className="w-6 h-6 animate-spin" />
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -223,7 +234,11 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredClients.length > 0 ? (
                 filteredClients.map((client) => (
-                  <tr key={client.id} className="hover:bg-gray-50 cursor-pointer" onClick={() => router.push(`/pages/agency/clients/${client.id}`)}>
+                  <tr
+                    key={client.id}
+                    className={`hover:bg-gray-50 cursor-pointer ${navigatingClientId ? 'opacity-70 pointer-events-none' : ''}`}
+                    onClick={() => handleOpenClientDetails(client.id)}
+                  >
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-semibold text-sm">
@@ -288,10 +303,7 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
                     <td className="px-6 py-4 whitespace-nowrap text-sm" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
-                        onClick={() => {
-                          setNavigatingClientId(client.id)
-                          router.push(`/pages/agency/clients/${client.id}`)
-                        }}
+                        onClick={() => handleOpenClientDetails(client.id)}
                         disabled={navigatingClientId !== null}
                         className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-800 font-medium disabled:opacity-70 disabled:cursor-not-allowed"
                       >

@@ -376,9 +376,10 @@ export default function StaffManagementClient({
                     return (
                       <tr
                         key={staff.id}
-                        className={`border-b border-gray-100 last:border-b-0 hover:bg-gray-50/60 transition-colors ${
+                        className={`cursor-pointer border-b border-gray-100 last:border-b-0 hover:bg-gray-50/60 transition-colors ${
                           isInactiveRow ? 'opacity-90' : ''
                         }`}
+                        onClick={() => handleViewProfile(staff)}
                       >
                         <td className="px-5 py-4 align-middle">
                           <div className="flex items-center gap-3 min-w-0 max-w-[280px]">

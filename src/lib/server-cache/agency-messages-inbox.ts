@@ -1,7 +1,7 @@
-import { unstable_cache, unstable_cacheTag } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
+import { unstable_cache } from 'next/cache'
+import { createAdminClient } from '@/lib/supabase/admin'
 import * as q from '@/lib/supabase/query'
-import { agencyMessagesViewerTag, CACHE_TAG_AGENCY_MESSAGES_INBOX } from '@/lib/cache-tags'
+import { CACHE_TAG_AGENCY_MESSAGES_INBOX } from '@/lib/cache-tags'
 
 export type AgencyConversationRow = {
   id: string
@@ -18,7 +18,7 @@ export type AgencyMessagesInboxPayload =
   | { ok: false; reason: 'no_client' }
 
 async function loadAgencyMessagesInboxUncached(viewerUserId: string): Promise<AgencyMessagesInboxPayload> {
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   const { data: client, error: clientError } = await q.getClientByCompanyOwnerId(supabase, viewerUserId)
   if (clientError || !client) {
@@ -103,11 +103,10 @@ async function loadAgencyMessagesInboxUncached(viewerUserId: string): Promise<Ag
 
 const getAgencyMessagesInboxCached = unstable_cache(
   async (viewerUserId: string) => {
-    unstable_cacheTag(CACHE_TAG_AGENCY_MESSAGES_INBOX, agencyMessagesViewerTag(viewerUserId))
     return loadAgencyMessagesInboxUncached(viewerUserId)
   },
   ['agency-messages-inbox'],
-  { revalidate: 30 }
+  { revalidate: 30, tags: [CACHE_TAG_AGENCY_MESSAGES_INBOX] }
 )
 
 /** Cached inbox payload; scoped by viewer. Short TTL — list also refreshes client-side. */
