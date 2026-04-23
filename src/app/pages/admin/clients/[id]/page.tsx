@@ -55,12 +55,16 @@ export default async function ClientDetailPage({
   const expert = (expertData ?? null) as { first_name?: string; last_name?: string } | null
 
   const conversationIds = conversations?.map((c: { id: string }) => c.id) || []
-  const { data: messages } =
+  const { data: unreadRpcRows } =
     conversationIds.length > 0
-      ? await q.getUnreadMessagesByConversationIds(supabase, conversationIds)
+      ? await q.rpcCountUnreadMessagesForUser(supabase, conversationIds, user.id)
       : { data: [] }
 
-  const unreadCount = messages?.length || 0
+  const unreadCount =
+    (unreadRpcRows ?? []).reduce(
+      (sum: number, row: { unread_count: number }) => sum + Number(row.unread_count),
+      0
+    ) || 0
 
   // Calculate statistics from cases
   const activeLicenses = cases?.filter(c => c.status === 'approved').length || 0

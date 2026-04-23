@@ -78,6 +78,26 @@ interface ApplicationStep {
   created_by_expert_id?: string | null
 }
 
+// Dev Strict Mode can mount effects twice; dedupe in-flight conversation lookups per application.
+const conversationLookupInFlightByApp = new Map<string, Promise<string | null>>()
+
+async function getConversationIdByApplicationDeduped(supabase: ReturnType<typeof createClient>, applicationId: string) {
+  const inFlight = conversationLookupInFlightByApp.get(applicationId)
+  if (inFlight) return inFlight
+
+  const lookupPromise = (async () => {
+    const { data: existingConv } = await q.getConversationByApplicationId(supabase, applicationId)
+    return existingConv?.id ?? null
+  })()
+
+  conversationLookupInFlightByApp.set(applicationId, lookupPromise)
+  try {
+    return await lookupPromise
+  } finally {
+    conversationLookupInFlightByApp.delete(applicationId)
+  }
+}
+
 interface AdminApplicationDetailContentProps {
   application: Application
   documents: Document[]
@@ -458,10 +478,10 @@ export default function AdminApplicationDetailContent({
 
         if (!convId) {
           // Try to find existing conversation for this application
-          const { data: existingConv } = await q.getConversationByApplicationId(supabase, application.id)
+          const existingConvId = await getConversationIdByApplicationDeduped(supabase, application.id)
 
-          if (existingConv) {
-            convId = existingConv.id
+          if (existingConvId) {
+            convId = existingConvId
             setConversationId(convId)
           } else {
             const { data: clientRow, error: clientErr } = await q.getClientByCompanyOwnerId(supabase, application.company_owner_id)
@@ -479,9 +499,9 @@ export default function AdminApplicationDetailContent({
 
             if (convError) {
               if (convError.code === '23505') {
-                const { data: existing } = await q.getConversationByApplicationId(supabase, application.id)
-                if (existing?.id) {
-                  convId = existing.id
+                const existingConvIdAfterConflict = await getConversationIdByApplicationDeduped(supabase, application.id)
+                if (existingConvIdAfterConflict) {
+                  convId = existingConvIdAfterConflict
                   setConversationId(convId)
                 } else {
                   console.error('Error creating conversation:', convError)
@@ -539,8 +559,10 @@ export default function AdminApplicationDetailContent({
         )
         
         if (unreadMessages.length > 0) {
-          for (const msg of unreadMessages) {
-            await q.rpcMarkMessageAsReadByUser(supabase, msg.id, adminUserId)
+          const ids = unreadMessages.map((m) => m.id).filter((id) => typeof id === 'string' && id.length > 0)
+          if (ids.length > 0) {
+            const { error: markReadErr } = await q.rpcMarkMessagesAsReadByUser(supabase, ids, adminUserId)
+            if (markReadErr) console.error('Error marking messages read:', markReadErr)
           }
         }
         }
@@ -553,7 +575,7 @@ export default function AdminApplicationDetailContent({
     }
 
     setupConversation()
-  }, [application.id, adminUserId, supabase, conversationId])
+  }, [application.id, adminUserId, supabase])
 
   // Set up real-time subscription for new messages
   useEffect(() => {

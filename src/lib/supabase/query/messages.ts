@@ -73,6 +73,19 @@ export async function rpcMarkMessageAsReadByUser(
   })
 }
 
+/** Mark many messages read for one user (single RPC; same semantics as {@link rpcMarkMessageAsReadByUser}). */
+export async function rpcMarkMessagesAsReadByUser(
+  supabase: Supabase,
+  messageIds: string[],
+  userId: string
+) {
+  if (messageIds.length === 0) return { data: null, error: null }
+  return supabase.rpc('mark_messages_as_read_by_user', {
+    p_message_ids: messageIds,
+    p_user_id: userId,
+  })
+}
+
 export async function insertMessage(
   supabase: Supabase,
   data: { conversation_id: string; sender_id: string; content: string }
@@ -199,22 +212,6 @@ export async function rpcAdminUnreadMessageCountsByClient(
     p_reader_id: readerUserId,
     p_client_ids: clientIds != null && clientIds.length > 0 ? clientIds : null,
   })
-}
-
-/** Get unread message rows by conversation ids (optional exclude sender for admin unread count). */
-export async function getUnreadMessagesByConversationIds(
-  supabase: Supabase,
-  conversationIds: string[],
-  excludeSenderId?: string
-) {
-  if (conversationIds.length === 0) return { data: [], error: null }
-  let q = supabase
-    .from('messages')
-    .select('conversation_id')
-    .in('conversation_id', conversationIds)
-    .eq('is_read', false)
-  if (excludeSenderId != null) q = q.neq('sender_id', excludeSenderId)
-  return q
 }
 
 /** RPC: per-conversation unread counts for user. */

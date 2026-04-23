@@ -1,10 +1,13 @@
 'use server'
 
-import { revalidateTag } from 'next/cache'
+import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import * as q from '@/lib/supabase/query'
-import { agencyPatientDetailTag, CACHE_TAG_AGENCY_CLIENT_DETAIL } from '@/lib/cache-tags'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
+
+function revalidateAgencyPatientDetailPath(patientId: string) {
+  revalidatePath(`/pages/agency/clients/${patientId}`)
+}
 
 /**
  * Update patient documents (JSONB) from the server. Use after uploading files to storage from the client.
@@ -25,8 +28,7 @@ export async function updatePatientDocumentsAction(
   if (error || !data) {
     return { error: error?.message ?? 'Update failed' }
   }
-  revalidateTag(agencyPatientDetailTag(patientId))
-  revalidateTag(CACHE_TAG_AGENCY_CLIENT_DETAIL)
+  revalidateAgencyPatientDetailPath(patientId)
   return { error: null }
 }
 
@@ -50,7 +52,6 @@ export async function upsertPatientCaregiverRequirementsAction(
   const { error } = await q.upsertCaregiverRequirements(supabase, patientId, normalized)
   if (error) return { error: error.message ?? 'Failed to save caregiver requirements' }
 
-  revalidateTag(agencyPatientDetailTag(patientId))
-  revalidateTag(CACHE_TAG_AGENCY_CLIENT_DETAIL)
+  revalidateAgencyPatientDetailPath(patientId)
   return { error: null }
 }

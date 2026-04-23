@@ -31,10 +31,6 @@ export function caregiverVisitExecutionTag(visitId: string) {
   return `${CACHE_TAG_CAREGIVER_VISIT_EXECUTION}:${visitId}`
 }
 
-export function agencyPatientDetailTag(patientId: string) {
-  return `${CACHE_TAG_AGENCY_CLIENT_DETAIL}:${patientId}`
-}
-
 /** Invalidate all agency message inbox caches for this signed-in user (company owner). */
 export function agencyMessagesViewerTag(viewerUserId: string) {
   return `${CACHE_TAG_AGENCY_MESSAGES_INBOX}:viewer:${viewerUserId}`

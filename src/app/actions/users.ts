@@ -545,6 +545,7 @@ export async function createAgencyAdminAccount(
     })
     if (adminError) {
       console.error('Failed to create agency_admins row for agency admin:', adminError)
+      await rollbackProvisionalUserAccount(supabaseAdmin, userId)
       return {
         error: `User created but failed to create agency record: ${adminError.message}`,
         data: null,

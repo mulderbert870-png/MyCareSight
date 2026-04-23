@@ -2,7 +2,6 @@ import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import * as q from '@/lib/supabase/query'
 import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
-import { CACHE_TAG_AGENCY_CLIENT_DETAIL } from '@/lib/cache-tags'
 
 async function loadAgencyClientDetailBundleUncached(patientId: string, viewerUserId: string) {
   const supabase = createAdminClient()
@@ -129,12 +128,13 @@ const getAgencyClientDetailBundleCached = unstable_cache(
     return loadAgencyClientDetailBundleUncached(patientId, viewerUserId)
   },
   ['agency-client-detail-bundle'],
-  { revalidate: 45, tags: [CACHE_TAG_AGENCY_CLIENT_DETAIL] }
+  { revalidate: 45 }
 )
 
 /**
  * Cached patient detail payload for agency client page. Scoped by `viewerUserId` + `patientId`.
- * Invalidate with `revalidateTag(agencyPatientDetailTag(patientId))` after writes.
+ * Invalidation is path-targeted via `revalidatePath('/pages/agency/clients/[id]')` in patient write actions,
+ * so only the changed patient page is refreshed immediately. TTL (45s) limits any residual staleness.
  */
 export function getCachedAgencyClientDetailBundle(patientId: string, viewerUserId: string) {
   return getAgencyClientDetailBundleCached(patientId, viewerUserId)

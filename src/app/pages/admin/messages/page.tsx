@@ -36,14 +36,14 @@ export default async function MessagesPage() {
   })
 
   const conversationIds = convList.map(c => c.id)
-  const { data: unreadCounts } =
+  const { data: unreadRpcRows } =
     conversationIds.length > 0
-      ? await q.getUnreadMessagesByConversationIds(supabase, conversationIds, user.id)
+      ? await q.rpcCountUnreadMessagesForUser(supabase, conversationIds, user.id)
       : { data: [] }
 
   const unreadCountsByConv: Record<string, number> = {}
-  unreadCounts?.forEach(msg => {
-    unreadCountsByConv[msg.conversation_id] = (unreadCountsByConv[msg.conversation_id] || 0) + 1
+  unreadRpcRows?.forEach((row: { conversation_id: string; unread_count: number }) => {
+    unreadCountsByConv[row.conversation_id] = Number(row.unread_count)
   })
 
   // Prepare conversations with related data

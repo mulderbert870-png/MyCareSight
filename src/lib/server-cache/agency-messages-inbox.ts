@@ -32,15 +32,14 @@ async function loadAgencyMessagesInboxUncached(viewerUserId: string): Promise<Ag
   const adminUserId = adminProfile?.id ?? null
 
   const conversationIds = conversations.map((c) => c.id)
-  const { data: unreadCountsData } =
+  const { data: unreadRpcRows } =
     conversationIds.length > 0
-      ? await q.getUnreadMessagesByConversationIds(supabase, conversationIds, viewerUserId)
+      ? await q.rpcCountUnreadMessagesForUser(supabase, conversationIds, viewerUserId)
       : { data: [] }
-  const unreadCounts = unreadCountsData ?? []
 
   const unreadCountsByConv: Record<string, number> = {}
-  unreadCounts.forEach((msg: { conversation_id: string }) => {
-    unreadCountsByConv[msg.conversation_id] = (unreadCountsByConv[msg.conversation_id] || 0) + 1
+  ;(unreadRpcRows ?? []).forEach((row: { conversation_id: string; unread_count: number }) => {
+    unreadCountsByConv[row.conversation_id] = Number(row.unread_count)
   })
 
   const conversationsWithData: AgencyConversationRow[] = []

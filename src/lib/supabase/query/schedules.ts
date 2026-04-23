@@ -297,21 +297,6 @@ export async function getAllScheduledVisitsAsScheduleRows(
   return { data: mapped, error: null }
 }
 
-/** Visits for one agency (agency dashboards / caregiver scope), newest date first. */
-export async function getScheduledVisitsAsScheduleRowsForAgency(supabase: Supabase, agencyId: string) {
-  const { data, error } = await supabase
-    .from('scheduled_visits')
-    .select(visitSelectWithTasks)
-    .eq('agency_id', agencyId)
-    .order('visit_date', { ascending: false })
-    .order('scheduled_start_time', { ascending: true })
-
-  if (error) return { data: null, error }
-  const rows = (data ?? []) as unknown as ScheduledVisitDbRowWithTasks[]
-  const mapped = mapVisitsToScheduleRows(rows)
-  return { data: mapped, error: null }
-}
-
 /** Visits for one agency in an inclusive date range (for overlap checks in scheduling UI). */
 export async function getScheduledVisitsAsScheduleRowsForAgencyAndDateRange(
   supabase: Supabase,

@@ -204,8 +204,10 @@ function ExpertMessagesContent() {
         )
         
         if (unreadMessages.length > 0) {
-          for (const msg of unreadMessages) {
-            await q.rpcMarkMessageAsReadByUser(supabase, msg.id, currentUser.id)
+          const ids = unreadMessages.map((m) => m.id).filter((id) => typeof id === 'string' && id.length > 0)
+          if (ids.length > 0) {
+            const { error: markReadErr } = await q.rpcMarkMessagesAsReadByUser(supabase, ids, currentUser.id)
+            if (markReadErr) console.error('Error marking messages read:', markReadErr)
           }
         }
 
@@ -394,9 +396,6 @@ function ExpertMessagesContent() {
       // Update conversation list if needed
       if (conversationId && !selectedConversation) {
         setSelectedConversation(conversationId)
-        await loadMessages(conversationId)
-      } else if (conversationId) {
-        // Just reload messages to get the actual message with ID
         await loadMessages(conversationId)
       }
     } catch (error) {
