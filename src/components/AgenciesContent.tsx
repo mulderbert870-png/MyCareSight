@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react'
 import { Plus, Pencil } from 'lucide-react'
 import AddAgencyModal, { type AgencyAdminOption } from './AddAgencyModal'
+import { normalizeAgencyAdminIds } from '@/lib/agency-admin-ids'
 
 interface Agency {
   id: string
@@ -62,13 +63,17 @@ export default function AgenciesContent({
 
   const getAdminsDisplay = (agencyAdminIds: string[]) => {
     if (!agencyAdminIds?.length) return '—'
-    const names = agencyAdminIds
-      .map((id) => {
-        const admin = agencyAdmins.find((a) => a.id === id)
-        return admin ? `${admin.contact_name}` : null
+    const labels = agencyAdminIds
+      .map((rawId) => {
+        const id = String(rawId)
+        const admin = agencyAdmins.find((a) => String(a.id) === id)
+        if (!admin) return null
+        const name = admin.contact_name?.trim()
+        const email = admin.contact_email?.trim()
+        return name || email || 'Agency admin'
       })
-      .filter(Boolean)
-    return names.length ? names.join(', ') : '—'
+      .filter(Boolean) as string[]
+    return labels.length ? labels.join(', ') : '—'
   }
 
   const formatDate = (dateStr: string) => {
@@ -130,7 +135,7 @@ export default function AgenciesContent({
                       {agency.name}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">
-                      {getAdminsDisplay(agency.agency_admin_ids || [])}
+                      {getAdminsDisplay(normalizeAgencyAdminIds(agency.agency_admin_ids))}
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">
                       {formatDate(agency.created_at)}

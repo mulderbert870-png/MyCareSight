@@ -2,10 +2,17 @@
 -- When inserting a new effective_date inside existing history, it will:
 -- 1) close the previous overlapping row at the new effective_date
 -- 2) set the new row end_date to the next future effective_date (unless earlier explicit end_date)
+--
+-- Required parameters must precede any with DEFAULT (PostgreSQL 42P13 otherwise).
+
+DROP FUNCTION IF EXISTS public.append_patient_service_contract(
+  uuid, uuid, text, text, text, uuid, numeric, text, numeric, date, date, text
+);
 
 CREATE OR REPLACE FUNCTION public.append_patient_service_contract(
   p_agency_id uuid,
   p_patient_id uuid,
+  p_effective_date date,
   p_contract_name text DEFAULT NULL,
   p_contract_type text DEFAULT 'billing',
   p_service_type text DEFAULT 'non_skilled',
@@ -13,7 +20,6 @@ CREATE OR REPLACE FUNCTION public.append_patient_service_contract(
   p_bill_rate numeric DEFAULT NULL,
   p_bill_unit_type text DEFAULT 'hour',
   p_weekly_hours_limit numeric DEFAULT NULL,
-  p_effective_date date,
   p_end_date date DEFAULT NULL,
   p_note text DEFAULT NULL
 ) RETURNS uuid
@@ -101,9 +107,9 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.append_patient_service_contract(
-  uuid, uuid, text, text, text, uuid, numeric, text, numeric, date, date, text
+  uuid, uuid, date, text, text, text, uuid, numeric, text, numeric, date, text
 ) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.append_patient_service_contract(
-  uuid, uuid, text, text, text, uuid, numeric, text, numeric, date, date, text
+  uuid, uuid, date, text, text, text, uuid, numeric, text, numeric, date, text
 ) TO authenticated;
 

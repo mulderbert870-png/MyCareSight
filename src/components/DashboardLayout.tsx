@@ -18,8 +18,8 @@ import {
   DollarSign
 } from 'lucide-react'
 import { signOut } from '@/app/actions/auth'
-import LoadingSpinner from './LoadingSpinner'
 import UserDropdown from './UserDropdown'
+import LinkNavigationOverlay from './LinkNavigationOverlay'
 import NotificationDropdown from './NotificationDropdown'
 import { createClient } from '@/lib/supabase/client'
 import { getCareVisitsPendingBadgeCountAction } from '@/app/actions/care-visits-badge'
@@ -59,19 +59,9 @@ export default function DashboardLayout({
   const pathname = usePathname()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const [currentPath, setCurrentPath] = useState(pathname)
   const [resolvedCareVisitsPendingCount, setResolvedCareVisitsPendingCount] = useState(careVisitsPendingCount ?? 0)
   const [resolvedTimeBillingPendingCount, setResolvedTimeBillingPendingCount] = useState(timeBillingPendingCount ?? 0)
   const isApplicationDetailPage = pathname?.startsWith('/pages/agency/applications/') && pathname !== '/pages/agency/applications'
-
-  // Track pathname changes to show/hide loading
-  useEffect(() => {
-    if (pathname !== currentPath) {
-      setCurrentPath(pathname)
-      setIsLoading(false)
-    }
-  }, [pathname, currentPath])
 
   useEffect(() => {
     if (typeof careVisitsPendingCount === 'number') {
@@ -120,13 +110,6 @@ export default function DashboardLayout({
     }
   }, [timeBillingPendingCount, profile?.role, pathname])
 
-  // Handle link clicks to show loading
-  const handleLinkClick = (href: string) => {
-    if (href !== pathname) {
-      setIsLoading(true)
-    }
-  }
-
   const menuItems = profile?.role === 'care_coordinator'
     ? [
         { href: '/pages/agency/clients', label: 'Clients', icon: UserCircle },
@@ -162,7 +145,6 @@ export default function DashboardLayout({
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {isLoading && <LoadingSpinner />}
       {/* Top Header - Fixed */}
       <header className="fixed top-0 left-0 right-0 z-50 bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg">
         <div className="flex items-center justify-between px-4 sm:px-6 py-4">
@@ -249,13 +231,13 @@ export default function DashboardLayout({
                     <Link
                       key={item.href}
                       href={item.href}
-                      onClick={() => handleLinkClick(item.href)}
                       className={`flex items-center gap-3 px-3 py-3 rounded-lg transition-all ${
                         isActive
                           ? 'bg-blue-50 text-blue-700 font-semibold'
                           : 'text-gray-700 hover:bg-gray-100'
                       }`}
                     >
+                      <LinkNavigationOverlay />
                       <div className="relative flex-shrink-0">
                         <Icon className="w-5 h-5" />
                         {sidebarCollapsed && item.href === '/pages/agency/care-visits' && resolvedCareVisitsPendingCount > 0 ? (

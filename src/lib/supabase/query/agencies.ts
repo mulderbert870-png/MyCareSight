@@ -132,6 +132,13 @@ export async function getClientsWithCompanyOwner(supabase: Supabase) {
     .order('contact_name', { ascending: true })
 }
 
+/** Rows by primary key — includes admins without user_id (still listed on agencies). */
+export async function getAgencyAdminsByIds(supabase: Supabase, ids: string[]) {
+  const uniq = [...new Set(ids.map((id) => String(id).trim()).filter(Boolean))]
+  if (uniq.length === 0) return { data: [] as { id: string; contact_name: string | null; contact_email: string | null }[], error: null }
+  return supabase.from('agency_admins').select('id, contact_name, contact_email').in('id', uniq)
+}
+
 export async function getAllClientsOrdered(supabase: Supabase) {
   return supabase.from('agency_admins').select('*').order('created_at', { ascending: false })
 }

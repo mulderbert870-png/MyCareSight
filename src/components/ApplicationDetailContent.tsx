@@ -2062,10 +2062,10 @@ export default function ApplicationDetailContent({
                   <Download className="w-5 h-5" />
                   Download All Documents
                 </button>
-                <button className="flex-1 px-6 py-4 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium flex items-center justify-center gap-2">
+                {/* <button className="flex-1 px-6 py-4 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-medium flex items-center justify-center gap-2">
                   <FileText className="w-5 h-5" />
                   Generate Submission Packet
-                </button>
+                </button> */}
               </div>
             </div>
           )}

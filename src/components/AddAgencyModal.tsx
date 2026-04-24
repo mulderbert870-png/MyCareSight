@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { X, Plus, ChevronDown, ChevronUp } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { createAgency, updateAgency, type AgencyFormData } from '@/app/actions/agencies'
+import { normalizeAgencyAdminIds } from '@/lib/agency-admin-ids'
 
 export interface AgencyAdminOption {
   id: string
@@ -82,7 +83,9 @@ export default function AddAgencyModal({
       if (editAgency) {
         setForm({
           companyName: editAgency.name ?? '',
-          agencyAdminIds: editAgency.agency_admin_ids ?? [],
+          agencyAdminIds: normalizeAgencyAdminIds(
+            editAgency.agency_admin_ids as string[] | string | null | undefined
+          ),
           businessType: editAgency.business_type ?? '',
           taxId: editAgency.tax_id ?? '',
           primaryLicenseNumber: editAgency.primary_license_number ?? '',
@@ -143,7 +146,9 @@ export default function AddAgencyModal({
         const result = await updateAgency(
           editAgency.id,
           data,
-          editAgency.agency_admin_ids ?? []
+          normalizeAgencyAdminIds(
+            editAgency.agency_admin_ids as string[] | string | null | undefined
+          )
         )
         if (result.error) {
           setError(result.error)
