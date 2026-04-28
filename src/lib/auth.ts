@@ -1,27 +1,46 @@
 import { createClient } from '@/lib/supabase/server'
 import { UserRole } from '@/types/auth'
 
+function isDynamicServerUsageError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'digest' in error &&
+    (error as { digest?: string }).digest === 'DYNAMIC_SERVER_USAGE'
+  )
+}
+
 export async function getSession() {
-  const supabase = await createClient()
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser()
+  try {
+    const supabase = await createClient()
+    const {
+      data: { user },
+      error,
+    } = await supabase.auth.getUser()
 
-  if (error || !user) {
+    if (error || !user) {
+      return null
+    }
+
+    // Get user profile with role
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single()
+
+    return {
+      user,
+      profile,
+    }
+  } catch (error) {
+    // Let Next.js handle dynamic-render bailouts for routes using cookies/headers.
+    if (isDynamicServerUsageError(error)) {
+      throw error
+    }
+
+    console.error('getSession failed:', error)
     return null
-  }
-
-  // Get user profile with role
-  const { data: profile } = await supabase
-    .from('user_profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
-
-  return {
-    user,
-    profile,
   }
 }
 

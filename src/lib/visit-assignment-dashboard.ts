@@ -430,8 +430,9 @@ export async function fetchVisitAssignmentDashboardData(supabase: Supabase): Pro
       if (d != null && Number.isFinite(d)) distanceMiles = d
     }
 
-    const proximity = proximityPercentFromMiles(distanceMiles)
-    if (proximity === null) continue
+    // Do not drop requests when proximity is null (distance >20 mi, or unknown/infinite when
+    // ZIPs are missing). Coordinators must still see every pending row; use 0% proximity for sort.
+    const proximity = proximityPercentFromMiles(distanceMiles) ?? 0
 
     const caregiverSkills = Array.isArray(staff.skills) ? staff.skills : []
     const required = requirementsByPatient.get(patient.id) ?? []

@@ -130,6 +130,13 @@ function parseFullName(fullName: string): { first_name: string; last_name: strin
   }
 }
 
+function buildMagicLinkRedirectUrl(siteUrl: string | undefined) {
+  const baseUrl = siteUrl?.trim() ? siteUrl : 'http://localhost:3000'
+  const redirectUrl = new URL('/auth/callback', baseUrl)
+  redirectUrl.searchParams.set('type', 'magiclink')
+  return redirectUrl.toString()
+}
+
 /** Ensure the role-specific table has a row for this user (idempotent). Used when user already exists. */
 async function ensureRoleTableRow(
   supabaseAdmin: ReturnType<typeof createAdminClient>,
@@ -241,7 +248,7 @@ export async function createUserAccount(
         }
         const { error: magicLinkError } = await supabaseCookie.auth.signInWithOtp({
           email: normalizedEmail,
-          options: { emailRedirectTo: `${siteUrl}/auth/callback?type=magiclink` },
+          options: { emailRedirectTo: buildMagicLinkRedirectUrl(siteUrl) },
         })
         if (magicLinkError) {
           return { error: `User already exists. Failed to send login link: ${magicLinkError.message}`, data: null }
@@ -399,7 +406,7 @@ export async function createUserAccount(
 
     const { error: magicLinkError } = await supabaseCookie.auth.signInWithOtp({
       email: normalizedEmail,
-      options: { emailRedirectTo: `${siteUrl}/auth/callback?type=magiclink` },
+      options: { emailRedirectTo: buildMagicLinkRedirectUrl(siteUrl) },
     })
     if (magicLinkError) console.warn('Failed to send magic link:', magicLinkError.message)
 

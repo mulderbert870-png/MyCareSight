@@ -2,6 +2,24 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function updateSession(request: NextRequest) {
+  const incomingCode = request.nextUrl.searchParams.get('code')
+  const incomingAccessToken = request.nextUrl.searchParams.get('access_token')
+  const incomingRefreshToken = request.nextUrl.searchParams.get('refresh_token')
+  const incomingType = request.nextUrl.searchParams.get('type')
+
+  // Some auth links arrive at "/?code=..." (root) instead of "/auth/callback".
+  // Normalize early in middleware so callback logic always runs.
+  if (
+    request.nextUrl.pathname === '/' &&
+    (incomingCode || incomingAccessToken || incomingRefreshToken)
+  ) {
+    const callbackUrl = request.nextUrl.clone()
+    callbackUrl.pathname = '/auth/callback'
+    // Preserve all original query params (including custom magic-link params)
+    // so callback can prefill exact credentials.
+    return NextResponse.redirect(callbackUrl)
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   })

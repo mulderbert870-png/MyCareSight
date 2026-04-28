@@ -19,29 +19,64 @@ export default async function AdminDashboardPage() {
   const supabase = await createClient()
 
   const { count: unreadNotifications } = await q.getUnreadNotificationsCount(supabase, user.id)
-  const { data: cases } = await q.getCases(supabase)
+  const { data: applicationsData } = await q.getApplicationsByStatuses(supabase, [
+    'requested',
+    'in_progress',
+    'under_review',
+    'needs_revision',
+    'approved',
+    'rejected',
+    'closed',
+  ])
+
+  const applications = applicationsData || []
+  const ownerIds = Array.from(new Set(applications.map((a) => a.company_owner_id).filter(Boolean) as string[]))
+  type OwnerProfileRow = { id: string; full_name: string | null; email: string | null }
+  const { data: ownerProfilesData } =
+    ownerIds.length > 0
+      ? await q.getUserProfilesByIds(supabase, ownerIds, 'id, full_name, email')
+      : { data: [] }
+  const ownerProfiles = (ownerProfilesData ?? []) as unknown as OwnerProfileRow[]
+  const ownerById = new Map(ownerProfiles.map((p) => [p.id, p]))
 
   // Calculate statistics
-  const totalCases = cases?.length || 0
-  const inProgress = cases?.filter(c => c.status === 'in_progress').length || 0
-  const inReview = cases?.filter(c => c.status === 'under_review').length || 0
-  const completed = cases?.filter(c => c.status === 'approved').length || 0
-  const avgProgress = cases && cases.length > 0
-    ? Math.round(cases.reduce((acc, c) => acc + (c.progress_percentage || 0), 0) / cases.length)
+  const totalCases = applications.length
+  const inProgress = applications.filter(c => c.status === 'in_progress').length
+  const inReview = applications.filter(c => c.status === 'under_review').length
+  const completed = applications.filter(c => c.status === 'approved').length
+  const avgProgress = applications.length > 0
+    ? Math.round(applications.reduce((acc, c) => acc + (c.progress_percentage || 0), 0) / applications.length)
     : 0
 
   // Cases by status for pie chart
   const statusCounts = {
-    in_progress: cases?.filter(c => c.status === 'in_progress').length || 0,
-    under_review: cases?.filter(c => c.status === 'under_review').length || 0,
-    approved: cases?.filter(c => c.status === 'approved').length || 0,
-    rejected: cases?.filter(c => c.status === 'rejected').length || 0,
+    in_progress: applications.filter(c => c.status === 'in_progress').length,
+    under_review: applications.filter(c => c.status === 'under_review').length,
+    approved: applications.filter(c => c.status === 'approved').length,
+    rejected: applications.filter(c => c.status === 'rejected').length,
   }
 
   // Cases by state for bar chart
   const stateCounts: Record<string, number> = {}
-  cases?.forEach(caseItem => {
+  applications.forEach(caseItem => {
     stateCounts[caseItem.state] = (stateCounts[caseItem.state] || 0) + 1
+  })
+
+  const dashboardCases = applications.map((app) => {
+    const owner = ownerById.get(app.company_owner_id)
+    const ownerName = owner?.full_name?.trim() || owner?.email || 'Unknown Owner'
+    return {
+      id: app.id,
+      case_id: app.id.slice(0, 8).toUpperCase(),
+      business_name: app.application_name || 'Untitled Application',
+      owner_name: ownerName,
+      state: app.state,
+      status: app.status,
+      progress_percentage: app.progress_percentage || 0,
+      documents_count: 0,
+      steps_count: 0,
+      last_activity: app.last_updated_date || app.updated_at || app.created_at || null,
+    }
   })
 
   return (
@@ -129,7 +164,7 @@ export default async function AdminDashboardPage() {
         </div>
 
         {/* Case Management Table */}
-        <CasesTableWithFilters cases={cases || []} />
+        <CasesTableWithFilters cases={dashboardCases} />
       </div>
     </AdminLayout>
   )

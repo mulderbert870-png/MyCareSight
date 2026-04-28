@@ -45,17 +45,7 @@ function LoginPageContent() {
   useEffect(() => {
     const message = searchParams.get('message')
     const errorParam = searchParams.get('error')
-    const emailParam = searchParams.get('email')
     const passwordChanged = searchParams.get('passwordChanged')
-    
-    // Pre-fill email if provided
-    if (emailParam) {
-      setValue('email', emailParam)
-      // Clear email from URL after setting
-      const url = new URL(window.location.href)
-      url.searchParams.delete('email')
-      window.history.replaceState({}, '', url)
-    }
     
     // Handle password change - pre-fill email and new password from sessionStorage and show success message
     if (passwordChanged === 'true') {
@@ -83,14 +73,9 @@ function LoginPageContent() {
       window.history.replaceState({}, '', url)
     }
     
-    // Pre-fill password from sessionStorage if available (from signup)
-    if (typeof window !== 'undefined' && !passwordChanged) {
-      const signupPassword = sessionStorage.getItem('signup_password')
-      if (signupPassword) {
-        setValue('password', signupPassword)
-        // Clear password from sessionStorage after use
-        sessionStorage.removeItem('signup_password')
-      }
+    // For security/UX consistency, login page should always open with empty credentials.
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('signup_password')
     }
     
     if (message) {
@@ -112,6 +97,7 @@ function LoginPageContent() {
       url.searchParams.delete('error')
       window.history.replaceState({}, '', url)
     }
+
   }, [searchParams, setValue])
 
   const rememberMe = watch('rememberMe')
@@ -270,7 +256,7 @@ function LoginPageContent() {
               </div> */}
 
               {/* Login Form */}
-              <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
+              <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" autoComplete="on">
                 {successMessage && (
                   <div className="bg-green-500/20 border border-green-500/50 text-green-100 px-4 py-3 rounded-xl text-sm backdrop-blur-sm">
                     {successMessage}
@@ -295,6 +281,8 @@ function LoginPageContent() {
                       id="email"
                       type="email"
                       {...register('email')}
+                      name="email"
+                      autoComplete="email"
                       placeholder="you@example.com"
                       className="block w-full pl-12 pr-4 py-3.5 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/50 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none transition-all"
                       suppressHydrationWarning
@@ -318,6 +306,8 @@ function LoginPageContent() {
                       id="password"
                       type="password"
                       {...register('password')}
+                      name="password"
+                      autoComplete="current-password"
                       placeholder="••••••••"
                       className="block w-full pl-12 pr-4 py-3.5 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/50 focus:ring-2 focus:ring-blue-400 focus:border-blue-400 outline-none transition-all"
                       suppressHydrationWarning

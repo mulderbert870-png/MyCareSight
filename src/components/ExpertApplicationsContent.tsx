@@ -92,10 +92,13 @@ export default function ExpertApplicationsContent({
     )
   })
 
+  const requestedApps = filteredApplications.filter(app => app.status === 'requested')
+  const inProgressApps = filteredApplications.filter(app => app.status === 'in_progress')
   const underReviewApps = filteredApplications.filter(app => app.status === 'under_review')
   const needsRevisionApps = filteredApplications.filter(app => app.status === 'needs_revision')
   const approvedApps = filteredApplications.filter(app => app.status === 'approved')
   const rejectedApps = filteredApplications.filter(app => app.status === 'rejected')
+  const closedApps = filteredApplications.filter(app => app.status === 'closed')
 
   const handleReviewClick = (application: Application, action: 'approve' | 'deny') => {
     setSelectedApplication(application)
@@ -253,7 +256,29 @@ export default function ExpertApplicationsContent({
       </div>
 
       {/* Statistics */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-6 gap-4">
+        <div className="bg-white rounded-xl p-4 border border-gray-200">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <FileText className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-gray-900">{requestedApps.length}</div>
+              <div className="text-sm text-gray-600">Requested</div>
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl p-4 border border-gray-200">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <Clock className="w-5 h-5 text-blue-600" />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-gray-900">{inProgressApps.length}</div>
+              <div className="text-sm text-gray-600">In Progress</div>
+            </div>
+          </div>
+        </div>
         <div className="bg-white rounded-xl p-4 border border-gray-200">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
@@ -320,6 +345,24 @@ export default function ExpertApplicationsContent({
             </div>
           )}
 
+          {requestedApps.length > 0 && (
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Requested ({requestedApps.length})</h2>
+              <div className="space-y-4">
+                {requestedApps.map(renderApplicationCard)}
+              </div>
+            </div>
+          )}
+
+          {inProgressApps.length > 0 && (
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">In Progress ({inProgressApps.length})</h2>
+              <div className="space-y-4">
+                {inProgressApps.map(renderApplicationCard)}
+              </div>
+            </div>
+          )}
+
           {needsRevisionApps.length > 0 && (
             <div>
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Needs Revision ({needsRevisionApps.length})</h2>
@@ -343,6 +386,15 @@ export default function ExpertApplicationsContent({
               <h2 className="text-lg font-semibold text-gray-900 mb-4">Rejected ({rejectedApps.length})</h2>
               <div className="space-y-4">
                 {rejectedApps.map(renderApplicationCard)}
+              </div>
+            </div>
+          )}
+
+          {closedApps.length > 0 && (
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Closed ({closedApps.length})</h2>
+              <div className="space-y-4">
+                {closedApps.map(renderApplicationCard)}
               </div>
             </div>
           )}

@@ -13,7 +13,7 @@ export default async function ExpertApplicationsPage() {
   const supabase = await createClient()
   const { data: assignedApplicationsData } = await q.getApplicationsByAssignedExpertId(supabase, session.user.id)
   const filtered = (assignedApplicationsData ?? []).filter(app =>
-    ['under_review', 'needs_revision', 'approved', 'rejected'].includes(app.status ?? '')
+    ['requested', 'in_progress', 'under_review', 'needs_revision', 'approved', 'rejected', 'closed'].includes(app.status ?? '')
   )
 
   const ownerIds = Array.from(new Set(filtered.map(app => app.company_owner_id).filter(Boolean) as string[]))

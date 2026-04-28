@@ -84,9 +84,11 @@ export default function CaregiverVisitExecutionContent({ initial }: Props) {
 
   useEffect(() => {
     setTasks(initial.tasks)
-    setClockInAt(initial.clockInAt)
-    setClockOutAt(initial.clockOutAt)
-    setStatusLabel(initial.statusLabel)
+    // Preserve active local clock-in state if server refresh returns a stale payload.
+    setClockInAt((prev) => (prev && !clockOutAt && !initial.clockInAt ? prev : initial.clockInAt))
+    setClockOutAt((prev) => (prev && !initial.clockOutAt ? prev : initial.clockOutAt))
+    setStatusLabel((prev) => (prev === 'In Progress' && initial.statusLabel !== 'Completed' ? prev : initial.statusLabel))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial])
 
   useEffect(() => {
@@ -173,7 +175,8 @@ export default function CaregiverVisitExecutionContent({ initial }: Props) {
         } catch {
           /* ignore */
         }
-        router.refresh()
+        // Do not refresh immediately here; local clock/timer is source of truth while visit is active.
+        // A refresh can momentarily hydrate stale cached data and interrupt the live timer UX.
         return
       }
 

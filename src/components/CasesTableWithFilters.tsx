@@ -78,12 +78,12 @@ export default function CasesTableWithFilters({ cases }: CasesTableWithFiltersPr
   }, [cases, searchQuery, selectedStatus, selectedState])
 
   const handleRowClick = (caseId: string) => {
-    router.push(`/pages/admin/cases/${caseId}`)
+    router.push(`/pages/admin/licenses/applications/${caseId}`)
   }
 
   const handleViewClick = (e: React.MouseEvent, caseId: string) => {
     e.stopPropagation()
-    router.push(`/pages/admin/cases/${caseId}`)
+    router.push(`/pages/admin/licenses/applications/${caseId}`)
   }
 
   return (

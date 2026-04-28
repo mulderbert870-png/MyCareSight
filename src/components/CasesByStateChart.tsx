@@ -18,7 +18,7 @@ export default function CasesByStateChart({ stateCounts }: CasesByStateChartProp
       const containerRect = containerRef.current.getBoundingClientRect()
       setTooltipPosition({
         x: barRect.left + barRect.width / 2 - containerRect.left,
-        y: barRect.top - containerRect.top
+        y: barRect.top - containerRect.top,
       })
     }
   }
@@ -27,7 +27,9 @@ export default function CasesByStateChart({ stateCounts }: CasesByStateChartProp
     setHoveredState(null)
   }
 
-  if (Object.entries(stateCounts).length === 0) {
+  const entries = Object.entries(stateCounts).filter(([, count]) => count > 0)
+
+  if (entries.length === 0) {
     return (
       <div className="h-48 md:h-64 flex items-center justify-center">
         <div className="text-gray-500">No data available</div>
@@ -35,30 +37,40 @@ export default function CasesByStateChart({ stateCounts }: CasesByStateChartProp
     )
   }
 
-  const maxCount = Math.max(...Object.values(stateCounts))
+  const maxCount = Math.max(...entries.map(([, c]) => c))
 
   return (
-    <div ref={containerRef} className="h-48 md:h-64 flex items-end justify-center gap-2 md:gap-4 overflow-x-auto pb-2 relative">
-      {Object.entries(stateCounts).map(([state, count]) => {
-        const height = (count / maxCount) * 100
+    <div
+      ref={containerRef}
+      className="h-48 md:h-64 flex gap-2 md:gap-4 overflow-x-auto pb-2 relative items-stretch"
+    >
+      {entries.map(([state, count]) => {
+        const ratio = maxCount > 0 ? count / maxCount : 0
         return (
-          <div key={state} className="flex flex-col items-center gap-2">
-            <div
-              className="relative w-12 bg-blue-500 rounded-t cursor-pointer hover:bg-blue-600 transition-colors"
-              style={{ height: `${height}%`, minHeight: '20px' }}
-              onMouseEnter={(e) => handleMouseEnter(state, e)}
-              onMouseLeave={handleMouseLeave}
-            >
-              <span className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-sm font-semibold text-gray-900">
-                {count}
-              </span>
+          <div key={state} className="flex flex-col items-center min-w-[3rem] flex-1 h-full min-h-0">
+            <div className="flex-1 w-full min-h-0 flex flex-col justify-end items-stretch">
+              <div
+                className="relative w-full max-w-[3rem] mx-auto bg-blue-500 rounded-t cursor-pointer hover:bg-blue-600 transition-colors shrink-0"
+                style={{
+                  height: `${ratio * 100}%`,
+                  minHeight: ratio > 0 ? 4 : 0,
+                }}
+                onMouseEnter={(e) => handleMouseEnter(state, e)}
+                onMouseLeave={handleMouseLeave}
+              >
+                {/* Count at top *inside* the bar so it is never clipped when the bar is full height */}
+                <span className="pointer-events-none absolute left-1/2 top-1 z-10 -translate-x-1/2 text-xs font-bold leading-none text-white drop-shadow-[0_1px_1px_rgba(0,0,0,0.35)]">
+                  {count}
+                </span>
+              </div>
             </div>
-            <span className="text-sm font-medium text-gray-700">{state}</span>
+            <span className="text-sm font-medium text-gray-700 mt-2 shrink-0 text-center truncate w-full">
+              {state}
+            </span>
           </div>
         )
       })}
-      
-      {/* Tooltip */}
+
       {hoveredState && (
         <div
           className="absolute z-50 bg-gray-900 text-white text-sm px-3 py-2 rounded-lg shadow-lg pointer-events-none"
@@ -70,8 +82,7 @@ export default function CasesByStateChart({ stateCounts }: CasesByStateChartProp
         >
           <div className="font-semibold text-center">{hoveredState}</div>
           <div className="text-center text-xs mt-1">count: {stateCounts[hoveredState]}</div>
-          {/* Tooltip arrow */}
-          <div className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900" />
+          <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900" />
         </div>
       )}
     </div>

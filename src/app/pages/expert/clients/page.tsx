@@ -17,7 +17,7 @@ export default async function ExpertClientsPage() {
   // Calculate statistics
   const totalApplications = (applicationsData || []).length
   const activeApplications = (applicationsData || []).filter(app => 
-    app.status === 'in_progress' || app.status === 'under_review'
+    app.status === 'requested' || app.status === 'in_progress' || app.status === 'under_review' || app.status === 'needs_revision'
   ).length
   const pendingReviews = (applicationsData || []).filter(app => 
     app.status === 'under_review' || app.status === 'needs_revision'

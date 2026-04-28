@@ -30,10 +30,15 @@ export default async function DashboardPage() {
   if (profile?.role === 'admin') redirect('/pages/admin')
   if (profile?.role === 'expert') redirect('/pages/expert/clients')
 
-  const { data: licenses } = await q.getLicensesByCompanyOwnerId(supabase, session.user.id)
+  const { data: licensesData } = await q.getLicensesByCompanyOwnerId(supabase, session.user.id)
+  const licenses = licensesData ?? []
+  const { data: applicationsData } = await q.getApplicationsByCompanyOwnerId(supabase, session.user.id)
+  const applicationsForDashboard = (applicationsData ?? []).filter(app =>
+    ['requested', 'in_progress', 'under_review', 'needs_revision', 'approved'].includes(app.status ?? '')
+  )
   const { data: client } = await q.getClientByCompanyOwnerId(supabase, session.user.id)
   const { data: staff } = client?.id
-    ? await q.getStaffMembersByCompanyOwnerId(supabase, client.id, { status: 'active' })
+    ? await q.getStaffMembersByCompanyOwnerId(supabase, session.user.id, { status: 'active' })
     : { data: [] }
   const staffIds = (staff || []).map((s: { id: string }) => s.id)
   const { data: staffLicensesData } = staffIds.length > 0
@@ -52,19 +57,78 @@ export default async function DashboardPage() {
     days_until_expiry: (app.days_until_expiry as number | null) ?? null,
   }))
 
-  const { data: notifications } = await q.getUnreadNotificationsForUser(supabase, session.user.id, 10)
+  const { count: unreadNotificationsCount } = await q.getUnreadNotificationsCount(supabase, session.user.id)
+  const { data: notifications } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', session.user.id)
+    .order('created_at', { ascending: false })
+    .limit(10)
+
+  type UnifiedLicense = {
+    id: string
+    license_name: string
+    state: string
+    status: string
+    expiry_date: string | null
+    source: 'license' | 'application'
+  }
+
+  const unifiedLicenses: UnifiedLicense[] = [
+    ...licenses.map(license => ({
+      id: license.id,
+      license_name: license.license_name || `${license.state} License`,
+      state: license.state || '',
+      status: license.status || 'active',
+      expiry_date: license.expiry_date ?? null,
+      source: 'license' as const,
+    })),
+    ...applicationsForDashboard.map(app => ({
+      id: app.id,
+      license_name: app.application_name || `${app.state} License`,
+      state: app.state || '',
+      // Treat active application lifecycle as pending licenses for dashboard reflection.
+      status:
+        app.status === 'approved'
+          ? 'active'
+          : app.status === 'rejected' || app.status === 'closed' || app.status === 'cancelled'
+            ? 'expired'
+            : 'pending',
+      expiry_date: app.expiry_date ?? null,
+      source: 'application' as const,
+    })),
+  ]
+
+  const deriveLicenseStatus = (license: UnifiedLicense): 'active' | 'expiring' | 'expired' => {
+    const now = new Date()
+    if (license.expiry_date) {
+      const expiryDate = new Date(license.expiry_date)
+      const daysUntilExpiry = Math.ceil((expiryDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      if (daysUntilExpiry <= 0) return 'expired'
+      if (daysUntilExpiry <= 60) return 'expiring'
+      return 'active'
+    }
+    if (license.status === 'expired' || license.status === 'rejected' || license.status === 'closed') {
+      return 'expired'
+    }
+    if (license.status === 'pending') {
+      return 'active'
+    }
+    return 'active'
+  }
+
+  const unifiedLicensesWithDerivedStatus = unifiedLicenses.map(license => {
+    const derivedStatus = deriveLicenseStatus(license)
+    return {
+      ...license,
+      derivedStatus,
+      expiryDate: license.expiry_date ? new Date(license.expiry_date) : null,
+    }
+  })
 
   // Calculate statistics
-  const activeLicenses = licenses?.filter(l => l.status === 'active').length || 0
-  const expiringLicenses = licenses?.filter(l => {
-    if (l.expiry_date && l.status === 'active') {
-      const expiryDate = new Date(l.expiry_date)
-      const today = new Date()
-      const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-      return daysUntilExpiry <= 60 && daysUntilExpiry > 0
-    }
-    return false
-  }).length || 0
+  const activeLicenses = unifiedLicensesWithDerivedStatus.filter(l => l.derivedStatus === 'active').length
+  const expiringLicenses = unifiedLicensesWithDerivedStatus.filter(l => l.derivedStatus === 'expiring').length
 
   const expiringStaffCertifications = staffLicenses?.filter(sl => {
     if (sl.days_until_expiry) {
@@ -97,42 +161,99 @@ export default async function DashboardPage() {
   }).length || 0
 
   const expiringSoon = expiringLicenses + expiringStaffCertifications
-  const unreadNotifications = notifications?.length || 0
+  const unreadNotifications = unreadNotificationsCount ?? 0
+
+  // Debug logs for agency dashboard license reflection issues.
+  console.log('[AgencyDashboard][Debug] user', {
+    userId: session.user.id,
+    email: session.user.email,
+    role: profile?.role,
+  })
+  console.log('[AgencyDashboard][Debug] raw counts', {
+    licensesCount: licenses.length,
+    applicationsCount: (applicationsData ?? []).length,
+    applicationsForDashboardCount: applicationsForDashboard.length,
+    unifiedLicensesCount: unifiedLicenses.length,
+    unifiedDerivedCount: unifiedLicensesWithDerivedStatus.length,
+  })
+  console.log(
+    '[AgencyDashboard][Debug] raw licenses sample',
+    licenses.slice(0, 10).map(l => ({
+      id: l.id,
+      license_name: l.license_name,
+      state: l.state,
+      status: l.status,
+      expiry_date: l.expiry_date,
+      activated_date: l.activated_date,
+    }))
+  )
+  console.log(
+    '[AgencyDashboard][Debug] applications for dashboard sample',
+    applicationsForDashboard.slice(0, 10).map(a => ({
+      id: a.id,
+      application_name: a.application_name,
+      state: a.state,
+      status: a.status,
+      expiry_date: a.expiry_date,
+      started_date: a.started_date,
+      created_at: a.created_at,
+    }))
+  )
+  console.log(
+    '[AgencyDashboard][Debug] unified derived sample',
+    unifiedLicensesWithDerivedStatus.slice(0, 20).map(l => ({
+      id: l.id,
+      source: l.source,
+      license_name: l.license_name,
+      state: l.state,
+      rawStatus: l.status,
+      derivedStatus: l.derivedStatus,
+      expiry_date: l.expiry_date,
+    }))
+  )
+  console.log('[AgencyDashboard][Debug] dashboard card counts', {
+    activeLicenses,
+    expiringLicenses,
+    expiringStaffCertifications,
+    expiringSoon: expiringLicenses + expiringStaffCertifications,
+  })
 
   // Get recent licenses
-  const recentLicenses = licenses?.slice(0, 2).map(license => {
-    const expiryDate = license.expiry_date ? new Date(license.expiry_date) : null
-    let status = license.status
-    if (status === 'active' && expiryDate) {
-      const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-      if (daysUntilExpiry <= 60 && daysUntilExpiry > 0) {
-        status = 'expiring'
-      } else if (daysUntilExpiry <= 0) {
-        status = 'expired'
-      }
-    }
-    return { ...license, status, expiryDate }
-  }) || []
+  const recentLicenses = unifiedLicensesWithDerivedStatus
+    .slice()
+    .sort((a, b) => {
+      if (!a.expiry_date) return 1
+      if (!b.expiry_date) return -1
+      return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime()
+    })
+    .slice(0, 2)
+    .map(license => ({
+      ...license,
+      status: license.derivedStatus,
+    })) || []
+  console.log(
+    '[AgencyDashboard][Debug] recent licenses displayed',
+    recentLicenses.map(l => ({
+      id: l.id,
+      source: l.source,
+      license_name: l.license_name,
+      status: l.status,
+      expiry_date: l.expiry_date,
+    }))
+  )
 
   // Get all licenses with status for Action Items
-  const allLicensesWithStatus = licenses?.map(license => {
-    const expiryDate = license.expiry_date ? new Date(license.expiry_date) : null
-    const today = new Date()
-    let status = license.status
-    if (status === 'active' && expiryDate) {
-      const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-      if (daysUntilExpiry <= 60 && daysUntilExpiry > 0) {
-        status = 'expiring'
-      } else if (daysUntilExpiry <= 0) {
-        status = 'expired'
-      }
-    }
-    return { ...license, status, expiryDate }
-  }) || []
+  const allLicensesWithStatus = unifiedLicensesWithDerivedStatus.map(license => ({
+    ...license,
+    status: license.derivedStatus,
+  }))
 
-  // Get expiring licenses for Action Items
+  // Get expiring/expired licenses and pending applications for Action Items
   const expiringLicensesForAction = allLicensesWithStatus
     .filter(license => license.status === 'expiring' || license.status === 'expired')
+    .slice(0, 3)
+  const pendingApplicationsForAction = unifiedLicensesWithDerivedStatus
+    .filter(license => license.source === 'application' && license.status === 'pending')
     .slice(0, 3)
 
   // Format date helper
@@ -140,6 +261,17 @@ export default async function DashboardPage() {
     if (!date) return 'N/A'
     const d = typeof date === 'string' ? new Date(date) : date
     return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+  }
+
+  const getStateAbbreviation = (state: string) => {
+    if (!state) return 'NA'
+    const trimmed = state.trim()
+    if (trimmed.length <= 2) return trimmed.toUpperCase()
+    const words = trimmed.split(/\s+/).filter(Boolean)
+    if (words.length >= 2) {
+      return `${words[0][0]}${words[1][0]}`.toUpperCase()
+    }
+    return trimmed.slice(0, 2).toUpperCase()
   }
 
   // Get notification icon
@@ -297,22 +429,32 @@ export default async function DashboardPage() {
 
             {/* License Information Cards */}
             <div className="space-y-3 mb-4">
-              {expiringLicensesForAction.length > 0 ? (
-                expiringLicensesForAction.map((license) => (
+              {expiringLicensesForAction.length > 0 || pendingApplicationsForAction.length > 0 ? (
+                [...expiringLicensesForAction, ...pendingApplicationsForAction].slice(0, 3).map((license) => (
                   <div key={license.id} className="bg-white border border-gray-200 rounded-lg p-4">
                     <div className="flex items-center justify-between mb-2">
                       <div className="font-semibold text-gray-900">
-                        {license.state} License
+                        {license.state} {license.source === 'application' ? 'Application' : 'License'}
                       </div>
                       {license.status === 'expiring' && (
                         <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs font-medium">
                           expiring
                         </span>
                       )}
+                      {license.status === 'pending' && (
+                        <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                          pending
+                        </span>
+                      )}
                     </div>
                     {license.expiryDate && (
                       <div className="text-sm text-red-600 font-medium">
                         Expires {formatDate(license.expiryDate)}
+                      </div>
+                    )}
+                    {!license.expiryDate && license.status === 'pending' && (
+                      <div className="text-sm text-blue-600 font-medium">
+                        In progress
                       </div>
                     )}
                   </div>
@@ -350,11 +492,11 @@ export default async function DashboardPage() {
                 recentLicenses.map((license) => (
                   <div key={license.id} className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
                     <div className={`w-12 h-12 rounded-lg flex items-center justify-center font-bold text-white ${
-                      license.state === 'CA' ? 'bg-green-500' : 
-                      license.state === 'TX' ? 'bg-orange-500' : 
+                      getStateAbbreviation(license.state) === 'CA' ? 'bg-green-500' : 
+                      getStateAbbreviation(license.state) === 'TX' ? 'bg-orange-500' : 
                       'bg-blue-500'
                     }`}>
-                      {license.state}
+                      {getStateAbbreviation(license.state)}
                     </div>
                     <div className="flex-1">
                       <div className="font-semibold text-gray-900">{license.license_name}</div>
@@ -411,12 +553,12 @@ export default async function DashboardPage() {
               )}
             </div>
 
-            <div className="space-y-3">
+            <div className="max-h-64 overflow-y-auto overflow-x-hidden space-y-3 pr-1 -mr-1">
               {notifications && notifications.length > 0 ? (
                 notifications.map((notification) => {
                   const Icon = getNotificationIcon(notification.type)
                   return (
-                    <div key={notification.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                    <div key={notification.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg shrink-0">
                       <Icon className={`w-5 h-5 mt-0.5 flex-shrink-0 ${getNotificationColor(notification.type)}`} />
                       <div className="flex-1 min-w-0">
                         <div className="font-medium text-gray-900">{notification.title}</div>

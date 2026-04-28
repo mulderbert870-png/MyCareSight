@@ -2,9 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Bell, MessageSquare, Clock, FileText, Trash2 } from 'lucide-react'
+import { flushSync } from 'react-dom'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
+import LoadingSpinner from './LoadingSpinner'
 
 interface ApplicationNotification {
   application_id: string
@@ -54,13 +56,54 @@ export default function NotificationDropdown({
   const [adminNotifications, setAdminNotifications] = useState<AdminNotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(initialUnreadCount)
   const [isLoading, setIsLoading] = useState(false)
+  const [isNavigating, setIsNavigating] = useState(false)
   const [userRole, setUserRole] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const supabase = createClient()
 
+  const pendingRouteRef = useRef<string | null>(null)
+  const navTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const DEBOUNCE_MS = 500 // 500ms debounce for faster badge updates
+
+  const currentRouteKey = `${pathname}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`
+
+  useEffect(() => {
+    if (!isNavigating || !pendingRouteRef.current) return
+    // Keep spinner until the target route (path + query) is actually reached.
+    if (currentRouteKey !== pendingRouteRef.current) return
+
+    setIsNavigating(false)
+    pendingRouteRef.current = null
+    if (navTimeoutRef.current) {
+      clearTimeout(navTimeoutRef.current)
+      navTimeoutRef.current = null
+    }
+  }, [currentRouteKey, isNavigating])
+
+  const navigateWithLoading = useCallback(
+    (href: string) => {
+      pendingRouteRef.current = href
+      // Force paint of full-page loading overlay before route navigation begins.
+      flushSync(() => {
+        setIsNavigating(true)
+      })
+      if (navTimeoutRef.current) clearTimeout(navTimeoutRef.current)
+      // Fallback clear in case navigation is interrupted.
+      navTimeoutRef.current = setTimeout(() => {
+        setIsNavigating(false)
+        pendingRouteRef.current = null
+        navTimeoutRef.current = null
+      }, 10000)
+      requestAnimationFrame(() => {
+        router.push(href)
+      })
+    },
+    [router]
+  )
 
   // Get user role on mount
   useEffect(() => {
@@ -460,6 +503,9 @@ export default function NotificationDropdown({
         if (fetchTimeoutRef.current) {
           clearTimeout(fetchTimeoutRef.current)
         }
+        if (navTimeoutRef.current) {
+          clearTimeout(navTimeoutRef.current)
+        }
       }
     }
 
@@ -467,6 +513,9 @@ export default function NotificationDropdown({
       supabase.removeChannel(channel)
       if (fetchTimeoutRef.current) {
         clearTimeout(fetchTimeoutRef.current)
+      }
+      if (navTimeoutRef.current) {
+        clearTimeout(navTimeoutRef.current)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -477,11 +526,11 @@ export default function NotificationDropdown({
     
     // Navigate based on user role with fromNotification flag
     if (userRole === 'admin') {
-      router.push(`/pages/admin/licenses/applications/${applicationId}?fromNotification=true`)
+      navigateWithLoading(`/pages/admin/licenses/applications/${applicationId}?fromNotification=true`)
     } else if (userRole === 'company_owner') {
-      router.push(`/pages/agency/applications/${applicationId}?fromNotification=true`)
+      navigateWithLoading(`/pages/agency/applications/${applicationId}?fromNotification=true`)
     } else if (userRole === 'expert') {
-      router.push(`/pages/expert/applications/${applicationId}?fromNotification=true`)
+      navigateWithLoading(`/pages/expert/applications/${applicationId}?fromNotification=true`)
     }
   }
 
@@ -498,23 +547,23 @@ export default function NotificationDropdown({
       notif.title.includes(SCHEDULE_ASSIGNMENT_REQUEST_SNIPPET) ||
       notif.title.includes(SCHEDULE_ASSIGNMENT_CANCEL_SNIPPET)
     ) {
-      router.push('/pages/agency/care-visits?tab=requests')
+      navigateWithLoading('/pages/agency/care-visits?tab=requests')
       return
     }
     if (userRole === 'staff_member' && notif.title.startsWith(VISIT_ASSIGNMENT_CAREGIVER_PREFIX)) {
-      router.push('/pages/caregiver/my-care-visits')
+      navigateWithLoading('/pages/caregiver/my-care-visits')
       return
     }
     if (userRole === 'expert') {
-      router.push('/pages/expert/applications')
+      navigateWithLoading('/pages/expert/applications')
     } else if (userRole === 'company_owner') {
-      router.push('/pages/agency/applications')
+      navigateWithLoading('/pages/agency/applications')
     } else if (userRole === 'care_coordinator') {
-      router.push('/pages/agency/care-visits')
+      navigateWithLoading('/pages/agency/care-visits')
     } else if (userRole === 'staff_member') {
-      router.push('/pages/caregiver')
+      navigateWithLoading('/pages/caregiver')
     } else {
-      router.push('/pages/admin/licenses')
+      navigateWithLoading('/pages/admin/licenses')
     }
   }
 
@@ -549,6 +598,8 @@ export default function NotificationDropdown({
 
   return (
     <div className="relative" ref={dropdownRef}>
+      {isNavigating ? <LoadingSpinner overlayZClass="z-[200]" /> : null}
+
       {/* Notification Bell Button */}
       <button
         onClick={() => setIsOpen(!isOpen)}

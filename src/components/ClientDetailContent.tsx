@@ -215,6 +215,7 @@ interface SmallClient {
 type StaffMember = { id: string; user_id?: string; first_name?: string; last_name?: string; [key: string]: unknown }
 type BillingCodeOption = { id: string; code: string; name: string; unit_type: 'hour' | 'visit' | '15_min_unit' }
 const BILLING_CODE_PICKLIST_ORDER = ['S5125', 'S5126', 'T1019', 'T1020', 'G0156', 'G0159', '97110', '97530', '99509', 'W1726'] as const
+const CAREGIVER_DISTANCE_LIMIT_MILES = 20
 
 interface ClientDetailContentProps {
   client: SmallClient
@@ -379,6 +380,8 @@ export default function ClientDetailContent({ client, allClients, representative
   const [isSavingServiceContractRates, setIsSavingServiceContractRates] = useState(false)
   const [serviceContractRateErrorById, setServiceContractRateErrorById] = useState<Record<string, string>>({})
   const [billingCodeOptions, setBillingCodeOptions] = useState<BillingCodeOption[]>([])
+  /** Set when billing_codes query fails or returns no active rows (empty <select> otherwise looks like a UI bug). */
+  const [billingCodesLoadError, setBillingCodesLoadError] = useState<string | null>(null)
   const [serviceContractForm, setServiceContractForm] = useState({
     contract_name: '',
     contract_type: 'Private Pay',
@@ -531,9 +534,13 @@ export default function ClientDetailContent({ client, allClients, representative
     setCaregiverRequirements(initialCaregiverRequirements?.skill_codes ?? [])
   }, [client.id, initialCaregiverRequirements])
 
+  // Only reset from RSC props when the patient changes. Do not depend on `initialIncidents`:
+  // after `router.refresh()` in handleSaveIncident, Next can supply a cached payload without the
+  // row just inserted, and this effect would overwrite `setLocalIncidents` and make it disappear.
   useEffect(() => {
     setLocalIncidents(initialIncidents ?? [])
-  }, [client.id, initialIncidents])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: stale initialIncidents after refresh
+  }, [client.id])
 
   /** Load non-skilled plan from Supabase on mount / patient change — not from RSC props alone. After
    * `router.refresh()`, Next can remount with a cached `initialAdls` payload; a client refetch matches DB truth.
@@ -2514,13 +2521,17 @@ export default function ClientDetailContent({ client, allClients, representative
       }
     })
 
-    options.sort((a, b) => {
+    const eligibleByDistance = options.filter(
+      (o) => Number.isFinite(o.distanceMiles) && o.distanceMiles <= CAREGIVER_DISTANCE_LIMIT_MILES
+    )
+
+    eligibleByDistance.sort((a, b) => {
       // Closest first, then best skill match.
       if (a.distanceMiles !== b.distanceMiles) return a.distanceMiles - b.distanceMiles
       return b.skillMatchScore - a.skillMatchScore
     })
 
-    return options
+    return eligibleByDistance
   }, [
     staffList,
     caregiverRequirements,
@@ -2662,7 +2673,7 @@ export default function ClientDetailContent({ client, allClients, representative
 
         <div className="max-h-[240px] overflow-y-auto overflow-x-hidden">
           {filtered.length === 0 ? (
-            <div className="px-4 py-6 text-center text-sm text-gray-500">No caregivers found.</div>
+            <div className="px-4 py-6 text-center text-sm text-gray-500">No caregivers found within 20 miles.</div>
           ) : (
             sortedFiltered.map((o, idx) => {
               const c = o.caregiver
@@ -2873,13 +2884,25 @@ export default function ClientDetailContent({ client, allClients, representative
     if (!serviceContractsModalOpen) return
     let isMounted = true
     const loadModalData = async () => {
+      setBillingCodesLoadError(null)
       const supabase = createClient()
       const [{ data: codes, error: codesError }, { data: contracts, error: contractsError }] = await Promise.all([
         supabase.from('billing_codes').select('id, code, name, unit_type').eq('is_active', true).order('code', { ascending: true }),
         q.getPatientServiceContractsByPatientId(supabase, localClient.id),
       ])
       if (!isMounted) return
-      if (!codesError) setBillingCodeOptions((codes ?? []) as BillingCodeOption[])
+      if (codesError) {
+        setBillingCodeOptions([])
+        setBillingCodesLoadError(codesError.message || 'Could not load billing codes.')
+      } else {
+        const rows = (codes ?? []) as BillingCodeOption[]
+        setBillingCodeOptions(rows)
+        if (rows.length === 0) {
+          setBillingCodesLoadError(
+            'No active billing codes are in the database. Run migration 080_seed_billing_codes_reference (or insert rows into billing_codes), then reopen this dialog.'
+          )
+        }
+      }
       if (!contractsError) setServiceContracts((contracts ?? []) as PatientServiceContractRow[])
     }
     void loadModalData()
@@ -2899,10 +2922,6 @@ export default function ClientDetailContent({ client, allClients, representative
       .filter((row): row is BillingCodeOption => !!row)
     const remaining = billingCodeOptions.filter((row) => !BILLING_CODE_PICKLIST_ORDER.includes(row.code.toUpperCase() as (typeof BILLING_CODE_PICKLIST_ORDER)[number]))
     return [...ordered, ...remaining]
-  }, [billingCodeOptions])
-
-  useEffect(() => {
-    console.log('billingcodes', billingCodeOptions)
   }, [billingCodeOptions])
 
   useEffect(() => {
@@ -7540,6 +7559,9 @@ export default function ClientDetailContent({ client, allClients, representative
                     <option key={row.id} value={row.id}>{row.code}</option>
                   ))}
                 </select>
+                {billingCodesLoadError ? (
+                  <p className="mt-1 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">{billingCodesLoadError}</p>
+                ) : null}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Bill Rate ($)</label>

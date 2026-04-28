@@ -7,6 +7,8 @@ import ClientMessagesContent from '@/components/ClientMessagesContent'
 import { MessageSquare } from 'lucide-react'
 import { getCachedAgencyMessagesInbox } from '@/lib/server-cache/agency-messages-inbox'
 
+export const dynamic = 'force-dynamic'
+
 export default async function MessagesPage() {
   try {
     const session = await getSession()

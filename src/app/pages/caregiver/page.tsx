@@ -73,7 +73,12 @@ export default async function StaffDashboardPage() {
     license_type: app.application_name,
     license_number: app.license_number || 'N/A',
     state: app.state,
-    status: app.status === 'approved' ? 'active' : app.status === 'rejected' ? 'expired' : 'active',
+    status:
+      app.status === 'approved'
+        ? 'active'
+        : app.status === 'rejected' || app.status === 'closed'
+          ? 'expired'
+          : 'pending',
     issue_date: app.issue_date,
     expiry_date: app.expiry_date,
     days_until_expiry: app.days_until_expiry,
@@ -142,9 +147,9 @@ export default async function StaffDashboardPage() {
   const { count: unreadNotificationsCount } = await q.getUnreadNotificationsCount(supabase, session.user.id)
   const unreadNotifications = unreadNotificationsCount ?? 0
 
-  // Calculate statistics
+  // Calculate statistics from full list (not only preview rows)
   const today = new Date()
-  const activeLicenses = staffLicenses?.filter(l => {
+  const activeLicenses = allLicensesSorted?.filter(l => {
     if (l.status === 'active' && l.expiry_date) {
       const expiryDate = new Date(l.expiry_date)
       const daysUntilExpiry = Math.ceil((expiryDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
@@ -153,14 +158,14 @@ export default async function StaffDashboardPage() {
     return false
   }).length || 0
 
-  const expiringSoon = staffLicenses?.filter(l => {
+  const expiringSoon = allLicensesSorted?.filter(l => {
     if (l.days_until_expiry !== null && l.days_until_expiry !== undefined) {
       return l.days_until_expiry <= 90 && l.days_until_expiry > 0 && l.status === 'active'
     }
     return false
   }).length || 0
 
-  const expiredLicenses = staffLicenses?.filter(l => {
+  const expiredLicenses = allLicensesSorted?.filter(l => {
     if (l.status === 'expired') {
       return true
     }
@@ -171,7 +176,7 @@ export default async function StaffDashboardPage() {
   }).length || 0
 
   // Get licenses expiring within 90 days
-  const licensesExpiringSoon = staffLicenses?.slice().reverse().filter(l => {
+  const licensesExpiringSoon = allLicensesSorted?.slice().reverse().filter(l => {
     if (l.days_until_expiry !== null && l.days_until_expiry !== undefined) {
       return l.days_until_expiry <= 90 && l.days_until_expiry > 0 && l.status === 'active'
     }
@@ -342,7 +347,13 @@ export default async function StaffDashboardPage() {
                         {/* STATUS */}
                         <td className="px-4 py-4 whitespace-nowrap">
                           <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-black text-white">
-                            {status === 'active' ? 'Active' : status === 'expiring' ? 'Expiring Soon' : 'Expired'}
+                            {status === 'active'
+                              ? 'Active'
+                              : status === 'expiring'
+                                ? 'Expiring Soon'
+                                : status === 'pending'
+                                  ? 'Pending'
+                                  : 'Expired'}
                           </span>
                         </td>
 

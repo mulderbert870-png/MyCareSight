@@ -169,6 +169,7 @@ export default function VisitManagementContent({
     }
   }
   const [actionError, setActionError] = useState<string | null>(null)
+  const pendingRequestClearTimerRef = useRef<number | null>(null)
   const unassignmentVisibilityLogRef = useRef<{
     requestId: string
     action: 'approve' | 'decline'
@@ -222,9 +223,16 @@ export default function VisitManagementContent({
     unassignmentDeclinedTotal,
   ])
 
+  const isRequestActionKey = (key: string) =>
+    key.startsWith('approve:') ||
+    key.startsWith('decline:') ||
+    key.startsWith('approve-unassign:') ||
+    key.startsWith('decline-unassign:')
+
   const runAction = async (key: string, fn: () => Promise<{ ok?: true; error?: string }>) => {
     setActionError(null)
     setPendingActionKey(key)
+    let keepPendingForRefresh = false
     try {
       const result = await fn()
       if (result.error) {
@@ -238,11 +246,22 @@ export default function VisitManagementContent({
           unassignmentVisibilityLogRef.current = null
         }
         setActionError(result.error)
+        setPendingActionKey(null)
         return
       }
       router.refresh()
+      if (isRequestActionKey(key)) {
+        keepPendingForRefresh = true
+        if (pendingRequestClearTimerRef.current) window.clearTimeout(pendingRequestClearTimerRef.current)
+        // Keep loading state until refresh removes the request row (effect below). Fallback timeout avoids stuck UI.
+        pendingRequestClearTimerRef.current = window.setTimeout(() => {
+          setPendingActionKey((curr) => (curr === key ? null : curr))
+          pendingRequestClearTimerRef.current = null
+        }, 10000)
+        return
+      }
     } finally {
-      setPendingActionKey(null)
+      if (!keepPendingForRefresh) setPendingActionKey(null)
     }
   }
 
@@ -390,6 +409,34 @@ export default function VisitManagementContent({
 
     return () => window.clearTimeout(timer)
   }, [unassignmentItems, router])
+
+  useEffect(() => {
+    if (!pendingActionKey || !isRequestActionKey(pendingActionKey)) return
+    let requestId = ''
+    let stillVisible = false
+
+    if (pendingActionKey.startsWith('approve-unassign:') || pendingActionKey.startsWith('decline-unassign:')) {
+      requestId = pendingActionKey.split(':')[1] ?? ''
+      stillVisible = unassignmentItems.some((item) => item.requestId === requestId)
+    } else {
+      requestId = pendingActionKey.split(':')[1] ?? ''
+      stillVisible = visits.some((v) => v.requests.some((r) => r.id === requestId))
+    }
+
+    if (!stillVisible) {
+      setPendingActionKey(null)
+      if (pendingRequestClearTimerRef.current) {
+        window.clearTimeout(pendingRequestClearTimerRef.current)
+        pendingRequestClearTimerRef.current = null
+      }
+    }
+  }, [pendingActionKey, unassignmentItems, visits])
+
+  useEffect(() => {
+    return () => {
+      if (pendingRequestClearTimerRef.current) window.clearTimeout(pendingRequestClearTimerRef.current)
+    }
+  }, [])
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -675,8 +722,17 @@ export default function VisitManagementContent({
                               onClick={() => handleApproveUnassign(item.requestId)}
                               className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                             >
-                              <ThumbsUp className="h-4 w-4" aria-hidden />
-                              Approve Unassign
+                              {pendingActionKey === `approve-unassign:${item.requestId}` ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                                  Approving...
+                                </>
+                              ) : (
+                                <>
+                                  <ThumbsUp className="h-4 w-4" aria-hidden />
+                                  Approve Unassign
+                                </>
+                              )}
                             </button>
                             <button
                               type="button"
@@ -691,8 +747,17 @@ export default function VisitManagementContent({
                               }
                               className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg border-2 border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
                             >
-                              <ThumbsDown className="h-4 w-4" aria-hidden />
-                              Decline
+                              {pendingActionKey === `decline-unassign:${item.requestId}` ? (
+                                <>
+                                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                                  Declining...
+                                </>
+                              ) : (
+                                <>
+                                  <ThumbsDown className="h-4 w-4" aria-hidden />
+                                  Decline
+                                </>
+                              )}
                             </button>
                           </div>
                         </div>
@@ -764,8 +829,17 @@ export default function VisitManagementContent({
                                   onClick={() => handleApprove(req)}
                                   className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                                 >
-                                  <ThumbsUp className="h-4 w-4" aria-hidden />
-                                  Approve & Assign
+                                  {pendingActionKey === `approve:${req.id}` ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                                      Approving...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ThumbsUp className="h-4 w-4" aria-hidden />
+                                      Approve & Assign
+                                    </>
+                                  )}
                                 </button>
                                 <button
                                   type="button"
@@ -780,8 +854,17 @@ export default function VisitManagementContent({
                                   }
                                   className="inline-flex flex-1 lg:flex-none items-center justify-center gap-2 rounded-lg border-2 border-red-300 bg-white px-4 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 disabled:opacity-60"
                                 >
-                                  <ThumbsDown className="h-4 w-4" aria-hidden />
-                                  Decline
+                                  {pendingActionKey === `decline:${req.id}` ? (
+                                    <>
+                                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                                      Declining...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ThumbsDown className="h-4 w-4" aria-hidden />
+                                      Decline
+                                    </>
+                                  )}
                                 </button>
                               </div>
                             </div>
