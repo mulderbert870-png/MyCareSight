@@ -102,7 +102,7 @@ export async function fetchPayrollBillingReportRows(
   )
 
   const visitIds = visitList.map((v) => v.id as string)
-  const [patRes, cgRes, contractsRes, caregiverPayRes, financialsRes, tasksRes] = await Promise.all([
+  const [patRes, cgRes, contractsRes, caregiverPayRes, financialsRes, approvalsRes, tasksRes] = await Promise.all([
     supabase.from('patients').select('id, full_name').in('id', patientIds),
     caregiverIds.length
       ? supabase.from('caregiver_members').select('id, first_name, last_name').in('id', caregiverIds)
@@ -129,6 +129,12 @@ export async function fetchPayrollBillingReportRows(
       : Promise.resolve({ data: [], error: null } as const),
     visitIds.length
       ? supabase
+          .from('visit_approvals')
+          .select('scheduled_visit_id, approval_status, approved_billable_hours, approved_actual_hours, pay_rate, bill_rate')
+          .in('scheduled_visit_id', visitIds)
+      : Promise.resolve({ data: [], error: null } as const),
+    visitIds.length
+      ? supabase
           .from('scheduled_visit_tasks')
           .select('scheduled_visit_id, task_id, sort_order')
           .in('scheduled_visit_id', visitIds)
@@ -142,6 +148,7 @@ export async function fetchPayrollBillingReportRows(
   if (contractsRes.error) return { rows: [], error: contractsRes.error.message }
   if (caregiverPayRes.error) return { rows: [], error: caregiverPayRes.error.message }
   if (financialsRes.error) return { rows: [], error: financialsRes.error.message }
+  if (approvalsRes.error) return { rows: [], error: approvalsRes.error.message }
   if (tasksRes.error) return { rows: [], error: tasksRes.error.message }
 
   const patientNameById = new Map((patRes.data ?? []).map((r) => [r.id, r.full_name ?? 'Client']))
@@ -167,6 +174,17 @@ export async function fetchPayrollBillingReportRows(
   const financialByVisitId = new Map(
     ((financialsRes.data ?? []) as FinancialRow[]).map((r) => [r.scheduled_visit_id, r])
   )
+  type ApprovalRow = {
+    scheduled_visit_id: string
+    approval_status?: string | null
+    approved_billable_hours?: number | null
+    approved_actual_hours?: number | null
+    pay_rate?: number | null
+    bill_rate?: number | null
+  }
+  const approvalByVisitId = new Map(
+    ((approvalsRes.data ?? []) as ApprovalRow[]).map((r) => [r.scheduled_visit_id, r])
+  )
   const firstTaskByVisitId = new Map<string, string>()
   for (const tr of tasksRes.data ?? []) {
     const vid = String((tr as { scheduled_visit_id: string }).scheduled_visit_id)
@@ -187,22 +205,28 @@ export async function fetchPayrollBillingReportRows(
   }
 
   const rows: PayrollBillingDetailRow[] = visitList
-    .filter((sv) => financialByVisitId.has(String(sv.id)))
+    .filter((sv) => financialByVisitId.has(String(sv.id)) || approvalByVisitId.has(String(sv.id)))
     .map((sv) => {
     const visitDate = sv.visit_date ?? ''
     const financial = financialByVisitId.get(sv.id as string)
+    const approval = approvalByVisitId.get(sv.id as string)
     const serviceType = (
       (financial?.service_type ?? sv.service_type) === 'skilled' ? 'skilled' : 'non_skilled'
     ) as 'non_skilled' | 'skilled'
     const caregiverId = sv.caregiver_member_id ?? ''
     const scheduleHours = hoursFromSchedule(sv.scheduled_start_time, sv.scheduled_end_time)
     const bh = financial?.approved_billable_hours != null ? Number(financial.approved_billable_hours) : NaN
-    const fallbackBillable = Number.isFinite(bh) ? round2(bh) : scheduleHours
-    const fallbackActual = scheduleHours > 0 ? round2(scheduleHours) : fallbackBillable
+    const abh = approval?.approved_billable_hours != null ? Number(approval.approved_billable_hours) : NaN
+    const fallbackBillable = Number.isFinite(bh) ? round2(bh) : Number.isFinite(abh) ? round2(abh) : scheduleHours
+    const aah = financial?.approved_actual_hours != null ? Number(financial.approved_actual_hours) : NaN
+    const aa2 = approval?.approved_actual_hours != null ? Number(approval.approved_actual_hours) : NaN
+    const fallbackActual =
+      Number.isFinite(aah) ? round2(aah) : Number.isFinite(aa2) ? round2(aa2) : scheduleHours > 0 ? round2(scheduleHours) : fallbackBillable
 
-    const fs = String(financial?.status ?? 'pending').toLowerCase()
+    const fs = String(financial?.status ?? '').toLowerCase()
+    const as = String(approval?.approval_status ?? '').toLowerCase()
     const billingState: 'approved' | 'pending' | 'voided' =
-      fs === 'approved' ? 'approved' : fs === 'voided' ? 'voided' : 'pending'
+      as === 'approved' || fs === 'approved' ? 'approved' : fs === 'voided' ? 'voided' : 'pending'
 
     const taskId = firstTaskByVisitId.get(sv.id as string) ?? null
     const pay =
@@ -211,6 +235,7 @@ export async function fetchPayrollBillingReportRows(
         : null
     const contract = sv.patient_id && visitDate ? pickContract(sv.patient_id, serviceType, visitDate) : null
     const useFrozenSnapshot = financial != null && Number.isFinite(Number(financial.bill_rate ?? NaN))
+    const useApprovalSnapshot = approval != null && Number.isFinite(Number(approval.bill_rate ?? NaN))
 
     let billableHours = fallbackBillable
     let actualHours = fallbackActual
@@ -229,6 +254,11 @@ export async function fetchPayrollBillingReportRows(
       billRate = Number(financial.bill_rate ?? 0)
       payAmount = round2(Number(financial.pay_amount ?? 0))
       billAmount = round2(Number(financial.bill_amount ?? 0))
+    } else if (useApprovalSnapshot && approval) {
+      payRate = Number(approval.pay_rate ?? 0)
+      billRate = Number(approval.bill_rate ?? 0)
+      payAmount = round2(calcAmount(actualHours, payRate, pay?.unit_type))
+      billAmount = round2(calcAmount(billableHours, billRate, contract?.bill_unit_type))
     }
 
     const vt = (sv as { visit_type?: string | null }).visit_type

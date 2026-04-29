@@ -154,7 +154,7 @@ export type AgencyAdminListFilters = {
   status?: string
   /** UI: `'All Experts'` skips; otherwise `expert_id` must equal this (auth user id of expert). */
   expertUserId?: string
-  /** UI: `'All States'` skips; filters via `client_states`. */
+  /** Deprecated: state filter removed after dropping `client_states`. */
   state?: string
 }
 
@@ -176,16 +176,7 @@ export async function getAgencyAdminsFiltered(supabase: Supabase, filters: Agenc
     qb = qb.eq('expert_id', filters.expertUserId)
   }
 
-  if (filters.state && filters.state !== 'All States') {
-    const { data: stateRows, error: stErr } = await supabase
-      .from('client_states')
-      .select('client_id')
-      .eq('state', filters.state)
-    if (stErr) return { data: null, error: stErr }
-    const ids = Array.from(new Set((stateRows ?? []).map((r: { client_id: string }) => r.client_id).filter(Boolean)))
-    if (ids.length === 0) return { data: [], error: null }
-    qb = qb.in('id', ids)
-  }
+  // state filter intentionally ignored (legacy `client_states` removed)
 
   return qb
 }

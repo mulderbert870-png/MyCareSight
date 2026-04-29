@@ -626,6 +626,86 @@ export async function updateSchedule(
   return { data: mapVisitsToScheduleRows([v])[0] ?? null, error: null }
 }
 
+export type RecurringUpdateScope =
+  | 'this_visit'
+  | 'this_and_future'
+  | 'all_in_series'
+  | 'weekday_in_series'
+
+/**
+ * Bulk-update recurring scheduled_visits that belong to the same visit_series as a seed visit.
+ * Uses local-date semantics for scope filters to match UI date pickers.
+ */
+export async function updateRecurringSchedulesByScope(
+  supabase: Supabase,
+  data: {
+    seed_schedule_id: string
+    scope: RecurringUpdateScope
+    apply_from_date?: string | null
+    patch: Parameters<typeof updateSchedule>[2]
+  }
+): Promise<{ updated_ids: string[]; error: { message: string } | null }> {
+  const { data: seed, error: seedErr } = await supabase
+    .from('scheduled_visits')
+    .select('id, visit_series_id, visit_date, scheduled_start_time, scheduled_end_time')
+    .eq('id', data.seed_schedule_id)
+    .single()
+  if (seedErr || !seed) return { updated_ids: [], error: { message: seedErr?.message || 'Seed visit not found.' } }
+
+  const seedSeriesId = (seed as { visit_series_id?: string | null }).visit_series_id ?? null
+  if (!seedSeriesId || data.scope === 'this_visit') {
+    const one = await updateSchedule(supabase, data.seed_schedule_id, data.patch)
+    if (one.error) return { updated_ids: [], error: { message: one.error.message || 'Failed to update visit.' } }
+    return { updated_ids: [data.seed_schedule_id], error: null }
+  }
+
+  const seedLocal = toLocalVisitParts(
+    String((seed as { visit_date: string }).visit_date),
+    (seed as { scheduled_start_time?: string | null }).scheduled_start_time ?? null,
+    (seed as { scheduled_end_time?: string | null }).scheduled_end_time ?? null
+  )
+  const fromDate = data.apply_from_date?.trim() || seedLocal.visitDateLocal
+  const seedWeekday = new Date(`${seedLocal.visitDateLocal}T12:00:00`).getDay()
+
+  const { data: rows, error: rowsErr } = await supabase
+    .from('scheduled_visits')
+    .select('id, visit_date, scheduled_start_time, scheduled_end_time')
+    .eq('visit_series_id', seedSeriesId)
+  if (rowsErr) return { updated_ids: [], error: { message: rowsErr.message || 'Failed to load recurring visits.' } }
+
+  const ids = (rows ?? [])
+    .filter((r) => {
+      const local = toLocalVisitParts(
+        String((r as { visit_date: string }).visit_date),
+        (r as { scheduled_start_time?: string | null }).scheduled_start_time ?? null,
+        (r as { scheduled_end_time?: string | null }).scheduled_end_time ?? null
+      )
+      if (data.scope === 'all_in_series') return true
+      if (data.scope === 'this_and_future') return local.visitDateLocal >= fromDate
+      if (data.scope === 'weekday_in_series') {
+        const wd = new Date(`${local.visitDateLocal}T12:00:00`).getDay()
+        return wd === seedWeekday
+      }
+      return String((r as { id: string }).id) === data.seed_schedule_id
+    })
+    .map((r) => String((r as { id: string }).id))
+
+  if (ids.length === 0) return { updated_ids: [], error: null }
+
+  const updated: string[] = []
+  for (const id of ids) {
+    const res = await updateSchedule(supabase, id, data.patch)
+    if (res.error) {
+      return {
+        updated_ids: updated,
+        error: { message: res.error.message || `Failed while updating recurring visits (id=${id}).` },
+      }
+    }
+    updated.push(id)
+  }
+  return { updated_ids: updated, error: null }
+}
+
 /** Delete a visit by id (cascade removes scheduled_visit_tasks). */
 export async function deleteSchedule(supabase: Supabase, id: string) {
   return supabase.from('scheduled_visits').delete().eq('id', id)

@@ -111,7 +111,9 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
     visitIds.length
       ? supabase
           .from('visit_approvals')
-          .select('scheduled_visit_id, approval_status, approved_billable_hours, approved_actual_hours, approval_comment')
+          .select(
+            'scheduled_visit_id, approval_status, approved_billable_hours, approved_actual_hours, approval_comment, pay_rate, bill_rate'
+          )
           .in('scheduled_visit_id', visitIds)
       : Promise.resolve({ data: [], error: null } as const),
     visitIds.length
@@ -160,6 +162,8 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
     approved_billable_hours?: number | null
     approved_actual_hours?: number | null
     approval_comment?: string | null
+    pay_rate?: number | null
+    bill_rate?: number | null
   }
   const approvalByVisitId = new Map(
     ((approvalsRes.data ?? []) as ApprovalRow[]).map((r) => [r.scheduled_visit_id, r])
@@ -231,6 +235,7 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
         : null
     const contract = sv.patient_id && date ? pickContract(sv.patient_id, serviceType, date) : null
     const useFrozenFinancial = financial != null && Number.isFinite(Number(financial.bill_rate ?? NaN))
+    const useFrozenApproval = approval != null && Number.isFinite(Number(approval.bill_rate ?? NaN))
 
     let actualHours = fallbackActualHours
     let billableHours = fallbackBillableHours
@@ -248,6 +253,11 @@ export async function fetchTimeBillingRows(supabase: Supabase): Promise<{ rows: 
       billRate = Number(financial.bill_rate ?? 0)
       payAmount = round2(Number(financial.pay_amount ?? 0))
       billAmount = round2(Number(financial.bill_amount ?? 0))
+    } else if (useFrozenApproval && approval) {
+      payRate = Number(approval.pay_rate ?? 0)
+      billRate = Number(approval.bill_rate ?? 0)
+      payAmount = round2(calcAmount(actualHours, payRate, pay?.unit_type))
+      billAmount = round2(calcAmount(billableHours, billRate, contract?.bill_unit_type))
     }
 
     const caregiverLabel = caregiverId

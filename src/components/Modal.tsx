@@ -19,6 +19,8 @@ interface ModalProps {
   lockBodyScroll?: boolean
   /** Set false so only the top stacked modal reacts to Escape. */
   closeOnEscape?: boolean
+  /** Set false to prevent closing when clicking backdrop. */
+  closeOnBackdropClick?: boolean
 }
 
 export default function Modal({
@@ -32,6 +34,7 @@ export default function Modal({
   overlayClassName,
   lockBodyScroll = true,
   closeOnEscape = true,
+  closeOnBackdropClick = true,
 }: ModalProps) {
   useEffect(() => {
     if (!lockBodyScroll) return
@@ -71,7 +74,7 @@ export default function Modal({
   return (
     <div
       className={`fixed inset-0 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm ${overlayClassName ?? 'z-50'}`}
-      onClick={onClose}
+      onClick={closeOnBackdropClick ? onClose : undefined}
     >
       <div
         className={`bg-white rounded-xl shadow-2xl w-full ${sizeClasses[size]} max-h-[90vh] overflow-y-auto overflow-x-hidden`}

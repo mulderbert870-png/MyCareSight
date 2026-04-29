@@ -24,6 +24,9 @@ async function getPatientAgencyId(supabase: Supabase, patientId: string): Promis
 }
 
 export async function getPatientServiceContractsByPatientId(supabase: Supabase, patientId: string) {
+  await supabase.rpc('reconcile_patient_service_contract_statuses', {
+    p_patient_id: patientId,
+  })
   return supabase
     .from('patient_service_contracts')
     .select('*')
@@ -68,4 +71,46 @@ export async function insertPatientServiceContract(
   if (!insertedId) return { data: null, error: { message: 'Insert did not return row id' } }
 
   return supabase.from('patient_service_contracts').select('*').eq('id', insertedId).single()
+}
+
+export async function updatePatientServiceContractStatus(
+  supabase: Supabase,
+  id: string,
+  status: 'active' | 'inactive'
+) {
+  return supabase.rpc('set_patient_service_contract_status', {
+    p_contract_id: id,
+    p_status: status,
+  })
+}
+
+export async function updatePatientServiceContractDetails(
+  supabase: Supabase,
+  id: string,
+  data: {
+    contract_name?: string | null
+    end_date?: string | null
+    note?: string | null
+  }
+) {
+  const patch: Record<string, string | null> = {
+    updated_at: new Date().toISOString(),
+  }
+  if (data.contract_name !== undefined) patch.contract_name = data.contract_name
+  if (data.end_date !== undefined) patch.end_date = data.end_date
+  if (data.note !== undefined) patch.note = data.note
+  return supabase.from('patient_service_contracts').update(patch).eq('id', id).select('*').single()
+}
+
+export async function deletePatientServiceContract(supabase: Supabase, id: string) {
+  const rpcRes = await supabase.rpc('delete_patient_service_contract', {
+    p_contract_id: id,
+  })
+  if (!rpcRes.error) return { data: rpcRes.data, error: null }
+  const msg = String(rpcRes.error.message ?? '').toLowerCase()
+  // Backward-compat fallback when migration is not applied yet.
+  if (msg.includes('function') && msg.includes('delete_patient_service_contract') && msg.includes('does not exist')) {
+    return supabase.from('patient_service_contracts').delete().eq('id', id)
+  }
+  return { data: null, error: rpcRes.error }
 }

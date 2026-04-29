@@ -1,5 +1,11 @@
 import type { Supabase } from '../types'
 
+type ExpertStateRow = {
+  id: string
+  expert_id: string
+  state: string
+}
+
 /** RPC: create licensing expert (handles user + licensing_experts row). */
 export async function rpcCreateLicensingExpert(
   supabase: Supabase,
@@ -44,7 +50,7 @@ export type LicensingExpertListFilters = {
   search?: string
   /** `'All Status'` skips; otherwise matches `status` (lowercased). */
   status?: string
-  /** `'All States'` skips; filters via `expert_states`. */
+  /** Deprecated: state filter removed after dropping `expert_states`. */
   state?: string
 }
 
@@ -62,16 +68,7 @@ export async function getLicensingExpertsFiltered(supabase: Supabase, filters: L
     qb = qb.eq('status', filters.status.trim().toLowerCase())
   }
 
-  if (filters.state && filters.state !== 'All States') {
-    const { data: stateRows, error: stErr } = await supabase
-      .from('expert_states')
-      .select('expert_id')
-      .eq('state', filters.state)
-    if (stErr) return { data: null, error: stErr }
-    const ids = Array.from(new Set((stateRows ?? []).map((r: { expert_id: string }) => r.expert_id).filter(Boolean)))
-    if (ids.length === 0) return { data: [], error: null }
-    qb = qb.in('id', ids)
-  }
+  // state filter intentionally ignored (legacy `expert_states` removed)
 
   return qb
 }
@@ -103,13 +100,16 @@ export async function getLicensingExpertsActive(supabase: Supabase) {
 
 /** Get expert_states by expert_id. */
 export async function getExpertStatesByExpertId(supabase: Supabase, expertId: string) {
-  return supabase.from('expert_states').select('*').eq('expert_id', expertId)
+  const _supabase = supabase
+  const _expertId = expertId
+  return { data: [] as ExpertStateRow[], error: null }
 }
 
 /** Get expert_states by expert ids. */
 export async function getExpertStatesByExpertIds(supabase: Supabase, expertIds: string[]) {
-  if (expertIds.length === 0) return { data: [], error: null }
-  return supabase.from('expert_states').select('*').in('expert_id', expertIds)
+  const _supabase = supabase
+  const _expertIds = expertIds
+  return { data: [] as ExpertStateRow[], error: null }
 }
 
 /** Get licensing_expert by user_id. */
