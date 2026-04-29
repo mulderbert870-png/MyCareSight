@@ -1,44 +1,17 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useTransition } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { Users, CheckCircle2, FileText, Plus, Search, Eye, Loader2 } from 'lucide-react'
+import LoadingSpinner from '@/components/LoadingSpinner'
 import AddNewClientModal from './AddNewClientModal'
 import { createClient } from '@/lib/supabase/client'
 import * as q from '@/lib/supabase/query'
-
-interface SmallClient {
-  id: string
-  full_name: string
-  date_of_birth: string
-  age: number | null
-  gender: string | null
-  class: string | null
-  phone_number: string
-  email_address: string
-  emergency_contact_name: string
-  emergency_phone: string
-  representative_1_name: string | null
-  representative_1_relationship: string | null
-  representative_1_phone: string | null
-  representative_2_name: string | null
-  representative_2_relationship: string | null
-  representative_2_phone: string | null
-  status: 'active' | 'inactive'
-  created_at: string
-  patients_representatives: Representative[]
-}
-
-interface Representative {
-  id: string
-  name: string
-  relationship: string | null
-  phone_number: string | null
-  email_address: string | null
-}
+import { mapInsertedPatientToListPatient, type ClientsListPatient } from '@/lib/map-inserted-patient-to-list-row'
 
 interface ClientsContentProps {
-  clients: SmallClient[]
+  clients: ClientsListPatient[]
 }
 
 export default function ClientsContent({ clients: initialClients }: ClientsContentProps) {
@@ -46,13 +19,33 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<'All Status' | 'active' | 'inactive'>('All Status')
-  const [clients, setClients] = useState(initialClients)
+  const [clients, setClients] = useState<ClientsListPatient[]>(initialClients)
   const [navigatingClientId, setNavigatingClientId] = useState<string | null>(null)
+  const [, startNavigationTransition] = useTransition()
+  const [portalMounted, setPortalMounted] = useState(false)
+
+  useEffect(() => {
+    setPortalMounted(true)
+  }, [])
+
+  useEffect(() => {
+    setClients((prev) => {
+      const serverIds = new Set(initialClients.map((c) => c.id))
+      const pendingOnlyOnClient = prev.filter((p) => !serverIds.has(p.id))
+      return [...pendingOnlyOnClient, ...initialClients]
+    })
+  }, [initialClients])
 
   const handleOpenClientDetails = (clientId: string) => {
     if (navigatingClientId) return
     setNavigatingClientId(clientId)
-    router.push(`/pages/agency/clients/${clientId}`)
+    const safetyMs = 25_000
+    setTimeout(() => {
+      setNavigatingClientId((cur) => (cur === clientId ? null : cur))
+    }, safetyMs)
+    startNavigationTransition(() => {
+      router.push(`/pages/agency/clients/${clientId}`)
+    })
   }
 
   // Calculate statistics
@@ -69,7 +62,9 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
         const matchesSearch = 
           client.full_name.toLowerCase().includes(query) ||
           client.email_address.toLowerCase().includes(query) ||
-          client.phone_number.includes(query)
+          client.phone_number.includes(query) ||
+          (client.emergency_contact_name ?? '').toLowerCase().includes(query) ||
+          (client.emergency_phone ?? '').includes(query)
         if (!matchesSearch) return false
       }
 
@@ -126,14 +121,15 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
   }
 
   return (
-    <div className="space-y-6 relative">
-      {navigatingClientId && (
-        <div className="absolute inset-0 z-50 bg-white/80 backdrop-blur-[1px] flex items-center justify-center">
-          <div className="rounded-full border border-blue-100 bg-white p-3 shadow-md text-blue-700">
-            <Loader2 className="w-6 h-6 animate-spin" />
-          </div>
-        </div>
-      )}
+    <div className="space-y-6">
+      {portalMounted &&
+        navigatingClientId &&
+        createPortal(
+          <div aria-busy="true" aria-live="polite">
+            <LoadingSpinner overlayZClass="z-[200]" />
+          </div>,
+          document.body
+        )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -225,6 +221,8 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">CLIENT</th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">GENDER</th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">CLASS</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">PATIENT PHONE</th>
+                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">EMERGENCY CONTACT</th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">REPRESENTATIVE #1</th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">REPRESENTATIVE #2</th>
                 <th className="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">STATUS</th>
@@ -260,6 +258,19 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
                         </span>
                       ) : (
                         <span className="text-sm text-gray-500">N/A</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {client.phone_number?.trim() ? client.phone_number : <span className="text-gray-400">-</span>}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {client.emergency_contact_name?.trim() ? (
+                        <div>
+                          <div>{client.emergency_contact_name}</div>
+                          <div className="text-xs text-gray-500">{client.emergency_phone?.trim() || 'No phone'}</div>
+                        </div>
+                      ) : (
+                        <span className="text-gray-400">-</span>
                       )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
@@ -324,7 +335,7 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
+                  <td colSpan={9} className="px-6 py-12 text-center text-gray-500">
                     <Users className="w-12 h-12 mx-auto mb-2 text-gray-300" />
                     <p>No clients found</p>
                   </td>
@@ -339,9 +350,10 @@ export default function ClientsContent({ clients: initialClients }: ClientsConte
       <AddNewClientModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        onSuccess={() => {
-          // Refresh the page data
-          router.refresh()
+        onSuccess={(insertedRow) => {
+          if (!insertedRow) return
+          const next = mapInsertedPatientToListPatient(insertedRow)
+          setClients((prev) => [next, ...prev.filter((c) => c.id !== next.id)])
         }}
       />
     </div>

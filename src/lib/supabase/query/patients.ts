@@ -1,11 +1,22 @@
 import type { Supabase } from '../types'
 
-/** Insert a patient and return the result. */
+const patientListInsertSelect = `
+  *,
+  patients_representatives (
+    id,
+    name,
+    relationship,
+    phone_number,
+    email_address
+  )
+`
+
+/** Insert a patient and return the new row shaped like agency client list reads (with representatives). */
 export async function insertPatient(
   supabase: Supabase,
   data: Record<string, unknown>
 ) {
-  return supabase.from('patients').insert(data)
+  return supabase.from('patients').insert(data).select(patientListInsertSelect).single()
 }
 
 /** Get patients by owner_id. */

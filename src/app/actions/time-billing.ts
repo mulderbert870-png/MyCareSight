@@ -7,13 +7,20 @@ import {
   clearVisitApprovalAndFinancialsOnVoid,
   syncVisitApprovalAndFinancialsOnApprove,
 } from '@/lib/visit-approval-financials'
+import type { PatientServiceContractRow } from '@/lib/supabase/query/patient-service-contracts'
+import {
+  patientServiceContractOverlapsDate,
+  sortPatientServiceContractsByRecency,
+  WEEKLY_HOURS_CONTRACT_TYPE,
+} from '@/lib/patient-service-contract-effective'
 
 const PATH = '/pages/agency/time-billing'
 const REPORT_PAYROLL_PATH = '/pages/agency/reports/payroll-billing'
 
 type PendingPayload = {
   scheduledVisitId: string
-  hours: number
+  actualHours: number
+  billableHours: number
   note: string
   serviceType: 'non_skilled' | 'skilled'
 }
@@ -24,9 +31,10 @@ async function applyTimeBillingVisitUpdate(
   input: PendingPayload,
   billingState: 'approved' | 'voided'
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const hours = Number(input.hours)
-  if (!Number.isFinite(hours) || hours < 0) {
-    return { ok: false, error: 'Hours must be a valid number.' }
+  const actualHours = Number(input.actualHours)
+  const billableHours = Number(input.billableHours)
+  if (!Number.isFinite(actualHours) || actualHours < 0 || !Number.isFinite(billableHours) || billableHours < 0) {
+    return { ok: false, error: 'Actual/Billable hours must be valid numbers.' }
   }
 
   const { data: sv, error: svErr } = await supabase
@@ -61,25 +69,22 @@ async function applyTimeBillingVisitUpdate(
   const note = input.note?.trim() ? input.note.trim() : null
   const visitDate = String(visit.visit_date ?? '')
 
-  const { data: contract } = await supabase
+  const { data: contractRows } = await supabase
     .from('patient_service_contracts')
-    .select('id, bill_rate, bill_unit_type, billing_code_id, effective_date, end_date, status')
+    .select(
+      'id, bill_rate, bill_unit_type, billing_code_id, effective_date, end_date, status, contract_type, created_at, updated_at'
+    )
     .eq('patient_id', visit.patient_id)
     .eq('service_type', input.serviceType)
-    .eq('status', 'active')
-    .lte('effective_date', visitDate)
-    .or(`end_date.is.null,end_date.gte.${visitDate}`)
-    .order('effective_date', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .neq('contract_type', WEEKLY_HOURS_CONTRACT_TYPE)
 
-  const frozenBillRate = Number(contract?.bill_rate ?? 0)
-  const frozenBillAmount = (() => {
-    const unit = String(contract?.bill_unit_type ?? 'hour')
-    if (unit === 'visit') return frozenBillRate
-    if (unit === '15_min_unit') return frozenBillRate * Math.round(hours * 4)
-    return frozenBillRate * hours
-  })()
+  const contractCandidates = ((contractRows ?? []) as PatientServiceContractRow[]).filter((c) =>
+    patientServiceContractOverlapsDate(c, visitDate)
+  )
+  const contract =
+    contractCandidates.length === 0
+      ? null
+      : [...contractCandidates].sort(sortPatientServiceContractsByRecency)[0]
 
   if (billingState === 'approved') {
     if (!userId) {
@@ -97,7 +102,8 @@ async function applyTimeBillingVisitUpdate(
         scheduled_start_time: visit.scheduled_start_time,
         scheduled_end_time: visit.scheduled_end_time,
       },
-      billableHours: hours,
+      actualHours,
+      billableHours,
       serviceType: input.serviceType,
       contract: contract
         ? {
@@ -128,24 +134,8 @@ async function applyTimeBillingVisitUpdate(
       note,
     })
     if (!cleared.ok) return cleared
-  }
-
-  const { error: billErr } = await supabase
-    .from('scheduled_visits')
-    .update({
-      service_type: input.serviceType,
-      billing_state: billingState,
-      billing_hours: hours,
-      billing_note: note,
-      billing_rate: Number.isFinite(frozenBillRate) ? frozenBillRate : 0,
-      billing_amount: Number.isFinite(frozenBillAmount) ? Math.round((frozenBillAmount + Number.EPSILON) * 100) / 100 : 0,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', input.scheduledVisitId)
-    .eq('status', 'completed')
-
-  if (billErr) {
-    return { ok: false, error: billErr.message || 'Could not update billing on visit.' }
+  } else if (billingState === 'voided') {
+    return { ok: false, error: 'You must be signed in to void hours.' }
   }
 
   return { ok: true }

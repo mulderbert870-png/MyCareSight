@@ -29,29 +29,44 @@ export default async function StaffPage() {
   const staffRoleNames = (staffRolesData ?? []).map((role: { name?: string }) => role.name).filter(Boolean) as string[]
 
   const staffMemberIds = staffMembers.map((s) => s.id)
+  const todayYmd = new Date().toISOString().slice(0, 10)
 
-  const { data: openPayRates } =
+  const { data: currentEffectivePayRates } =
     staffMemberIds.length > 0
       ? await supabase
           .from('caregiver_pay_rates')
-          .select('caregiver_member_id, pay_rate, service_type')
+          .select('caregiver_member_id, pay_rate, service_type, effective_start')
           .in('caregiver_member_id', staffMemberIds)
-          .is('effective_end', null)
-      : { data: [] as { caregiver_member_id: string; pay_rate: number; service_type: string | null }[] }
+          .lte('effective_start', todayYmd)
+          .or(`effective_end.is.null,effective_end.gt.${todayYmd}`)
+      : {
+          data: [] as {
+            caregiver_member_id: string
+            pay_rate: number
+            service_type: string | null
+            effective_start: string
+          }[],
+        }
 
   const currentPayRateByCaregiverId = new Map<string, number>()
-  const openRows = openPayRates ?? []
-  for (const row of openRows) {
-    const id = row.caregiver_member_id as string
-    if (currentPayRateByCaregiverId.has(id)) continue
-    if (row.service_type == null) {
-      currentPayRateByCaregiverId.set(id, Number(row.pay_rate))
-    }
+  const byCaregiver = new Map<string, typeof currentEffectivePayRates>()
+  for (const row of currentEffectivePayRates ?? []) {
+    const id = String((row as { caregiver_member_id: string }).caregiver_member_id)
+    const existing = byCaregiver.get(id) ?? []
+    existing.push(row)
+    byCaregiver.set(id, existing)
   }
-  for (const row of openRows) {
-    const id = row.caregiver_member_id as string
-    if (!currentPayRateByCaregiverId.has(id)) {
-      currentPayRateByCaregiverId.set(id, Number(row.pay_rate))
+  for (const [caregiverId, rows] of byCaregiver) {
+    const sorted = [...(rows ?? [])].sort((a, b) => {
+      const sa = String((a as { effective_start?: string | null }).effective_start ?? '')
+      const sb = String((b as { effective_start?: string | null }).effective_start ?? '')
+      return sb.localeCompare(sa)
+    })
+    const defaultBand = sorted.find((r) => (r as { service_type?: string | null }).service_type == null)
+    const chosen = defaultBand ?? sorted[0]
+    const n = Number((chosen as { pay_rate?: number | null }).pay_rate ?? NaN)
+    if (Number.isFinite(n)) {
+      currentPayRateByCaregiverId.set(caregiverId, n)
     }
   }
 

@@ -14,7 +14,8 @@ type AddNewClientModalMode = 'agency_admin' | 'care_recipient'
 interface AddNewClientModalProps {
   isOpen: boolean
   onClose: () => void
-  onSuccess?: () => void
+  /** Care recipient inserts return the inserted row for immediate list merge; agency admin ignores args. */
+  onSuccess?: (insertedPatient?: Record<string, unknown>) => void
   /** When 'agency_admin', form targets clients table (company/contact fields). When 'care_recipient', targets patients. */
   mode?: AddNewClientModalMode
 }
@@ -95,7 +96,7 @@ export default function AddNewClientModal({ isOpen, onClose, onSuccess, mode = '
 
         setAgencyFormData(AGENCY_FORM_INITIAL)
         onSuccess?.()
-        router.refresh()
+        await router.refresh()
         onClose()
         return
       }
@@ -123,7 +124,7 @@ export default function AddNewClientModal({ isOpen, onClose, onSuccess, mode = '
         return
       }
 
-      const { error: insertError } = await q.insertPatient(supabase, {
+      const { data: insertedPatient, error: insertError } = await q.insertPatient(supabase, {
         agency_id: clientContext.agency_id,
         full_name: formData.full_name,
         date_of_birth: formData.date_of_birth,
@@ -143,8 +144,8 @@ export default function AddNewClientModal({ isOpen, onClose, onSuccess, mode = '
         status: 'active',
       })
 
-      if (insertError) {
-        setError(insertError.message)
+      if (insertError || !insertedPatient) {
+        setError(insertError?.message ?? 'Failed to create client profile.')
         setIsLoading(false)
         return
       }
@@ -167,8 +168,8 @@ export default function AddNewClientModal({ isOpen, onClose, onSuccess, mode = '
         class: ''
       })
 
-      onSuccess?.()
-      router.refresh()
+      onSuccess?.(insertedPatient as Record<string, unknown>)
+      await router.refresh()
       onClose()
     } catch (err) {
       setError('An unexpected error occurred. Please try again.')

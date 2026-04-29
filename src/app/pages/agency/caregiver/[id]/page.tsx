@@ -34,17 +34,26 @@ export default async function CaregiverProfilePage({
 
   if (staffError || !staff) redirect('/pages/agency/caregiver')
 
+  const todayYmd = new Date().toISOString().slice(0, 10)
   const { data: openPayRows } = await supabase
     .from('caregiver_pay_rates')
-    .select('pay_rate, service_type')
+    .select('pay_rate, service_type, effective_start')
     .eq('caregiver_member_id', staffId)
-    .is('effective_end', null)
+    .lte('effective_start', todayYmd)
+    .or(`effective_end.is.null,effective_end.gt.${todayYmd}`)
 
   let currentPayRate: number | null = null
-  const rows = openPayRows ?? []
+  const rows = [...(openPayRows ?? [])].sort((a, b) => {
+    const sa = String((a as { effective_start?: string | null }).effective_start ?? '')
+    const sb = String((b as { effective_start?: string | null }).effective_start ?? '')
+    return sb.localeCompare(sa)
+  })
   const defaultBand = rows.find((r) => r.service_type == null)
-  if (defaultBand) currentPayRate = Number(defaultBand.pay_rate)
-  else if (rows[0]) currentPayRate = Number(rows[0].pay_rate)
+  const chosen = defaultBand ?? rows[0]
+  if (chosen) {
+    const n = Number(chosen.pay_rate)
+    if (Number.isFinite(n)) currentPayRate = n
+  }
 
   const { data: staffLicensesData } = await q.getStaffLicensesByStaffMemberIds(supabase, [staffId])
   const allStaffLicenses = (staffLicensesData ?? []).map((license: any) => ({

@@ -414,11 +414,6 @@ Deno.serve(async (req) => {
       visit_type: t.visit_type ?? series.series_name,
       status: 'scheduled',
       is_recurring: true,
-      repeat_frequency: series.repeat_frequency,
-      days_of_week: series.days_of_week,
-      repeat_start: series.repeat_start,
-      repeat_end: series.repeat_end,
-      repeat_monthly_rules: series.repeat_monthly_rules,
     }
 
     const { data: inserted, error: insErr } = await supabase

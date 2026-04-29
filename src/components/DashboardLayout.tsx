@@ -36,7 +36,7 @@ interface DashboardLayoutProps {
   } | null
   unreadNotifications?: number
   careVisitsPendingCount?: number
-  /** Completed visits awaiting hours approval (billing_state = pending). */
+  /** Completed visits awaiting hours approval (visit_financials.status = pending). */
   timeBillingPendingCount?: number
   application?: {
     id: string
@@ -97,10 +97,9 @@ export default function DashboardLayout({
     const supabase = createClient()
     ;(async () => {
       const { count, error } = await supabase
-        .from('scheduled_visits')
+        .from('visit_financials')
         .select('id', { count: 'exact', head: true })
-        .eq('status', 'completed')
-        .eq('billing_state', 'pending')
+        .eq('status', 'pending')
       if (!isMounted || error) return
       setResolvedTimeBillingPendingCount(count ?? 0)
     })()

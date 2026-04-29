@@ -6,6 +6,7 @@ import * as q from '@/lib/supabase/query'
 import type { PatientDocument } from '@/lib/supabase/query/patients'
 
 function revalidateAgencyPatientDetailPath(patientId: string) {
+  revalidatePath('/pages/agency/clients')
   revalidatePath(`/pages/agency/clients/${patientId}`)
 }
 

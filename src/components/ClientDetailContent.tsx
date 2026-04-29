@@ -53,6 +53,10 @@ import { visitStatusBadgeClass, visitStatusFromScheduleRow } from '@/lib/visit-s
 import type { PatientContractedHoursRow } from '@/lib/supabase/query/patient-contracted-hours'
 import type { PatientSkilledTaskDaySchedule, SkilledCarePlanTask } from '@/lib/supabase/query/skilled-care-plan'
 import type { PatientServiceContractRow } from '@/lib/supabase/query/patient-service-contracts'
+import {
+  patientServiceContractUiPhase,
+  patientServiceContractsSelectableForBillingVisit,
+} from '@/lib/patient-service-contract-effective'
 import Modal from '@/components/Modal'
 import zipcodes from 'zipcodes'
 
@@ -2352,15 +2356,36 @@ export default function ClientDetailContent({ client, allClients, representative
     )
   }
 
+  /** Billing contract(s) valid on the visit anchor date (visit date or repeat start), excluding weekly_hours-only rows. */
+  const visitContractAsOfDate = useMemo(() => {
+    const raw = visitForm.isRecurring ? visitForm.repeatStart : visitForm.date
+    if (raw && /^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw
+    return toLocalDateString(new Date())
+  }, [visitForm.isRecurring, visitForm.repeatStart, visitForm.date])
+
   const activeContracts = useMemo(
-    () => serviceContracts.filter((c) => (c.status ?? 'active') === 'active'),
-    [serviceContracts]
+    () => patientServiceContractsSelectableForBillingVisit(serviceContracts, visitContractAsOfDate),
+    [serviceContracts, visitContractAsOfDate]
   )
 
   const selectedVisitContract = useMemo(
     () => activeContracts.find((c) => c.id === visitForm.contractId) ?? null,
     [activeContracts, visitForm.contractId]
   )
+
+  const serviceContractsModalStatusAsOf = toLocalDateString(new Date())
+
+  useEffect(() => {
+    const list = patientServiceContractsSelectableForBillingVisit(serviceContracts, visitContractAsOfDate)
+    if (list.length === 0) {
+      setVisitForm((p) => (p.contractId ? { ...p, contractId: '' } : p))
+      return
+    }
+    setVisitForm((p) => {
+      if (list.some((c) => c.id === p.contractId)) return p
+      return { ...p, contractId: list[0]!.id }
+    })
+  }, [serviceContracts, visitContractAsOfDate])
 
   /** Pill segmented control for Details / ADLs in visit modals (matches design: grey track, white active segment). */
   const visitModalHeaderTabs = (
@@ -2965,17 +2990,16 @@ export default function ClientDetailContent({ client, allClients, representative
         setServiceContractError(error?.message ?? 'Failed to save contract.')
         return
       }
-      setServiceContracts((prev) => {
-        const inserted = data as PatientServiceContractRow
-        // Keep list status in sync immediately: newest contract is active, previous same-service active contracts become inactive.
-        const updatedPrev = prev.map((x) =>
-          x.id !== inserted.id && x.service_type === inserted.service_type && (x.status ?? 'active') === 'active'
-            ? { ...x, status: 'inactive' }
-            : x
-        )
-        return [{ ...inserted, status: 'active' }, ...updatedPrev.filter((x) => x.id !== inserted.id)]
-      })
-      setVisitForm((p) => ({ ...p, contractId: data.id }))
+      const { data: refreshed, error: refetchErr } = await q.getPatientServiceContractsByPatientId(supabase, localClient.id)
+      if (!refetchErr && refreshed) {
+        setServiceContracts((refreshed ?? []) as PatientServiceContractRow[])
+      } else {
+        setServiceContracts((prev) => {
+          const inserted = data as PatientServiceContractRow
+          return [inserted, ...prev.filter((x) => x.id !== inserted.id)]
+        })
+      }
+      setVisitForm((p) => ({ ...p, contractId: (data as PatientServiceContractRow).id }))
       setServiceContractForm((p) => ({
         ...p,
         contract_name: '',
@@ -3594,10 +3618,9 @@ export default function ClientDetailContent({ client, allClients, representative
 
   /**
    * Schedule tab: weekly hour limit row per service type for the **selected calendar week**.
-   * Must include inactive contracts: when a new contract is saved, older rows are marked inactive
-   * but still hold the limit that governed past weeks. Pick among all rows with a limit whose
-   * [effective_date, end_date] window overlaps the week, choosing the latest effective_date
-   * (then created_at, id) so past weeks use the contract that was in force then, not the newest row.
+   * Includes historical rows: timeline is `effective_date` / `end_date` (RPC does not rely on `status`).
+   * Pick among rows with a limit whose window overlaps the week, latest effective_date
+   * (then created_at, id) so past weeks use the contract that was in force then.
    */
   const currentWeeklyLimitByServiceType = useMemo(() => {
     const weekStart = scheduleWeekStartStr
@@ -4315,19 +4338,23 @@ export default function ClientDetailContent({ client, allClients, representative
                       const row = latestOverviewWeeklyByServiceType[key]
                       const label = key === 'skilled' ? 'Skilled' : 'Non-skilled'
                       const prevRows = overviewPreviousWeeklyByServiceType[key]
+                      const ocAsOf = toLocalDateString(new Date())
+                      const rowPhase = row ? patientServiceContractUiPhase(row, serviceContracts, ocAsOf) : null
                       return (
                         <div key={key} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
                           <div className="flex items-center justify-between gap-2">
                             <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">{label}</p>
-                            {row ? (
+                            {row && rowPhase ? (
                               <span
                                 className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${
-                                  (row.status ?? 'active') === 'active'
+                                  rowPhase === 'current'
                                     ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-gray-200 text-gray-600'
+                                    : rowPhase === 'future'
+                                      ? 'bg-sky-100 text-sky-800'
+                                      : 'bg-gray-200 text-gray-600'
                                 }`}
                               >
-                                {(row.status ?? 'active') === 'active' ? 'Active' : 'Inactive'}
+                                {rowPhase === 'current' ? 'Current' : rowPhase === 'future' ? 'Future' : 'Ended'}
                               </span>
                             ) : null}
                           </div>
@@ -4359,7 +4386,7 @@ export default function ClientDetailContent({ client, allClients, representative
                                         {Number(p.weekly_hours_limit ?? 0)} hrs ·{' '}
                                         {p.bill_rate != null ? `${formatMoney(Number(p.bill_rate))}/${p.bill_unit_type}` : '—'} ·{' '}
                                         <span className="text-gray-400">
-                                          {(p.status ?? 'active') === 'active' ? 'active' : 'inactive'}
+                                          {patientServiceContractUiPhase(p, serviceContracts, ocAsOf)}
                                         </span>
                                       </span>
                                       <span className="shrink-0 tabular-nums">{formatShortDate(p.effective_date)}</span>
@@ -6788,7 +6815,9 @@ export default function ClientDetailContent({ client, allClients, representative
                 ))}
               </select>
               {activeContracts.length === 0 ? (
-                <p className="mt-1 text-xs text-amber-700">No active contracts on file. Add a contract before scheduling visits.</p>
+                <p className="mt-1 text-xs text-amber-700">
+                  No billing contract covers this visit date. Add or adjust contracts in Manage contracts.
+                </p>
               ) : null}
             </div>
             <div>
@@ -7525,7 +7554,7 @@ export default function ClientDetailContent({ client, allClients, representative
       >
         <div className="space-y-4">
           <p className="text-sm text-gray-500 -mt-2">
-            Track billing contracts per service type. Only one active contract per service type is allowed at a time.
+            Track billing contracts by service type. Current vs ended is determined from effective and end dates (same timeline rules as the database).
           </p>
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
             <h4 className="text-sm font-semibold text-gray-900">New Contract</h4>
@@ -7593,7 +7622,7 @@ export default function ClientDetailContent({ client, allClients, representative
               <textarea value={serviceContractForm.note} onChange={(e) => setServiceContractForm((p) => ({ ...p, note: e.target.value }))} className="w-full rounded border border-gray-300 px-3 py-2 text-sm" rows={2} />
             </div>
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              If an active contract already exists for the same service type, it will be automatically expired when this contract becomes active.
+              For the same contract type and service type, saving a new effective date closes the previous open-ended row on that date and starts the new row.
             </div>
             {serviceContractError ? <p className="text-sm text-red-600">{serviceContractError}</p> : null}
             <div className="flex justify-end">
@@ -7653,9 +7682,19 @@ export default function ClientDetailContent({ client, allClients, representative
                       <td className="p-2">{row.weekly_hours_limit ?? '—'}</td>
                       <td className="p-2">{formatShortDate(row.effective_date)}</td>
                       <td className="p-2">
-                        <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${row.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-600'}`}>
-                          {row.status === 'active' ? 'Active' : 'Inactive'}
-                        </span>
+                        {(() => {
+                          const ph = patientServiceContractUiPhase(row, serviceContracts, serviceContractsModalStatusAsOf)
+                          const label = ph === 'current' ? 'Current' : ph === 'future' ? 'Future' : 'Ended'
+                          const cls =
+                            ph === 'current'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : ph === 'future'
+                                ? 'bg-sky-100 text-sky-700'
+                                : 'bg-gray-100 text-gray-600'
+                          return (
+                            <span className={`inline-block rounded-full px-2 py-0.5 text-xs ${cls}`}>{label}</span>
+                          )
+                        })()}
                       </td>
                     </tr>
                   ))}

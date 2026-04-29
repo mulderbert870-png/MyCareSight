@@ -1,4 +1,3 @@
-import { unstable_cache } from 'next/cache'
 import { createAdminClient } from '@/lib/supabase/admin'
 import * as q from '@/lib/supabase/query'
 import { resolveEffectiveCompanyOwnerUserId } from '@/lib/agency-scope'
@@ -123,19 +122,13 @@ async function loadAgencyClientDetailBundleUncached(patientId: string, viewerUse
   }
 }
 
-const getAgencyClientDetailBundleCached = unstable_cache(
-  async (patientId: string, viewerUserId: string) => {
-    return loadAgencyClientDetailBundleUncached(patientId, viewerUserId)
-  },
-  ['agency-client-detail-bundle'],
-  { revalidate: 45 }
-)
-
 /**
- * Cached patient detail payload for agency client page. Scoped by `viewerUserId` + `patientId`.
- * Invalidation is path-targeted via `revalidatePath('/pages/agency/clients/[id]')` in patient write actions,
- * so only the changed patient page is refreshed immediately. TTL (45s) limits any residual staleness.
+ * Patient detail payload for the agency client page (viewer + patient scoped in the loader).
+ *
+ * Previously wrapped in `unstable_cache` with a TTL; that could return stale incidents / profile fields
+ * after `router.refresh()` until the TTL expired, which looked like “data only appears after a hard reload”.
+ * This loader always reads current DB state so client-side saves + `router.refresh()` stay consistent.
  */
 export function getCachedAgencyClientDetailBundle(patientId: string, viewerUserId: string) {
-  return getAgencyClientDetailBundleCached(patientId, viewerUserId)
+  return loadAgencyClientDetailBundleUncached(patientId, viewerUserId)
 }

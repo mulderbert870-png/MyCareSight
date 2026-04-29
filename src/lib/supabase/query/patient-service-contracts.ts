@@ -15,6 +15,7 @@ export type PatientServiceContractRow = {
   status: string
   note: string | null
   created_at: string
+  updated_at?: string
 }
 
 async function getPatientAgencyId(supabase: Supabase, patientId: string): Promise<string | null> {

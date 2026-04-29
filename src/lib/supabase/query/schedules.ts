@@ -63,19 +63,14 @@ const visitSelect = `
   visit_type,
   status,
   is_recurring,
-  repeat_frequency,
-  days_of_week,
-  repeat_start,
-  repeat_end,
-  repeat_monthly_rules,
   created_at,
-  updated_at,
-  legacy_schedule_id
+  updated_at
 `
 
 /** Same columns as {@link visitSelect} plus nested ADL/task rows (one round-trip). */
 const visitSelectWithTasks = `${visitSelect.trimEnd()},
-  scheduled_visit_tasks(legacy_task_code, sort_order)
+  scheduled_visit_tasks(legacy_task_code, sort_order),
+  visit_series(repeat_frequency, days_of_week, repeat_start, repeat_end, repeat_monthly_rules)
 `
 
 function pad2(n: number): string {
@@ -156,11 +151,6 @@ type ScheduledVisitDbRow = {
   visit_type: string | null
   status: string
   is_recurring: boolean
-  repeat_frequency: string | null
-  days_of_week: number[] | null
-  repeat_start: string | null
-  repeat_end: string | null
-  repeat_monthly_rules: unknown
   created_at: string
   updated_at: string
 }
@@ -172,6 +162,15 @@ type ScheduledVisitTaskNested = {
 
 type ScheduledVisitDbRowWithTasks = ScheduledVisitDbRow & {
   scheduled_visit_tasks?: ScheduledVisitTaskNested[] | null
+  visit_series?: VisitSeriesNested | VisitSeriesNested[] | null
+}
+
+type VisitSeriesNested = {
+  repeat_frequency: string | null
+  days_of_week: number[] | null
+  repeat_start: string | null
+  repeat_end: string | null
+  repeat_monthly_rules: unknown
 }
 
 function parseMonthlyRules(raw: unknown): { ordinal: number; weekday: number }[] | null {
@@ -188,8 +187,14 @@ function parseMonthlyRules(raw: unknown): { ordinal: number; weekday: number }[]
   return out.length ? out : null
 }
 
-function toScheduleRow(v: ScheduledVisitDbRow, adlCodes: string[]): ScheduleRow {
+function firstRel<T>(x: T | T[] | null | undefined): T | null {
+  if (x == null) return null
+  return Array.isArray(x) ? (x[0] ?? null) : x
+}
+
+function toScheduleRow(v: ScheduledVisitDbRowWithTasks, adlCodes: string[]): ScheduleRow {
   const localParts = toLocalVisitParts(v.visit_date, v.scheduled_start_time, v.scheduled_end_time)
+  const series = firstRel(v.visit_series)
   return {
     id: v.id,
     agency_id: v.agency_id,
@@ -205,11 +210,11 @@ function toScheduleRow(v: ScheduledVisitDbRow, adlCodes: string[]): ScheduleRow 
     type: v.visit_type,
     notes: v.notes,
     is_recurring: v.is_recurring,
-    repeat_frequency: v.repeat_frequency,
-    days_of_week: v.days_of_week,
-    repeat_monthly_rules: parseMonthlyRules(v.repeat_monthly_rules),
-    repeat_start: v.repeat_start,
-    repeat_end: v.repeat_end,
+    repeat_frequency: series?.repeat_frequency ?? null,
+    days_of_week: series?.days_of_week ?? null,
+    repeat_monthly_rules: parseMonthlyRules(series?.repeat_monthly_rules),
+    repeat_start: series?.repeat_start ?? null,
+    repeat_end: series?.repeat_end ?? null,
     status: v.status,
     created_at: v.created_at,
     updated_at: v.updated_at,
@@ -230,7 +235,7 @@ function adlCodesFromNestedTasks(tasks: ScheduledVisitTaskNested[] | null | unde
 /** Maps DB visit rows (with optional inline `scheduled_visit_tasks`) to {@link ScheduleRow}. */
 function mapVisitsToScheduleRows(visits: ScheduledVisitDbRowWithTasks[]): ScheduleRow[] {
   if (visits.length === 0) return []
-  return visits.map((v) => toScheduleRow(v as ScheduledVisitDbRow, adlCodesFromNestedTasks(v.scheduled_visit_tasks)))
+  return visits.map((v) => toScheduleRow(v, adlCodesFromNestedTasks(v.scheduled_visit_tasks)))
 }
 
 /** Get all visits for a patient as ScheduleRow[]. */
@@ -410,11 +415,6 @@ export async function insertSchedule(
   const agency = await requirePatientAgencyId(supabase, data.patient_id)
   if ('error' in agency) return { data: null, error: agency.error }
 
-  const monthly =
-    data.repeat_monthly_rules && data.repeat_monthly_rules.length > 0
-      ? data.repeat_monthly_rules
-      : null
-
   const utcParts = toUtcVisitParts(data.date, data.start_time ?? null, data.end_time ?? null)
   const { data: visit, error } = await supabase
     .from('scheduled_visits')
@@ -432,17 +432,12 @@ export async function insertSchedule(
       visit_type: data.type ?? null,
       status: 'scheduled',
       is_recurring: data.is_recurring ?? false,
-      repeat_frequency: data.repeat_frequency ?? null,
-      days_of_week: data.days_of_week?.length ? data.days_of_week.map((n) => Number(n)) : null,
-      repeat_start: data.repeat_start ?? null,
-      repeat_end: data.repeat_end ?? null,
-      repeat_monthly_rules: monthly,
     })
     .select(visitSelect)
     .single()
 
   if (error || !visit) return { data: null, error }
-  const v = visit as ScheduledVisitDbRow
+  const v = visit as ScheduledVisitDbRowWithTasks
   await replaceVisitTasks(supabase, agency.agency_id, v.id, data.adl_codes)
   const adlCodes = (data.adl_codes ?? []).filter(Boolean)
   return { data: toScheduleRow(v, adlCodes), error: null }
@@ -518,11 +513,6 @@ export async function insertRecurringSchedulesFromSeries(
       visit_type: data.type ?? null,
       status: 'scheduled',
       is_recurring: true,
-      repeat_frequency: data.repeat_frequency ?? null,
-      days_of_week: data.days_of_week?.length ? data.days_of_week.map((n) => Number(n)) : null,
-      repeat_start: data.repeat_start,
-      repeat_end: data.repeat_end ?? null,
-      repeat_monthly_rules: monthly,
     }
   })
 
@@ -532,7 +522,7 @@ export async function insertRecurringSchedulesFromSeries(
     .select(visitSelect)
 
   if (visitsError) return { data: null, error: visitsError }
-  const inserted = (visits ?? []) as ScheduledVisitDbRow[]
+  const inserted = (visits ?? []) as ScheduledVisitDbRowWithTasks[]
   await replaceVisitTasksForMany(
     supabase,
     agency.agency_id,
@@ -608,16 +598,6 @@ export async function updateSchedule(
   if (data.service_type !== undefined) patch.service_type = data.service_type
   if (data.notes !== undefined) patch.notes = data.notes
   if (data.is_recurring !== undefined) patch.is_recurring = data.is_recurring
-  if (data.repeat_frequency !== undefined) patch.repeat_frequency = data.repeat_frequency
-  if (data.days_of_week !== undefined) {
-    patch.days_of_week = data.days_of_week?.length ? data.days_of_week.map((n) => Number(n)) : null
-  }
-  if (data.repeat_start !== undefined) patch.repeat_start = data.repeat_start
-  if (data.repeat_end !== undefined) patch.repeat_end = data.repeat_end
-  if (data.repeat_monthly_rules !== undefined) {
-    patch.repeat_monthly_rules =
-      data.repeat_monthly_rules && data.repeat_monthly_rules.length > 0 ? data.repeat_monthly_rules : null
-  }
   if (data.status !== undefined) {
     patch.status = data.status === null || data.status === '' ? 'scheduled' : data.status
   }

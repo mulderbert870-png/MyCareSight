@@ -89,6 +89,7 @@ export default function PayrollBillingReportContent({
   const [dateTo, setDateTo] = useState(initialDateTo)
   const [rows, setRows] = useState<PayrollBillingDetailRow[]>(initialRows)
   const [error, setError] = useState<string | null>(loadError ?? null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [tab, setTab] = useState<TabKey>('detail')
   const [isPending, startTransition] = useTransition()
   const [rateModalOpen, setRateModalOpen] = useState(false)
@@ -111,6 +112,7 @@ export default function PayrollBillingReportContent({
     const byState = {
       pending: rows.filter((r) => r.billingState === 'pending').length,
       approved: rows.filter((r) => r.billingState === 'approved').length,
+      voided: rows.filter((r) => r.billingState === 'voided').length,
     }
     console.groupCollapsed('[PayrollBillingReportContent] rows billingState/rate debug')
     console.log('total rows:', rows.length, byState)
@@ -128,7 +130,13 @@ export default function PayrollBillingReportContent({
     console.groupEnd()
   }, [rows])
 
-  const filtered = useMemo(() => rows, [rows])
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter((r) =>
+      `${r.clientName} ${r.caregiverName} ${r.serviceTypeLabel}`.toLowerCase().includes(q)
+    )
+  }, [rows, searchQuery])
 
   const summary = useMemo(() => {
     const totalHours = filtered.reduce((s, r) => s + r.actualHours, 0)
@@ -217,7 +225,7 @@ export default function PayrollBillingReportContent({
         r.payAmount,
         r.billRate,
         r.billAmount,
-        r.billingState === 'pending' ? 'Pending' : 'Approved',
+        r.billingState === 'pending' ? 'Pending' : r.billingState === 'voided' ? 'Voided' : 'Approved',
       ])
     )
   }
@@ -332,6 +340,19 @@ export default function PayrollBillingReportContent({
             </button>
           </div>
         </div>
+        <div className="w-full sm:w-80">
+          <label className="block text-xs text-gray-500 mb-1">Search report</label>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Client, caregiver, service type"
+              className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm text-gray-900"
+            />
+          </div>
+        </div>
         {/* <button
           type="button"
           onClick={() => setRateModalOpen(true)}
@@ -429,6 +450,10 @@ export default function PayrollBillingReportContent({
                       {r.billingState === 'pending' ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 border border-amber-200">
                           Pending
+                        </span>
+                      ) : r.billingState === 'voided' ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 border border-gray-200">
+                          Voided
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800 border border-emerald-200">

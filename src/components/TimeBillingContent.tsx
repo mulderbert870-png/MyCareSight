@@ -41,9 +41,13 @@ function noteCellLabel(note: string | null | undefined): string {
 export default function TimeBillingContent({ rows, loadError }: Props) {
   const [activeTab, setActiveTab] = useState<TimeBillingStatus>('pending')
   const [pendingEdits, setPendingEdits] = useState<
-    Record<string, { hours: string; note: string; serviceType: 'non_skilled' | 'skilled' }>
+    Record<
+      string,
+      { actualHours: string; billableHours: string; note: string; serviceType: 'non_skilled' | 'skilled' }
+    >
   >({})
-  const [hoursEditingId, setHoursEditingId] = useState<string | null>(null)
+  const [actualHoursEditingId, setActualHoursEditingId] = useState<string | null>(null)
+  const [billableHoursEditingId, setBillableHoursEditingId] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -106,7 +110,7 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
     const pending = rowsMatchingFilters.filter((r) => r.status === 'pending')
     return {
       awaitingApproval: pending.length,
-      approvedHours: approved.reduce((sum, r) => sum + (r.hours || 0), 0),
+      approvedHours: approved.reduce((sum, r) => sum + (r.billableHours || 0), 0),
       totalPayroll: approved.reduce((sum, r) => sum + (r.payAmount || 0), 0),
       totalBilling: approved.reduce((sum, r) => sum + (r.billAmount || 0), 0),
     }
@@ -124,7 +128,8 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
 
   const getEdit = (row: TimeBillingRow) =>
     pendingEdits[row.id] ?? {
-      hours: String(row.hours ?? 0),
+      actualHours: String(row.actualHours ?? 0),
+      billableHours: String(row.billableHours ?? 0),
       note: row.note ?? '',
       serviceType: row.serviceType,
     }
@@ -133,7 +138,8 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
     const edit = getEdit(row)
     return {
       scheduledVisitId: row.scheduledVisitId,
-      hours: Number(edit.hours),
+      actualHours: Number(edit.actualHours),
+      billableHours: Number(edit.billableHours),
       note: edit.note,
       serviceType: edit.serviceType,
     }
@@ -141,10 +147,12 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
 
   const hoursEditedForRow = (row: TimeBillingRow): boolean => {
     const edit = getEdit(row)
-    const rowHours = round2(Number(row.hours ?? 0))
-    const editedHours = round2(Number(edit.hours))
-    if (!Number.isFinite(editedHours)) return false
-    return rowHours !== editedHours
+    const rowActual = round2(Number(row.actualHours ?? 0))
+    const rowBillable = round2(Number(row.billableHours ?? 0))
+    const editedActual = round2(Number(edit.actualHours))
+    const editedBillable = round2(Number(edit.billableHours))
+    if (!Number.isFinite(editedActual) || !Number.isFinite(editedBillable)) return false
+    return rowActual !== editedActual || rowBillable !== editedBillable
   }
 
   useEffect(() => {
@@ -352,7 +360,8 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
                 {activeTab !== 'voided' ? <th className="text-left px-3 py-2">Client</th> : null}
                 <th className="text-left px-3 py-2">Caregiver</th>
                 <th className="text-left px-3 py-2">Time</th>
-                <th className="text-left px-3 py-2">Hours</th>
+                <th className="text-left px-3 py-2">Actual Hours</th>
+                <th className="text-left px-3 py-2">Billable Hours</th>
                 <th className="text-left px-3 py-2">Service Type</th>
                 <th className="text-left px-3 py-2">Pay Rate</th>
                 <th className="text-left px-3 py-2">Pay Amt</th>
@@ -365,16 +374,17 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
             <tbody>
               {list.map((row) => {
                 const edit = getEdit(row)
-                const hoursNum = Number(edit.hours)
+                const actualHoursNum = Number(edit.actualHours)
+                const billableHoursNum = Number(edit.billableHours)
                 const isHoursEdited = hoursEditedForRow(row)
                 const requiresNoteForApprove = isHoursEdited && edit.note.trim() === ''
                 const displayPay =
-                  activeTab === 'pending' && Number.isFinite(hoursNum)
-                    ? estLineAmount(hoursNum, row.payRate)
+                  activeTab === 'pending' && Number.isFinite(actualHoursNum)
+                    ? estLineAmount(actualHoursNum, row.payRate)
                     : row.payAmount
                 const displayBill =
-                  activeTab === 'pending' && Number.isFinite(hoursNum)
-                    ? estLineAmount(hoursNum, row.billRate)
+                  activeTab === 'pending' && Number.isFinite(billableHoursNum)
+                    ? estLineAmount(billableHoursNum, row.billRate)
                     : row.billAmount
 
                 return (
@@ -385,16 +395,19 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
                     <td className="px-3 py-2">{row.timeLabel}</td>
                     <td className="px-3 py-2 group">
                       {activeTab === 'pending' ? (
-                        hoursEditingId === row.id ? (
+                        actualHoursEditingId === row.id ? (
                           <input
                             autoFocus
-                            value={edit.hours}
+                            value={edit.actualHours}
                             onChange={(e) =>
-                              setPendingEdits((prev) => ({ ...prev, [row.id]: { ...edit, hours: e.target.value } }))
+                              setPendingEdits((prev) => ({
+                                ...prev,
+                                [row.id]: { ...edit, actualHours: e.target.value },
+                              }))
                             }
-                            onBlur={() => setHoursEditingId(null)}
+                            onBlur={() => setActualHoursEditingId(null)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === 'Escape') setHoursEditingId(null)
+                              if (e.key === 'Enter' || e.key === 'Escape') setActualHoursEditingId(null)
                             }}
                             className="w-20 rounded border border-blue-300 px-2 py-1"
                             inputMode="decimal"
@@ -402,20 +415,62 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
                         ) : (
                           <div className="flex items-center gap-1.5 min-h-[36px]">
                             <span className="tabular-nums">
-                              {Number.isFinite(Number(edit.hours)) ? Number(edit.hours).toFixed(2) : edit.hours}
+                              {Number.isFinite(Number(edit.actualHours))
+                                ? Number(edit.actualHours).toFixed(2)
+                                : edit.actualHours}
                             </span>
                             <button
                               type="button"
                               className="inline-flex p-1 rounded text-gray-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 hover:bg-blue-50 transition-opacity"
-                              aria-label="Edit hours"
-                              onClick={() => setHoursEditingId(row.id)}
+                              aria-label="Edit actual hours"
+                              onClick={() => setActualHoursEditingId(row.id)}
                             >
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                           </div>
                         )
                       ) : (
-                        row.hours.toFixed(2)
+                        row.actualHours.toFixed(2)
+                      )}
+                    </td>
+                    <td className="px-3 py-2 group">
+                      {activeTab === 'pending' ? (
+                        billableHoursEditingId === row.id ? (
+                          <input
+                            autoFocus
+                            value={edit.billableHours}
+                            onChange={(e) =>
+                              setPendingEdits((prev) => ({
+                                ...prev,
+                                [row.id]: { ...edit, billableHours: e.target.value },
+                              }))
+                            }
+                            onBlur={() => setBillableHoursEditingId(null)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === 'Escape') setBillableHoursEditingId(null)
+                            }}
+                            className="w-20 rounded border border-blue-300 px-2 py-1"
+                            inputMode="decimal"
+                          />
+                        ) : (
+                          <div className="flex items-center gap-1.5 min-h-[36px]">
+                            <span className="tabular-nums">
+                              {Number.isFinite(Number(edit.billableHours))
+                                ? Number(edit.billableHours).toFixed(2)
+                                : edit.billableHours}
+                            </span>
+                            <button
+                              type="button"
+                              className="inline-flex p-1 rounded text-gray-400 opacity-0 group-hover:opacity-100 hover:text-blue-600 hover:bg-blue-50 transition-opacity"
+                              aria-label="Edit billable hours"
+                              onClick={() => setBillableHoursEditingId(row.id)}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )
+                      ) : (
+                        row.billableHours.toFixed(2)
                       )}
                     </td>
                     <td className="px-3 py-2">
@@ -530,7 +585,7 @@ export default function TimeBillingContent({ rows, loadError }: Props) {
               })}
               {list.length === 0 ? (
                 <tr>
-                  <td className="px-3 py-8 text-center text-gray-500" colSpan={12}>
+                  <td className="px-3 py-8 text-center text-gray-500" colSpan={13}>
                     No records found.
                   </td>
                 </tr>

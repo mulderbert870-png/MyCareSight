@@ -1,6 +1,4 @@
-/**
- * Resolve caregiver pay for a visit date from `caregiver_pay_rates` (and optional legacy `pay_rate_schedule`).
- */
+/** Resolve caregiver pay for a visit date from `caregiver_pay_rates`. */
 
 export type CaregiverPayRateRow = {
   caregiver_member_id: string
@@ -9,18 +7,6 @@ export type CaregiverPayRateRow = {
   service_type: string | null
   effective_start: string
   effective_end: string | null
-}
-
-export type LegacyPayRateScheduleRow = {
-  caregiver_member_id: string
-  rate: number
-  unit_type: string | null
-  service_type: string | null
-  effective_start: string
-  effective_end: string | null
-  status: string | null
-  credential_id?: string | null
-  task_id?: string | null
 }
 
 export function pickCaregiverPayRateForVisit(
@@ -47,60 +33,14 @@ export function pickCaregiverPayRateForVisit(
   return hit ?? null
 }
 
-/** Prefer rows that match optional task/credential when those columns are set on pay_rate_schedule. */
-export function pickLegacyPayRateScheduleForVisit(
-  caregiverId: string,
-  serviceType: string,
-  visitDate: string,
-  rows: LegacyPayRateScheduleRow[],
-  opts?: { taskId?: string | null; credentialId?: string | null }
-): LegacyPayRateScheduleRow | null {
-  const taskId = opts?.taskId?.trim() || null
-  const credentialId = opts?.credentialId?.trim() || null
-
-  const candidates = rows.filter(
-    (r) =>
-      r.caregiver_member_id === caregiverId &&
-      (r.service_type == null || r.service_type === serviceType) &&
-      r.status === 'active' &&
-      r.effective_start <= visitDate &&
-      (!r.effective_end || r.effective_end >= visitDate)
-  )
-  const score = (r: LegacyPayRateScheduleRow) => {
-    let s = 0
-    if (r.task_id && taskId && r.task_id === taskId) s += 4
-    else if (r.task_id) s -= 1
-    if (r.credential_id && credentialId && r.credential_id === credentialId) s += 4
-    else if (r.credential_id) s -= 1
-    if (r.service_type != null) s += 2
-    return s
-  }
-  return (
-    candidates
-      .sort((a, b) => {
-        const byScore = score(b) - score(a)
-        if (byScore !== 0) return byScore
-        const byStart = b.effective_start.localeCompare(a.effective_start)
-        if (byStart !== 0) return byStart
-        const aSpec = a.service_type != null ? 1 : 0
-        const bSpec = b.service_type != null ? 1 : 0
-        return bSpec - aSpec
-      })[0] ?? null
-  )
-}
-
-/** Prefer `caregiver_pay_rates`; fall back to legacy `pay_rate_schedule` when no match. */
+/** Resolve pay from caregiver_pay_rates only. */
 export function resolvePayRateForVisit(
   caregiverId: string,
   serviceType: string,
   visitDate: string,
-  caregiverPayRows: CaregiverPayRateRow[],
-  legacyScheduleRows: LegacyPayRateScheduleRow[],
-  legacyOpts?: { taskId?: string | null; credentialId?: string | null }
-): { rate: number; unit_type: string | null; source: 'caregiver_pay_rates' | 'pay_rate_schedule' } | null {
+  caregiverPayRows: CaregiverPayRateRow[]
+): { rate: number; unit_type: string | null; source: 'caregiver_pay_rates' } | null {
   const modern = pickCaregiverPayRateForVisit(caregiverId, serviceType, visitDate, caregiverPayRows)
   if (modern) return { rate: Number(modern.pay_rate ?? 0), unit_type: modern.unit_type, source: 'caregiver_pay_rates' }
-  const leg = pickLegacyPayRateScheduleForVisit(caregiverId, serviceType, visitDate, legacyScheduleRows, legacyOpts)
-  if (leg) return { rate: Number(leg.rate ?? 0), unit_type: leg.unit_type, source: 'pay_rate_schedule' }
   return null
 }
