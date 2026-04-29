@@ -82,7 +82,7 @@ export interface StaffCertificationReportRow {
   expiration: string
   status: 'Active' | 'Expiring Soon' | 'Expired'
   certification_id?: string
-  document_url?: string | null
+  document_url: string | null
 }
 
 export interface ExpiringCertificationReportRow {
@@ -93,7 +93,7 @@ export interface ExpiringCertificationReportRow {
   expiration: string
   status: 'Expiring Soon' | 'Expired'
   certification_id?: string
-  document_url?: string | null
+  document_url: string | null
 }
 
 export interface StaffRosterReportRow {

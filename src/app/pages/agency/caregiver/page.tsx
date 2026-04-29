@@ -56,7 +56,7 @@ export default async function StaffPage() {
     existing.push(row)
     byCaregiver.set(id, existing)
   }
-  for (const [caregiverId, rows] of byCaregiver) {
+  byCaregiver.forEach((rows, caregiverId) => {
     const sorted = [...(rows ?? [])].sort((a, b) => {
       const sa = String((a as { effective_start?: string | null }).effective_start ?? '')
       const sb = String((b as { effective_start?: string | null }).effective_start ?? '')
@@ -68,7 +68,7 @@ export default async function StaffPage() {
     if (Number.isFinite(n)) {
       currentPayRateByCaregiverId.set(caregiverId, n)
     }
-  }
+  })
 
   const { data: allStaffLicensesData } = staffMemberIds.length > 0
     ? await q.getStaffLicensesByStaffMemberIds(supabase, staffMemberIds)
